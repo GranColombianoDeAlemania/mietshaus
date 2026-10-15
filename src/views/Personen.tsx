@@ -26,7 +26,12 @@ const FELDER: Field[] = [
 export function Personen() {
   const [rows, reload] = useLoad<Row[]>(() => call('personen'), []);
   const [edit, setEdit] = useState<Row | null>(null);
-  const [suche, setSuche] = useState('');
+  const [suche, setSuche] = useState(() => {
+    // Set by the global search when it opens a person.
+    const s = sessionStorage.getItem('personSuche') ?? '';
+    sessionStorage.removeItem('personSuche');
+    return s;
+  });
 
   const q = suche.trim().toLowerCase();
   const treffer = rows?.filter((p) =>

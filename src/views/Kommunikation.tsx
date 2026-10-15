@@ -154,58 +154,6 @@ function Vorlagen() {
   );
 }
 
-export function Dokumente(props: { objekt: Row }) {
-  const [rows, reload] = useLoad<Row[]>(() => call('dokumenteListe', props.objekt.id), [props.objekt.id]);
-  const [einheiten] = useLoad<Row[]>(() => call('einheiten', props.objekt.id), [props.objekt.id]);
-  const [personen] = useLoad<Row[]>(() => call('personen'), []);
-  const [edit, setEdit] = useState<Row | null>(null);
-  const [suche, setSuche] = useState('');
-  const KAT = ['Mietvertrag', 'Kaufvertrag / Teilungserklärung', 'Rechnung', 'Abrechnung', 'Protokoll', 'Schriftverkehr', 'Foto', 'Plan / Grundriss', 'Versicherung', 'Sonstiges'];
-
-  const felder: Field[] = [
-    { key: 'titel', label: 'Titel', required: true, wide: true }, { key: 'kategorie', label: 'Kategorie', type: 'select', options: KAT.map((k) => [k, k]) },
-    { key: 'datum', label: 'Datum', type: 'date' },
-    { key: 'einheit_id', label: 'Einheit', type: 'select', options: (einheiten ?? []).map((e) => [e.id, `${e.nr} – ${e.bezeichnung}`]) },
-    { key: 'person_id', label: 'Person', type: 'select', options: (personen ?? []).map((p) => [p.id, personName(p)]) },
-    { key: 'notiz', label: 'Notiz', type: 'textarea' },
-  ];
-
-  async function ablegen() {
-    const dateien = await window.hv.dokumentAblegen();
-    for (const d of dateien) await call('save', 'dokumente', { objekt_id: props.objekt.id, titel: d.name.replace(/\.[^.]+$/, ''), datei: d.datei, name: d.name, groesse: d.groesse, datum: heute() });
-    reload();
-  }
-
-  const q = suche.toLowerCase();
-  return (
-    <section>
-      <div className="toolbar">
-        <h1>Dokumente – {props.objekt.bezeichnung}</h1>
-        <input className="suche" placeholder="Suchen…" value={suche} onChange={(e) => setSuche(e.target.value)} />
-        <span className="spacer" />
-        <button className="primary" onClick={ablegen}>Dateien ablegen…</button>
-      </div>
-      <p className="hinweis klein">Abgelegte Dateien werden in den Programmordner kopiert und mit der Datensicherung zusammen aufbewahrt (Ordner „dokumente“ mitsichern).</p>
-      <table>
-        <thead><tr><th>Datum</th><th>Titel</th><th>Kategorie</th><th>Einheit</th><th>Person</th><th>Datei</th><th /></tr></thead>
-        <tbody>
-          {rows?.filter((r) => !q || [r.titel, r.kategorie, r.name, r.person, r.einheit, r.notiz].some((x) => x?.toLowerCase().includes(q))).map((r) => (
-            <tr key={r.id} onDoubleClick={() => window.hv.dokumentOeffnen(r.datei)}>
-              <td>{datum(r.datum)}</td><td>{r.titel}</td><td>{r.kategorie}</td><td>{r.einheit}</td><td>{r.person}</td>
-              <td className="klein">{r.name} ({Math.max(1, Math.round((r.groesse ?? 0) / 1024))} KB)</td>
-              <td className="aktionen"><button onClick={() => window.hv.dokumentOeffnen(r.datei)}>Öffnen</button><button onClick={() => setEdit(r)}>Bearbeiten</button></td>
-            </tr>
-          ))}
-          {rows && !rows.length && <tr><td colSpan={7} className="hinweis">Noch keine Dokumente abgelegt.</td></tr>}
-        </tbody>
-      </table>
-      {edit && <FormDialog title="Dokument" row={edit} fields={felder} onSave={(r) => call('save', 'dokumente', r)}
-        onDelete={async () => { await call('remove', 'dokumente', edit.id); await window.hv.dokumentLoeschen(edit.datei); }}
-        onClose={() => { setEdit(null); reload(); }} />}
-    </section>
-  );
-}
-
 const STATUS: [string, string][] = [['offen', 'offen'], ['in_arbeit', 'in Arbeit'], ['wartet', 'wartet auf Rückmeldung'], ['erledigt', 'erledigt']];
 const ARTEN: [string, string][] = [['notiz', 'Notiz'], ['anruf', 'Anruf'], ['email', 'E-Mail'], ['brief', 'Brief'], ['termin', 'Termin vor Ort'], ['auftrag', 'Auftrag erteilt']];
 

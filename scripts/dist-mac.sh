@@ -6,7 +6,8 @@ npx vite build
 rm -rf release
 npx electron-packager . Hausverwalter --platform=darwin --arch=arm64 --out=release \
   --app-bundle-id=local.hausverwalter --app-category-type=public.app-category.business \
-  --ignore='^/(src|scripts|release|node_modules/\.vite)' --ignore='\.ts$' --overwrite
+  --ignore='^/(src|scripts|release|resources|node_modules/\.vite)' --ignore='\.ts$' --overwrite \
+  --extra-resource=resources/tessdata --no-asar
 # Ad-hoc signature, so macOS on Apple Silicon starts the app without a manual codesign step.
 RCODESIGN="${RCODESIGN:-$(command -v rcodesign || echo "$HOME/.local/opt/rcodesign-0.29.0/rcodesign")}"
 if [ -x "$RCODESIGN" ]; then

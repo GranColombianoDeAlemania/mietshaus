@@ -12,7 +12,11 @@ export function Buchen(props: { objekt: Row }) {
   const [konten, ladeKonten] = useLoad<Row[]>(() => call('konten', props.objekt.id), [props.objekt.id]);
   const [von, setVon] = useState(`${diesesJahr()}-01-01`);
   const [bis, setBis] = useState(`${diesesJahr()}-12-31`);
-  const [suche, setSuche] = useState('');
+  const [suche, setSuche] = useState(() => {
+    const s = sessionStorage.getItem('buchungSuche') ?? '';
+    sessionStorage.removeItem('buchungSuche');
+    return s;
+  });
   const [rows, reload] = useLoad<Row[]>(() => call('buchungen', props.objekt.id, { von, bis, suche }), [props.objekt.id, von, bis, suche]);
   const [offen, setOffen] = useState(false);
 

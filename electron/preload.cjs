@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('hv', {
   call: (fn, ...args) => ipcRenderer.invoke('db', fn, args),
@@ -9,7 +9,16 @@ contextBridge.exposeInMainWorld('hv', {
   wiederherstellen: () => ipcRenderer.invoke('wiederherstellen'),
   dokumentAblegen: () => ipcRenderer.invoke('dokumentAblegen'),
   dokumentOeffnen: (datei) => ipcRenderer.invoke('dokumentOeffnen', datei),
-  dokumentLoeschen: (datei) => ipcRenderer.invoke('dokumentLoeschen', datei),
+  dokumentLoeschen: (id) => ipcRenderer.invoke('dokumentLoeschen', id),
+  // Dropped files: the real path is only available here in the preload.
+  importieren: (files, opt) => ipcRenderer.invoke('importieren', [...files].map((f) => webUtils.getPathForFile(f)).filter(Boolean), opt),
+  dateienImportieren: (opt) => ipcRenderer.invoke('dateienImportieren', opt),
+  neuAnalysieren: (id) => ipcRenderer.invoke('neuAnalysieren', id),
+  bei: (kanal, fn) => {
+    const h = (_e, ...a) => fn(...a);
+    ipcRenderer.on(kanal, h);
+    return () => ipcRenderer.removeListener(kanal, h);
+  },
   extern: (url) => ipcRenderer.invoke('extern', url),
   info: () => ipcRenderer.invoke('info'),
 });

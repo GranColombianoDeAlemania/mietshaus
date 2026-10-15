@@ -20,7 +20,9 @@ import { Wirtschaftsplan } from './views/Wirtschaftsplan';
 import { Ruecklagen } from './views/Ruecklagen';
 import { Kautionen, Mietanpassung, Schluesselverwaltung, Versicherungen } from './views/MieteExtras';
 import { Beschluesse, Kontakte, Versammlungen } from './views/WegExtras';
-import { Briefe, Dokumente, Termine, Vorgaenge } from './views/Kommunikation';
+import { Briefe, Termine, Vorgaenge } from './views/Kommunikation';
+import { Archiv, DokumentDialog, Postfach, Rechnungen } from './views/Archiv';
+import { Suche } from './Suche';
 import { Export } from './views/Export';
 
 type Ctx = { modus: Modus; objekt: Row; objekte: Row[]; ladeObjekte: () => void; oeffne: (seite: string, objektId?: number) => void };
@@ -34,6 +36,9 @@ type Seite = {
 };
 
 const SEITEN: Seite[] = [
+  { id: 'postfach', label: 'Postfach', gruppe: 'Dokumente', render: () => <Postfach /> },
+  { id: 'archiv', label: 'Archiv & Suche', gruppe: 'Dokumente', render: (c) => <Archiv objekt={c.objekt} /> },
+  { id: 'rechnungen', label: 'Rechnungen', gruppe: 'Dokumente', render: (c) => <Rechnungen objekt={c.objekt} /> },
   { id: 'uebersicht', label: 'Übersicht', gruppe: 'Stammdaten', render: (c) => <Uebersicht modus={c.modus} /> },
   { id: 'objekte', label: 'Objekte', gruppe: 'Stammdaten', render: (c) => <Objekte modus={c.modus} objekte={c.objekte} reload={c.ladeObjekte} onOpen={(id) => c.oeffne('einheiten', id)} /> },
   { id: 'einheiten', label: 'Einheiten', gruppe: 'Stammdaten', objekt: true, render: (c) => <Einheiten key={c.objekt.id} modus={c.modus} objekt={c.objekt} /> },
@@ -58,7 +63,6 @@ const SEITEN: Seite[] = [
   { id: 'schluesselv', label: 'Schlüssel', gruppe: 'Verwaltung', objekt: true, render: (c) => <Schluesselverwaltung key={c.objekt.id} objekt={c.objekt} /> },
   { id: 'versicherungen', label: 'Versicherungen & Verträge', gruppe: 'Verwaltung', objekt: true, render: (c) => <Versicherungen key={c.objekt.id} objekt={c.objekt} /> },
   { id: 'briefe', label: 'Briefe & Serienbriefe', gruppe: 'Kommunikation', objekt: true, render: (c) => <Briefe key={c.objekt.id + c.modus} objekt={c.objekt} modus={c.modus} /> },
-  { id: 'dokumente', label: 'Dokumente', gruppe: 'Kommunikation', objekt: true, render: (c) => <Dokumente key={c.objekt.id} objekt={c.objekt} /> },
   { id: 'vorgaenge', label: 'Vorgänge', gruppe: 'Kommunikation', objekt: true, render: (c) => <Vorgaenge key={c.objekt.id} objekt={c.objekt} /> },
   { id: 'termine', label: 'Termine', gruppe: 'Kommunikation', render: (c) => <Termine objekte={c.objekte} /> },
   { id: 'export', label: 'Export & DATEV', gruppe: 'System', objekt: true, render: (c) => <Export key={c.objekt.id} objekt={c.objekt} /> },
@@ -91,6 +95,30 @@ export default function App() {
   }, [modus]);
   useEffect(() => schreiben('seite', seite), [seite]);
 
+  // Background events from the main process trigger a data reload everywhere.
+  useEffect(() => {
+    const feuern = () => window.dispatchEvent(new Event('hv-daten'));
+    const a = window.hv.bei('aktualisiert', feuern);
+    const b = window.hv.bei('dokumentAnalysiert', feuern);
+    return () => { a(); b(); };
+  }, []);
+  const [postfach] = useLoad<number>(() => call('postfachAnzahl'), []);
+  const [ziehen, setZiehen] = useState(false);
+  const [meldung, setMeldung] = useState('');
+  const [dokOffen, setDokOffen] = useState<Row | null>(null);
+
+  // Files dropped anywhere on the window go to the inbox.
+  async function abgelegt(e: React.DragEvent) {
+    e.preventDefault();
+    setZiehen(false);
+    if (!e.dataTransfer.files.length) return;
+    const r = await window.hv.importieren(e.dataTransfer.files);
+    const neu = r.filter((x) => !x.doppelt).length;
+    setMeldung(`${neu} Dokument(e) ins Postfach gelegt${r.length - neu ? `, ${r.length - neu} waren schon vorhanden` : ''}.`);
+    window.dispatchEvent(new Event('hv-daten'));
+    setTimeout(() => setMeldung(''), 5000);
+  }
+
   // Keep a valid object selected for the current mode.
   useEffect(() => {
     if (!objekte) return;
@@ -109,20 +137,23 @@ export default function App() {
   const sichtbar = SEITEN.filter((s) => !s.modi || s.modi.includes(modus));
   const aktiv = sichtbar.find((s) => s.id === seite) ?? sichtbar[0];
   const label = (s: Seite) => (typeof s.label === 'function' ? s.label(modus) : s.label);
-  const gruppen = [...new Set(sichtbar.map((s) => s.gruppe))];
+  const REIHENFOLGE = ['Stammdaten', 'Dokumente', 'Buchhaltung', 'Abrechnung', 'Verwaltung', 'Kommunikation', 'System'];
+  const gruppen = [...new Set(sichtbar.map((s) => s.gruppe))].sort((a, b) => REIHENFOLGE.indexOf(a) - REIHENFOLGE.indexOf(b));
 
   const ctx: Ctx | null = objekte
     ? { modus, objekt: objekt!, objekte, ladeObjekte, oeffne: (s, id) => { if (id) setObjektId(id); setSeite(s); } }
     : null;
 
   return (
-    <div className="app">
+    <div className={`app${ziehen ? ' ziehen' : ''}`} onDragOver={(e) => { e.preventDefault(); setZiehen(true); }}
+      onDragLeave={(e) => { if (e.currentTarget === e.target) setZiehen(false); }} onDrop={abgelegt}>
       <header>
         <div className="brand">Hausverwalter</div>
         <div className="modus" role="tablist">
           <button role="tab" aria-selected={modus === 'miete'} onClick={() => wechsle('miete')}>Mietverwaltung</button>
           <button role="tab" aria-selected={modus === 'weg'} onClick={() => wechsle('weg')}>WEG-Verwaltung</button>
         </div>
+        <Suche onDokument={setDokOffen} oeffne={(seite, objektId) => { if (objektId) setObjektId(objektId); setSeite(seite); }} />
         <label className="objektwahl">
           Objekt
           <select value={objektId ?? ''} onChange={(e) => setObjektId(Number(e.target.value))} disabled={!objekte?.length}>
@@ -138,7 +169,9 @@ export default function App() {
           <div key={g} className="navgruppe">
             <h4>{g}</h4>
             {sichtbar.filter((s) => s.gruppe === g).map((s) => (
-              <button key={s.id} className={aktiv.id === s.id ? 'active' : ''} onClick={() => setSeite(s.id)}>{label(s)}</button>
+              <button key={s.id} className={aktiv.id === s.id ? 'active' : ''} onClick={() => setSeite(s.id)}>
+                {label(s)}{s.id === 'postfach' && !!postfach && <span className="zaehler">{postfach}</span>}
+              </button>
             ))}
           </div>
         ))}
@@ -153,7 +186,9 @@ export default function App() {
           aktiv.render(ctx)
         )}
       </main>
-      <footer>{objekt ? `${objekt.bezeichnung} · ${OBJEKT_ART[objekt.art]}` : ''}</footer>
+      <footer>{meldung ? <b>{meldung}</b> : objekt ? `${objekt.bezeichnung} · ${OBJEKT_ART[objekt.art]}` : ''}</footer>
+      {ziehen && <div className="dropzone">Dateien loslassen – sie landen im Postfach</div>}
+      {dokOffen && <DokumentDialog id={dokOffen.id} datei={dokOffen.datei} onClose={() => setDokOffen(null)} />}
     </div>
   );
 }

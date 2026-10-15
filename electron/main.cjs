@@ -1,17 +1,27 @@
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, protocol } = require('electron');
+const { pathToFileURL } = require('node:url');
 const path = require('node:path');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
 const { open, api } = require('./db.cjs');
+const analyse = require('./analyse.cjs');
 
 let db;
 let rawDb;
 let dbFile;
+let ana;
+let hauptfenster;
+
+// Stored documents and previews are served to the windows under hvdok:// (also for the built-in PDF viewer).
+protocol.registerSchemesAsPrivileged([analyse.SCHEMA]);
 
 // German date inputs and number formats regardless of the system language.
 app.commandLine.appendSwitch('lang', 'de-DE');
 
 const dokumentOrdner = () => path.join(app.getPath('userData'), 'dokumente');
+const vorschauOrdner = () => path.join(dokumentOrdner(), 'vorschau');
+const seite = (name) => (process.env.VITE_DEV_SERVER_URL ? new URL(name, process.env.VITE_DEV_SERVER_URL).href : pathToFileURL(path.join(__dirname, '..', 'dist', name)).href);
+const melden = (kanal, ...args) => { if (hauptfenster && !hauptfenster.isDestroyed()) hauptfenster.webContents.send(kanal, ...args); };
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -25,16 +35,26 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       sandbox: true,
+      plugins: true, // built-in PDF viewer for document previews
     },
   });
-  if (process.env.VITE_DEV_SERVER_URL) win.loadURL(process.env.VITE_DEV_SERVER_URL);
-  else win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
+  hauptfenster = win;
+  win.loadURL(seite('index.html'));
 }
 
 function oeffneDb() {
   rawDb = open(dbFile);
   db = api(rawDb);
 }
+
+// Notices changes written by another process (Claude Desktop via MCP) and tells the window to reload its data.
+let letzteVersion = null;
+setInterval(() => {
+  if (!db) return;
+  const v = db.datenVersion();
+  if (letzteVersion != null && v !== letzteVersion) melden('aktualisiert');
+  letzteVersion = v;
+}, 2000);
 
 // Renders an HTML document to a PDF file the user picks, then opens it.
 async function pdf(html, name) {
@@ -111,6 +131,16 @@ const sichererDokPfad = (datei) => path.join(dokumentOrdner(), path.basename(dat
 app.whenReady().then(() => {
   dbFile = process.env.HAUSVERWALTER_DB || path.join(app.getPath('userData'), 'hausverwalter.sqlite');
   oeffneDb();
+  analyse.protokollRegistrieren(dokumentOrdner, vorschauOrdner);
+  ana = analyse({ db: new Proxy({}, { get: (_t, k) => db[k] }), dokumentOrdner, vorschauOrdner, analyseUrl: () => seite('analyse.html'),
+    onFertig: (id) => melden('dokumentAnalysiert', id) });
+  ana.warteschlange();
+  ipcMain.handle('importieren', (_e, pfade, opt) => ana.importieren(pfade, opt));
+  ipcMain.handle('dateienImportieren', async (_e, opt) => {
+    const r = await dialog.showOpenDialog({ properties: ['openFile', 'multiSelections'] });
+    return r.canceled ? [] : ana.importieren(r.filePaths, opt);
+  });
+  ipcMain.handle('neuAnalysieren', (_e, id) => ana.neuAnalysieren(id));
   // One channel for the database API; errors reach the renderer as rejected promises.
   ipcMain.handle('db', (_e, fn, args) => {
     if (typeof db[fn] !== 'function') throw new Error(`Unbekannte Funktion: ${fn}`);
@@ -123,7 +153,10 @@ app.whenReady().then(() => {
   ipcMain.handle('wiederherstellen', () => wiederherstellen());
   ipcMain.handle('dokumentAblegen', () => dokumentAblegen());
   ipcMain.handle('dokumentOeffnen', (_e, datei) => shell.openPath(sichererDokPfad(datei)));
-  ipcMain.handle('dokumentLoeschen', (_e, datei) => fs.rmSync(sichererDokPfad(datei), { force: true }));
+  ipcMain.handle('dokumentLoeschen', (_e, id) => {
+    const datei = db.dokumentLoeschen(id);
+    if (datei) fs.rmSync(sichererDokPfad(datei), { force: true });
+  });
   ipcMain.handle('extern', (_e, url) => {
     if (/^(mailto:|https:)/.test(url)) shell.openExternal(url);
   });
@@ -133,6 +166,8 @@ app.whenReady().then(() => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
+
+app.on('before-quit', () => ana?.beenden());
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();

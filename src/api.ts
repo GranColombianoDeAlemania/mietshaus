@@ -14,7 +14,11 @@ declare global {
       wiederherstellen: () => Promise<boolean>;
       dokumentAblegen: () => Promise<{ name: string; datei: string; groesse: number }[]>;
       dokumentOeffnen: (datei: string) => Promise<string>;
-      dokumentLoeschen: (datei: string) => Promise<void>;
+      dokumentLoeschen: (id: number) => Promise<void>;
+      importieren: (files: FileList | File[], opt?: Row) => Promise<{ id: number; doppelt: boolean; name: string }[]>;
+      dateienImportieren: (opt?: Row) => Promise<{ id: number; doppelt: boolean; name: string }[]>;
+      neuAnalysieren: (id: number) => Promise<void>;
+      bei: (kanal: string, fn: (...a: any[]) => void) => () => void;
       extern: (url: string) => Promise<void>;
       info: () => Promise<{ dbFile: string; dokumente: string; version: string }>;
     };

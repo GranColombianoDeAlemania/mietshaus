@@ -3,6 +3,10 @@ const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { open, api } = require('../electron/db.cjs');
+const analyse = require('../electron/analyse.cjs');
+const { protocol } = require('electron');
+const { pathToFileURL } = require('node:url');
+protocol.registerSchemesAsPrivileged([analyse.SCHEMA]);
 
 const out = process.argv[process.argv.length - 1];
 const db = api(open(':memory:'));
@@ -46,8 +50,20 @@ ipcMain.handle('info', () => ({ dbFile: ':memory:', dokumente: '-', version: app
 app.commandLine.appendSwitch('lang', 'de-DE');
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+app.on('window-all-closed', () => {});
 app.whenReady().then(async () => {
   fs.mkdirSync(out, { recursive: true });
+  // Documents from the archive test (scripts/archivtest.cjs) go into the inbox.
+  const docs = path.join(out, 'dokumente');
+  analyse.protokollRegistrieren(() => docs, () => path.join(docs, 'vorschau'));
+  const ana = analyse({ db, dokumentOrdner: () => docs, vorschauOrdner: () => path.join(docs, 'vorschau'),
+    analyseUrl: () => pathToFileURL(path.join(__dirname, '..', 'dist', 'analyse.html')).href });
+  const testDocs = process.env.TESTDOKS ? fs.readdirSync(process.env.TESTDOKS).filter((f) => /\.(pdf|png)$/.test(f)).map((f) => path.join(process.env.TESTDOKS, f)) : [];
+  ana.importieren(testDocs);
+  await ana.warteschlange();
+  for (let i = 0; i < 60 && db.zuAnalysieren().length; i++) await wait(500);
+  ipcMain.handle('neuAnalysieren', (_e, id) => ana.neuAnalysieren(id));
+  ipcMain.handle('dokumentLoeschen', (_e, id) => db.dokumentLoeschen(id));
   const win = new BrowserWindow({ width: 1300, height: 760, show: false,
     webPreferences: { preload: path.join(__dirname, '..', 'electron', 'preload.cjs'), contextIsolation: true, sandbox: true, offscreen: true } });
   await win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
@@ -55,7 +71,7 @@ app.whenReady().then(async () => {
   // Renderer errors are printed so a test run shows broken pages.
   win.webContents.on('console-message', (e) => { if (e.level === 'error' || e.level === 3) console.log('RENDERER-FEHLER:', e.message); });
   win.webContents.on('render-process-gone', (_e, d) => console.log('RENDERER-ABSTURZ:', d.reason));
-  const click = (text) => js(`[...document.querySelectorAll('button')].find(b => b.textContent.trim() === ${JSON.stringify(text)})?.click()`);
+  const click = (text) => js(`[...document.querySelectorAll('button')].find(b => b.textContent.trim() === ${JSON.stringify(text)} || b.firstChild?.textContent?.trim() === ${JSON.stringify(text)})?.click()`);
   const shot = async (name) => { await wait(400); fs.writeFileSync(path.join(out, name + '.png'), (await win.webContents.capturePage()).toPNG()); };
   await js(`localStorage.clear()`);
   await win.reload(); await wait(500);
@@ -92,6 +108,13 @@ app.whenReady().then(async () => {
     const labels = await js(`[...document.querySelectorAll('nav .navgruppe button')].map(b => b.textContent.trim())`);
     for (const l of labels) { await click(l); await wait(250); const h = await js(`document.querySelector('main h1')?.textContent ?? '(kein Titel)'`); console.log('SEITE', m, '|', l, '→', h); }
   }
+  await click('Mietverwaltung'); await click('Postfach'); await wait(800); await shot('20-postfach');
+  await click('Archiv & Suche'); await wait(300);
+  await js(`(() => { const i = document.querySelector('.suche.gross'); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(i, 'abwasser'); i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  await wait(500); await shot('21-archiv-suche');
+  await click('Rechnungen'); await wait(300); await shot('22-rechnungen');
+  await js(`(() => { const i = document.querySelector('.globalsuche input'); i.focus(); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(i, 'meier'); i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  await wait(600); await shot('23-globalsuche');
   await click('WEG-Verwaltung'); await click('Versammlungen'); await wait(200); await click('Neue Versammlung'); await shot('15-versammlung-dialog'); await click('Abbrechen');
   await click('Versammlungen'); await wait(200); await click('Tagesordnung & Beschlüsse'); await wait(300); await click('Einladungen (PDF)'); await wait(2500); await click('Schließen');
   await click('Mietverwaltung'); await click('Briefe & Serienbriefe'); await wait(200);

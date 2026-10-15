@@ -3,6 +3,7 @@ const { DatabaseSync } = require('node:sqlite');
 const buchhaltung = require('./buchhaltung.cjs');
 const abrechnung = require('./abrechnung.cjs');
 const verwaltung = require('./verwaltung.cjs');
+const archiv = require('./archiv.cjs');
 
 const MIGRATIONS = [
   `
@@ -363,6 +364,30 @@ const MIGRATIONS = [
     notiz TEXT
   );
   `,
+  `
+  -- Document archive: inbox status, recognised text and extracted fields.
+  ALTER TABLE dokumente ADD COLUMN status TEXT NOT NULL DEFAULT 'abgelegt';
+  ALTER TABLE dokumente ADD COLUMN typ TEXT;
+  ALTER TABLE dokumente ADD COLUMN text TEXT;
+  ALTER TABLE dokumente ADD COLUMN sha256 TEXT;
+  ALTER TABLE dokumente ADD COLUMN seiten INTEGER;
+  ALTER TABLE dokumente ADD COLUMN ocr INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE dokumente ADD COLUMN betrag_ct INTEGER;
+  ALTER TABLE dokumente ADD COLUMN absender TEXT;
+  ALTER TABLE dokumente ADD COLUMN rechnungsnr TEXT;
+  ALTER TABLE dokumente ADD COLUMN iban TEXT;
+  ALTER TABLE dokumente ADD COLUMN faellig TEXT;
+  ALTER TABLE dokumente ADD COLUMN zusammenfassung TEXT;
+  ALTER TABLE dokumente ADD COLUMN buchung_id INTEGER REFERENCES buchungen(id) ON DELETE SET NULL;
+  ALTER TABLE dokumente ADD COLUMN quelle TEXT;
+  ALTER TABLE dokumente ADD COLUMN erfasst TEXT;
+  ALTER TABLE dokumente ADD COLUMN analyse TEXT NOT NULL DEFAULT 'offen';
+  UPDATE dokumente SET erfasst = coalesce(datum, date('now'));
+  CREATE INDEX dokumente_status ON dokumente (status);
+  CREATE INDEX dokumente_sha ON dokumente (sha256);
+  -- Search index over normalised text (umlauts folded), rowid = dokumente.id.
+  CREATE VIRTUAL TABLE dokumente_fts USING fts5(titel, inhalt, tokenize = 'unicode61 remove_diacritics 2');
+  `,
 ];
 
 // Columns the renderer may write, per table. Everything else is rejected.
@@ -396,7 +421,8 @@ const TABLES = {
   beschluesse: ['objekt_id', 'nr', 'datum', 'art', 'titel', 'text', 'ergebnis', 'status', 'vermerk'],
   rollen: ['objekt_id', 'person_id', 'rolle', 'von', 'bis', 'notiz'],
   vorlagen: ['titel', 'kategorie', 'betreff', 'text'],
-  dokumente: ['objekt_id', 'person_id', 'einheit_id', 'titel', 'kategorie', 'datum', 'datei', 'name', 'groesse', 'notiz'],
+  dokumente: ['objekt_id', 'person_id', 'einheit_id', 'titel', 'kategorie', 'datum', 'datei', 'name', 'groesse', 'notiz',
+    'status', 'typ', 'betrag_ct', 'absender', 'rechnungsnr', 'iban', 'faellig', 'zusammenfassung', 'buchung_id', 'quelle'],
   vorgaenge: ['objekt_id', 'person_id', 'einheit_id', 'titel', 'kategorie', 'status', 'prioritaet', 'faellig', 'beschreibung'],
   vorgangseintraege: ['vorgang_id', 'datum', 'art', 'text'],
   termine: ['objekt_id', 'person_id', 'vorgang_id', 'titel', 'datum', 'uhrzeit', 'dauer_min', 'ort', 'erledigt', 'notiz'],
@@ -411,7 +437,7 @@ const aktuell = (a) => `${a}.beginn <= date('now') AND (${a}.ende IS NULL OR ${a
 function open(file) {
   const db = new DatabaseSync(file);
   // Foreign keys stay off while migrations rebuild tables, so cascades cannot fire.
-  db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = OFF;');
+  db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = OFF; PRAGMA busy_timeout = 5000;');
   const version = db.prepare('PRAGMA user_version').get().user_version;
   for (let v = version; v < MIGRATIONS.length; v++) {
     db.exec('BEGIN');
@@ -481,6 +507,7 @@ function api(db) {
   bh.syncKonten();
   const ab = abrechnung({ db, all, get, tx, PERSON_NAME, bh });
   const vw = verwaltung({ db, all, get, tx, PERSON_NAME, bh });
+  const ar = archiv({ db, all, get, tx, PERSON_NAME });
 
   // Master data changes can create or rename accounts.
   const SYNC = new Set(['objekte', 'einheiten', 'personen', 'mietverhaeltnisse', 'eigentum']);
@@ -616,7 +643,18 @@ function api(db) {
           AND NOT EXISTS (SELECT 1 FROM ${vt} v WHERE v.einheit_id = e.id AND ${aktuell('v')})) AS leer`, a, b);
     },
   };
-  return { ...bh, ...ab, ...vw, ...basis };
+  return {
+    ...bh, ...ab, ...vw, ...ar, ...basis,
+    // Removes the record and its index entry; the caller deletes the file.
+    dokumentLoeschen: (id) => {
+      const d = get('SELECT datei FROM dokumente WHERE id = ?', id);
+      db.prepare('DELETE FROM dokumente_fts WHERE rowid = ?').run(id);
+      db.prepare('DELETE FROM dokumente WHERE id = ?').run(id);
+      return d?.datei ?? null;
+    },
+    // Changes made elsewhere (e.g. by Claude through the MCP connection) bump this number.
+    datenVersion: () => db.prepare('PRAGMA data_version').get().data_version,
+  };
 }
 
 module.exports = { open, api };
