@@ -113,9 +113,9 @@ app.whenReady().then(async () => {
   const win = new BrowserWindow({ width: 1300, height: 760, show: false,
     webPreferences: { preload: path.join(__dirname, '..', 'electron', 'preload.cjs'), contextIsolation: true, sandbox: true, offscreen: true } });
   await win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
-  const js = (s) => win.webContents.executeJavaScript(s);
+  const js = (s) => win.webContents.executeJavaScript(s).catch((e) => { console.log('SCRIPT-FEHLER bei:', s.slice(0, 160)); throw e; });
   // Renderer errors are printed so a test run shows broken pages.
-  win.webContents.on('console-message', (e) => { if (e.level === 'error' || e.level === 3) console.log('RENDERER-FEHLER:', e.message); });
+  win.webContents.on('console-message', (e) => { if (e.level === 'error' || e.level === 3) console.log('RENDERER-FEHLER:', e.message, e.sourceId?.split('/').pop(), e.lineNumber); });
   win.webContents.on('render-process-gone', (_e, d) => console.log('RENDERER-ABSTURZ:', d.reason));
   const click = (text) => js(`[...document.querySelectorAll('button')].find(b => b.textContent.trim() === ${JSON.stringify(text)} || b.firstChild?.textContent?.trim() === ${JSON.stringify(text)})?.click()`);
   const shot = async (name) => { await wait(400); fs.writeFileSync(path.join(out, name + '.png'), (await win.webContents.capturePage()).toPNG()); };
@@ -130,7 +130,7 @@ app.whenReady().then(async () => {
   await click('Neue Buchung'); await shot('3-buchungsmaske');
   await click('Konten'); await shot('4-konten');
   await click('Sollstellung'); await shot('5-sollstellung');
-  await click('Offene Posten & Mahnungen'); await shot('6-op');
+  await click('Offene Posten & Mahnungen'); await shot('6-op'); await click('Details'); await wait(400); await shot('6b-op-details'); await click('Schließen');
   await click('Bank & SEPA'); await click('SEPA-Lastschrift'); await shot('7-lastschrift');
   await click('Zähler'); await shot('8-zaehler');
   await click('Einstellungen & Sicherung'); await shot('9-einstellungen');

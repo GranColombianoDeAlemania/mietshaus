@@ -805,19 +805,32 @@ function api(db) {
 
     vertraege: (table, objektId) => {
       if (table !== 'mietverhaeltnisse' && table !== 'eigentum') throw new Error('Ungültige Vertragsart');
+      const typ = table === 'eigentum' ? 'weg' : 'miete';
+      const heute = new Date().toISOString().slice(0, 10);
+      // The contract row keeps the amounts agreed at the start; akt_* are the amounts in force today (after adjustments).
       return all(`SELECT v.*, e.nr AS einheit_nr, e.bezeichnung AS einheit, ${PERSON_NAME} AS name,
           CASE WHEN ${aktuell('v')} THEN 1 ELSE 0 END AS aktuell
         FROM ${table} v JOIN einheiten e ON e.id = v.einheit_id JOIN personen p ON p.id = v.person_id
-        WHERE e.objekt_id = ? ORDER BY e.nr, v.beginn DESC`, objektId);
+        WHERE e.objekt_id = ? ORDER BY e.nr, v.beginn DESC`, objektId).map((v) => {
+        const b = bh.betraege(typ, v.id, v.ende && v.ende < heute ? v.ende : heute < v.beginn ? v.beginn : heute);
+        const akt = Object.fromEntries(['kaltmiete_ct', 'bk_vz_ct', 'hk_vz_ct', 'sonstiges_ct', 'hausgeld_ct', 'ruecklage_ct'].map((k) => [`akt_${k}`, b[k] ?? 0]));
+        return { ...v, ...akt, angepasst: Object.keys(akt).some((k) => akt[k] !== (v[k.slice(4)] ?? 0)) ? 1 : 0 };
+      });
     },
 
     schluessel: (objektId) => {
       const keys = all('SELECT * FROM umlageschluessel WHERE objekt_id = ? ORDER BY id', objektId);
       const werte = all(`SELECT w.* FROM schluesselwerte w JOIN umlageschluessel s ON s.id = w.schluessel_id
         WHERE s.objekt_id = ?`, objektId);
+      const einheiten = all('SELECT id, wohnflaeche, mea FROM einheiten WHERE objekt_id = ?', objektId);
+      const personen = Object.fromEntries(all(`SELECT e.id, coalesce((SELECT sum(m.personen_anzahl) FROM mietverhaeltnisse m
+        WHERE m.einheit_id = e.id AND ${aktuell('m')}), 0) AS n FROM einheiten e WHERE e.objekt_id = ?`, objektId).map((r) => [r.id, r.n]));
+      // Automatic keys show the live values from the units (what the statements use); manual keys their stored values.
+      const live = { flaeche: (e) => e.wohnflaeche ?? 0, mea: (e) => e.mea ?? 0, einheiten: () => 1, personen: (e) => personen[e.id] ?? 0 };
       return keys.map((k) => ({
         ...k,
-        werte: Object.fromEntries(werte.filter((w) => w.schluessel_id === k.id).map((w) => [w.einheit_id, w.wert])),
+        werte: live[k.typ] ? Object.fromEntries(einheiten.map((e) => [e.id, live[k.typ](e)]))
+          : Object.fromEntries(werte.filter((w) => w.schluessel_id === k.id).map((w) => [w.einheit_id, w.wert])),
       }));
     },
 
@@ -860,16 +873,23 @@ function api(db) {
     uebersicht: (modus) => {
       const [a, b] = artenFuer(modus);
       const vt = modus === 'weg' ? 'eigentum' : 'mietverhaeltnisse';
-      const summe = modus === 'weg' ? 'hausgeld_ct' : 'kaltmiete_ct + bk_vz_ct + hk_vz_ct + sonstiges_ct';
-      return get(`SELECT
+      const r = get(`SELECT
         (SELECT count(*) FROM objekte WHERE art IN (?1, ?2)) AS objekte,
         (SELECT count(*) FROM einheiten e JOIN objekte o ON o.id = e.objekt_id WHERE o.art IN (?1, ?2)) AS einheiten,
         (SELECT count(*) FROM ${vt} v JOIN einheiten e ON e.id = v.einheit_id JOIN objekte o ON o.id = e.objekt_id
           WHERE o.art IN (?1, ?2) AND ${aktuell('v')}) AS vertraege,
-        (SELECT coalesce(sum(${summe}), 0) FROM ${vt} v JOIN einheiten e ON e.id = v.einheit_id
-          JOIN objekte o ON o.id = e.objekt_id WHERE o.art IN (?1, ?2) AND ${aktuell('v')}) AS soll_monat_ct,
+        0 AS soll_monat_ct,
         (SELECT count(*) FROM einheiten e JOIN objekte o ON o.id = e.objekt_id WHERE o.art IN (?1, ?2)
           AND NOT EXISTS (SELECT 1 FROM ${vt} v WHERE v.einheit_id = e.id AND ${aktuell('v')})) AS leer`, a, b);
+      // Monthly amount due from the amounts in force today, including rent and advance payment adjustments.
+      const heute = new Date().toISOString().slice(0, 10);
+      const typ = modus === 'weg' ? 'weg' : 'miete';
+      for (const v of all(`SELECT v.id FROM ${vt} v JOIN einheiten e ON e.id = v.einheit_id JOIN objekte o ON o.id = e.objekt_id
+          WHERE o.art IN (?1, ?2) AND ${aktuell('v')}`, a, b)) {
+        const x = bh.betraege(typ, v.id, heute);
+        r.soll_monat_ct += typ === 'weg' ? x.hausgeld_ct ?? 0 : (x.kaltmiete_ct ?? 0) + (x.bk_vz_ct ?? 0) + (x.hk_vz_ct ?? 0) + (x.sonstiges_ct ?? 0);
+      }
+      return r;
     },
   };
   const pj = projekte({ db, all, get, tx, bh });

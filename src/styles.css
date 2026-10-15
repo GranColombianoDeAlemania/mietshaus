@@ -342,3 +342,16 @@ textarea.brieftext { width: 100%; padding: 10px 12px; border: 1px solid var(--li
 .suchergebnis { left: auto; right: 0; width: min(580px, 92vw); }
 .globalsuche { min-width: 210px; }
 .kanban .karte .buttons { flex-wrap: wrap; gap: 6px; }
+
+/* Header stays on one line: long labels shorten on narrower windows or with large text. */
+header { flex-wrap: nowrap; min-width: 0; }
+.modus button, .schnell, .brand, .objektwahl { white-space: nowrap; }
+.objektwahl select { min-width: 160px; max-width: 280px; }
+header .kurz { display: none; }
+@media (max-width: 1380px) {
+  header .lang { display: none; }
+  header .kurz { display: inline; }
+  header { gap: 12px; }
+}
+main, footer { min-width: 0; }
+.app { overflow: hidden; }

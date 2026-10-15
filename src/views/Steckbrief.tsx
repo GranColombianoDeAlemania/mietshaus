@@ -152,7 +152,7 @@ export function PersonAkte(props: { personId: number; onClose: () => void; oeffn
             <tbody>{a.vertraege.map((v: Row) => (
               <tr key={v.typ + v.id} className={v.ende && v.ende < heute() ? 'inaktiv' : ''}>
                 <td>{v.typ === 'weg' ? 'Eigentum' : 'Miete'}</td><td>{v.objekt} · {v.einheit}</td><td className="klein">{datum(v.beginn)} – {datum(v.ende)}</td>
-                <td className="num">{euro(v.typ === 'weg' ? v.hausgeld_ct : v.kaltmiete_ct + v.bk_vz_ct + v.hk_vz_ct + v.sonstiges_ct)}</td>
+                <td className="num">{euro(v.monatlich_ct)}</td>
                 <td className={`num ${v.saldo_ct > 0 ? 'negativ' : ''}`}>{v.saldo_ct > 0 ? `Rückstand ${euro(v.saldo_ct)}` : v.saldo_ct < 0 ? `Guthaben ${euro(-v.saldo_ct)}` : 'ausgeglichen'}</td>
               </tr>
             ))}{!a.vertraege.length && <tr><td colSpan={5} className="hinweis">Keine Verträge.</td></tr>}</tbody>

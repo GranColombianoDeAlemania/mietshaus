@@ -11,7 +11,7 @@ const ART = {
     neu: 'Neues Mietverhältnis',
     person: 'Mieter',
     felder: [
-      { key: 'kaltmiete_ct', label: 'Kaltmiete', type: 'money', section: 'Monatliche Zahlungen' },
+      { key: 'kaltmiete_ct', label: 'Kaltmiete', type: 'money', section: 'Monatliche Zahlungen bei Vertragsbeginn (spätere Änderungen unter „Mietanpassungen“)' },
       { key: 'bk_vz_ct', label: 'Betriebskosten-Vorauszahlung', type: 'money' },
       { key: 'hk_vz_ct', label: 'Heizkosten-Vorauszahlung', type: 'money' },
       { key: 'sonstiges_ct', label: 'Sonstiges (z. B. Stellplatz)', type: 'money' },
@@ -19,7 +19,7 @@ const ART = {
       { key: 'kaution_ct', label: 'Kaution', type: 'money', section: 'Weitere Angaben' },
       { key: 'personen_anzahl', label: 'Personen im Haushalt', type: 'number' },
     ] as Field[],
-    summe: (v: Row) => v.kaltmiete_ct + v.bk_vz_ct + v.hk_vz_ct + v.sonstiges_ct,
+    summe: (v: Row) => v.akt_kaltmiete_ct + v.akt_bk_vz_ct + v.akt_hk_vz_ct + v.akt_sonstiges_ct,
   },
   weg: {
     table: 'eigentum',
@@ -27,13 +27,13 @@ const ART = {
     neu: 'Neuer Eigentümer',
     person: 'Eigentümer',
     felder: [
-      { key: 'hausgeld_ct', label: 'Hausgeld', type: 'money', section: 'Monatliche Zahlungen' },
+      { key: 'hausgeld_ct', label: 'Hausgeld', type: 'money', section: 'Monatliche Zahlungen bei Beginn (spätere Änderungen über den Wirtschaftsplan)' },
       { key: 'ruecklage_ct', label: 'davon Erhaltungsrücklage', type: 'money' },
       { key: 'faelligkeitstag', label: 'Fällig am (Tag des Monats)', type: 'number' },
       { key: 'selbstnutzer', label: 'Bewohnt die Einheit selbst', type: 'check', section: 'Weitere Angaben' },
     ] as Field[],
     // The reserve share is part of the house money, not added on top.
-    summe: (v: Row) => v.hausgeld_ct,
+    summe: (v: Row) => v.akt_hausgeld_ct,
   },
 } as const;
 
@@ -106,11 +106,11 @@ export function Vertraege(props: { modus: Modus; objekt: Row }) {
                 <td>{datum(v.beginn)}</td>
                 <td>{datum(v.ende)}</td>
                 {props.modus === 'miete' ? (
-                  <><td className="num">{euro(v.kaltmiete_ct)}</td><td className="num">{euro(v.bk_vz_ct)}</td><td className="num">{euro(v.hk_vz_ct)}</td></>
+                  <><td className="num">{euro(v.akt_kaltmiete_ct)}</td><td className="num">{euro(v.akt_bk_vz_ct)}</td><td className="num">{euro(v.akt_hk_vz_ct)}</td></>
                 ) : (
-                  <><td className="num">{euro(v.hausgeld_ct)}</td><td className="num">{euro(v.ruecklage_ct)}</td></>
+                  <><td className="num">{euro(v.akt_hausgeld_ct)}</td><td className="num">{euro(v.akt_ruecklage_ct)}</td></>
                 )}
-                <td className="num"><b>{euro(a.summe(v))}</b></td>
+                <td className="num"><b>{euro(a.summe(v))}</b>{v.angepasst ? <div className="klein hinweis" title="Durch Mietanpassung, Wirtschaftsplan oder neue Vorauszahlungen geändert">angepasst</div> : null}</td>
               </tr>
             ))}
           </tbody>

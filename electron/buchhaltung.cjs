@@ -172,17 +172,43 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
       b.datum <= coalesce((SELECT wert FROM einstellungen WHERE schluessel = 'festgeschrieben_bis'), '0000-00-00') AS festgeschrieben
     FROM buchungen b JOIN konten s ON s.id = b.soll_id JOIN konten h ON h.id = b.haben_id`;
 
-  // First-in-first-out matching of a contract account's credits against its charges.
-  function offenePostenKonto(kontoId, stichtag = '9999-12-31') {
-    const lasten = all(`SELECT id, datum, monat, text, betrag_ct FROM buchungen WHERE soll_id = ? AND datum <= ?
-      ORDER BY datum, id`, kontoId, stichtag);
-    let guthaben = get('SELECT coalesce(sum(betrag_ct), 0) AS s FROM buchungen WHERE haben_id = ? AND datum <= ?', kontoId, stichtag).s;
-    const offen = [];
+  // Open items of a contract account on a reference date (default: today).
+  // Charges are grouped by due date: one monthly charge (rent + advance payments, or house money) is one item.
+  // Only charges due on or before the reference date count; a charge not paid on its due date is open in full.
+  // Payments settle the oldest due month first. Money paid back to the tenant/owner (e.g. a returned direct
+  // debit) reduces the payments, so the affected month becomes open again.
+  function offenePostenKonto(kontoId, stichtag = new Date().toISOString().slice(0, 10)) {
+    const lasten = all(`SELECT b.id, b.datum, b.monat, b.text, b.betrag_ct FROM buchungen b JOIN konten g ON g.id = b.haben_id
+      WHERE b.soll_id = ? AND g.klasse <> 'geld' AND b.datum <= ? ORDER BY b.datum, b.id`, kontoId, stichtag);
+    let zahlungen = get(`SELECT
+        coalesce((SELECT sum(betrag_ct) FROM buchungen WHERE haben_id = ?1 AND datum <= ?2), 0) -
+        coalesce((SELECT sum(b.betrag_ct) FROM buchungen b JOIN konten g ON g.id = b.haben_id WHERE b.soll_id = ?1 AND g.klasse = 'geld' AND b.datum <= ?2), 0) AS s`,
+    kontoId, stichtag).s;
+    // One item per due date and month (several postings of the same monthly charge belong together).
+    const posten = [];
     for (const l of lasten) {
-      const getilgt = Math.min(guthaben, l.betrag_ct);
-      guthaben -= getilgt;
-      if (l.betrag_ct > getilgt) offen.push({ ...l, offen_ct: l.betrag_ct - getilgt, verzug: Math.max(0, tageZwischen(l.datum, stichtag === '9999-12-31' ? new Date().toISOString().slice(0, 10) : stichtag)) });
+      const key = l.monat ? `${l.datum}|${l.monat}` : `${l.datum}|#${l.id}`;
+      let p = posten.at(-1)?.key === key ? posten.at(-1) : null;
+      if (!p) posten.push((p = { key, id: l.id, datum: l.datum, monat: l.monat, teile: [], soll_ct: 0 }));
+      p.teile.push({ text: l.text, betrag_ct: l.betrag_ct });
+      p.soll_ct += l.betrag_ct;
     }
+    const offen = [];
+    for (const p of posten) {
+      const bezahlt = Math.max(0, Math.min(zahlungen, p.soll_ct));
+      zahlungen -= bezahlt;
+      if (p.soll_ct > bezahlt) {
+        const [y, m] = (p.monat ?? '').split('-');
+        offen.push({
+          id: p.id, datum: p.datum, monat: p.monat,
+          text: p.monat ? `${p.teile.length > 1 ? 'Monatssoll' : p.teile[0].text.replace(/\s\d{2}\/\d{4}.*$/, '')} ${m}/${y}` : p.teile[0].text,
+          teile: p.teile, soll_ct: p.soll_ct, bezahlt_ct: bezahlt, offen_ct: p.soll_ct - bezahlt,
+          status: bezahlt > 0 ? 'teilweise bezahlt' : 'nicht bezahlt',
+          verzug: Math.max(0, tageZwischen(p.datum, stichtag)),
+        });
+      }
+    }
+    const guthaben = Math.max(0, zahlungen);
     return { offen, guthaben_ct: guthaben, summe_ct: offen.reduce((s, o) => s + o.offen_ct, 0) - guthaben };
   }
 
@@ -314,6 +340,9 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
           }
         }
       }
+      // Months in a closed (locked) period are not charged automatically any more.
+      const gesperrt = get(`SELECT wert FROM einstellungen WHERE schluessel = 'festgeschrieben_bis'`)?.wert ?? '0000-00-00';
+      for (const z of zeilen) if (z.datum <= gesperrt) z.vorhanden = true;
       if (!nurVorschau) {
         tx(() => {
           const st = db.prepare(`INSERT INTO buchungen (objekt_id, datum, text, betrag_ct, soll_id, haben_id, art, monat)
@@ -327,7 +356,7 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
       return zeilen;
     },
 
-    offenePosten: (objektId, stichtag = '9999-12-31', typ = null) => {
+    offenePosten: (objektId, stichtag = new Date().toISOString().slice(0, 10), typ = null) => {
       const konten = all(`SELECT k.*, (SELECT max(stufe) FROM mahnungen m WHERE m.konto_id = k.id) AS mahnstufe,
           (SELECT max(datum) FROM mahnungen m WHERE m.konto_id = k.id) AS letzte_mahnung
         FROM konten k WHERE k.objekt_id = ? AND k.klasse = 'person' AND (?2 IS NULL OR k.vertrag_typ = ?2) ORDER BY k.nr`, objektId, typ);

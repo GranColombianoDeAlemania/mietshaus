@@ -236,13 +236,13 @@ export default function App() {
     <div className={`app${ziehen ? ' ziehen' : ''}`} onDragOver={(e) => { e.preventDefault(); setZiehen(true); }}
       onDragLeave={(e) => { if (e.currentTarget === e.target) setZiehen(false); }} onDrop={abgelegt}>
       <header>
-        <div className="brand"><I.House size={19} strokeWidth={2.4} />Hausverwalter</div>
+        <div className="brand"><I.House size={19} strokeWidth={2.4} /><span className="lang">Hausverwalter</span></div>
         <div className="modus" role="tablist">
-          <button role="tab" aria-selected={modus === 'miete'} onClick={() => wechsle('miete')}><I.KeyRound size={15} />Mietverwaltung</button>
-          <button role="tab" aria-selected={modus === 'weg'} onClick={() => wechsle('weg')}><I.Building2 size={15} />WEG-Verwaltung</button>
+          <button role="tab" aria-selected={modus === 'miete'} onClick={() => wechsle('miete')}><I.KeyRound size={15} /><span className="lang">Mietverwaltung</span><span className="kurz">Miete</span></button>
+          <button role="tab" aria-selected={modus === 'weg'} onClick={() => wechsle('weg')}><I.Building2 size={15} /><span className="lang">WEG-Verwaltung</span><span className="kurz">WEG</span></button>
           <button role="tab" aria-selected={modus === 'projekt'} onClick={() => wechsle('projekt')}><I.Hammer size={15} />Projekte</button>
         </div>
-        <button className="schnell" title="Dateien auswählen – sie landen zur Prüfung im Postfach" onClick={schnellAblegen}><I.FilePlus2 size={16} />Dokumente ablegen</button>
+        <button className="schnell" title="Dateien auswählen – sie landen zur Prüfung im Postfach" onClick={schnellAblegen}><I.FilePlus2 size={16} /><span className="lang">Dokumente ablegen</span></button>
         <Suche befehle={befehle} onDokument={setDokOffen} onPerson={setAkte} oeffne={(seite, objektId) => { if (objektId) setObjektId(objektId); setSeite(seite); }} />
         <label className="objektwahl">
           {modus === 'projekt' ? 'Projekt' : 'Objekt'}

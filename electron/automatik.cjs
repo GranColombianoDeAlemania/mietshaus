@@ -75,15 +75,17 @@ module.exports = function automatik({ db, all, get, tx, PERSON_NAME, bh, ab, vw,
       const miete = o.art !== 'weg', weg = o.art !== 'miete';
       const ziel = (s) => ({ objekt_id: o.id, objekt: o.bezeichnung, ziel: s });
 
-      // Arrears: more than one monthly amount, or anything open for 30+ days.
+      // Arrears: monthly charges not (fully) paid by their due date.
       for (const k of all(`SELECT * FROM konten WHERE objekt_id = ? AND klasse = 'person'`, o.id)) {
         const op = bh.offenePostenKonto(k.id, t);
-        if (op.summe_ct <= 0) continue;
-        const alt = Math.max(0, ...op.offen.map((x) => x.verzug));
-        if (alt >= 30 || op.summe_ct >= 50000) {
-          add({ modus: k.vertrag_typ, schluessel: `op:${k.id}:${t.slice(0, 7)}`, stufe: alt >= 30 ? 'rot' : 'orange', kategorie: k.vertrag_typ === 'weg' ? 'Hausgeld' : 'Miete',
-            text: `Rückstand ${k.bezeichnung}: ${euro(op.summe_ct)} (ältester Posten ${alt} Tage).`, ...ziel('op') });
-        }
+        // Only what was not paid by its due date counts; something due today is not yet late.
+        const ueberfaellig = op.offen.filter((x) => x.verzug >= 1);
+        const betrag = Math.max(0, ueberfaellig.reduce((s, x) => s + x.offen_ct, 0) - op.guthaben_ct);
+        if (!betrag) continue;
+        const alt = Math.max(...ueberfaellig.map((x) => x.verzug));
+        const monate = ueberfaellig.map((x) => x.monat ? `${x.monat.slice(5)}/${x.monat.slice(2, 4)}${x.status === 'teilweise bezahlt' ? ' (teilw.)' : ''}` : x.text).join(', ');
+        add({ modus: k.vertrag_typ, schluessel: `op:${k.id}:${t.slice(0, 7)}`, stufe: alt >= 14 ? 'rot' : 'orange', kategorie: k.vertrag_typ === 'weg' ? 'Hausgeld' : 'Miete',
+          text: `Rückstand ${k.bezeichnung}: ${euro(betrag)} – offen: ${monate} (seit ${alt} Tagen).`, ...ziel('op') });
       }
 
       // Returned direct debits in the last 30 days.

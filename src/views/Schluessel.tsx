@@ -38,26 +38,19 @@ export function Schluessel(props: { objekt: Row }) {
     reload();
   }
 
-  async function ausStammdaten() {
-    for (const k of keys ?? []) await call('werteAusStammdaten', k.id);
-    setWerte({});
-    reload();
-  }
 
   return (
     <section>
       <div className="toolbar">
         <h1>Umlageschlüssel – {props.objekt.bezeichnung}</h1>
         <span className="spacer" />
-        <button onClick={ausStammdaten} title="Füllt alle Schlüssel außer „manuell“ neu aus Einheiten und Mietverhältnissen">
-          Aus Stammdaten übernehmen
-        </button>
         <button onClick={() => setEdit({ typ: 'manuell' })}>Neuer Schlüssel</button>
         <button className="primary" disabled={!geaendert} onClick={speichern}>Werte speichern</button>
       </div>
       <p className="hinweis klein">
-        Diese Schlüssel verteilen später in den Abrechnungen die Kosten auf die Einheiten. Klick auf einen Spaltenkopf
-        zum Bearbeiten des Schlüssels; Werte direkt in der Tabelle ändern.
+        Diese Schlüssel verteilen in den Abrechnungen die Kosten auf die Einheiten. Fläche, MEA, Einheiten und Personen kommen
+        automatisch aus den Stammdaten (bei Personen tagegenau aus den Mietverhältnissen); nur „manuelle“ Schlüssel trägst du hier ein.
+        Klick auf einen Spaltenkopf zum Bearbeiten des Schlüssels.
       </p>
       {keys && einheiten && (
         <div className="scroll-x">
@@ -79,6 +72,8 @@ export function Schluessel(props: { objekt: Row }) {
                   <td>{e.nr} – {e.bezeichnung}</td>
                   {keys.map((k) => k.typ === 'zaehler' ? (
                     <td key={k.id} className="num klein hinweis">aus Zählern</td>
+                  ) : k.typ !== 'manuell' ? (
+                    <td key={k.id} className="num" title="Wird automatisch aus den Einheiten bzw. Mietverhältnissen übernommen">{zahl(k.werte[e.id])}</td>
                   ) : (
                     <td key={k.id} className="num">
                       <input

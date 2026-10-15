@@ -9,8 +9,12 @@ module.exports = function akten({ db, all, get, PERSON_NAME, bh }) {
     get(`SELECT d.datei FROM dokumente d WHERE d.objekt_id = ? AND d.einheit_id IS NULL AND d.status <> 'postfach' AND ${BILD}
       ORDER BY (d.typ = 'Foto') DESC, d.id DESC LIMIT 1`, o.id)?.datei ?? null;
 
+  // Arrears: what was not paid by its due date (charges due today are not late yet), less any credit.
   const rueckstand = (objektId, typ) => all(`SELECT id FROM konten WHERE objekt_id = ? AND klasse = 'person' AND (?2 IS NULL OR vertrag_typ = ?2)`, objektId, typ ?? null)
-    .reduce((s, k) => s + Math.max(0, bh.offenePostenKonto(k.id).summe_ct), 0);
+    .reduce((s, k) => {
+      const op = bh.offenePostenKonto(k.id);
+      return s + Math.max(0, op.offen.filter((x) => x.verzug >= 1).reduce((a, x) => a + x.offen_ct, 0) - op.guthaben_ct);
+    }, 0);
 
   function zeitleisteObjekt(objektId) {
     return all(`
@@ -74,8 +78,9 @@ module.exports = function akten({ db, all, get, PERSON_NAME, bh }) {
       if (!o) return null;
       const t = heute();
       const e = get('SELECT count(*) AS n, coalesce(sum(wohnflaeche), 0) AS f, coalesce(sum(mea), 0) AS mea FROM einheiten WHERE objekt_id = ?', objektId);
-      const mieten = get(`SELECT count(*) AS n, coalesce(sum(m.kaltmiete_ct), 0) AS kalt FROM mietverhaeltnisse m JOIN einheiten e ON e.id = m.einheit_id
+      const laufend = all(`SELECT m.id FROM mietverhaeltnisse m JOIN einheiten e ON e.id = m.einheit_id
         WHERE e.objekt_id = ?1 AND m.beginn <= ?2 AND (m.ende IS NULL OR m.ende = '' OR m.ende >= ?2)`, objektId, t);
+      const mieten = { n: laufend.length, kalt: laufend.reduce((s, m) => s + (bh.betraege('miete', m.id, t).kaltmiete_ct ?? 0), 0) };
       const eigner = get(`SELECT count(DISTINCT g.person_id) AS n FROM eigentum g JOIN einheiten e ON e.id = g.einheit_id
         WHERE e.objekt_id = ?1 AND g.beginn <= ?2 AND (g.ende IS NULL OR g.ende = '' OR g.ende >= ?2)`, objektId, t).n;
       return {
@@ -107,7 +112,9 @@ module.exports = function akten({ db, all, get, PERSON_NAME, bh }) {
       ].map((v) => {
         const k = bh.kontoVon(v.typ, v.id);
         const op = k ? bh.offenePostenKonto(k.id) : null;
-        return { ...v, konto: k, saldo_ct: op?.summe_ct ?? 0, offen: op?.offen.length ?? 0 };
+        const b = bh.betraege(v.typ, v.id, v.ende && v.ende < heute() ? v.ende : heute());
+        const monatlich = v.typ === 'weg' ? b.hausgeld_ct ?? 0 : (b.kaltmiete_ct ?? 0) + (b.bk_vz_ct ?? 0) + (b.hk_vz_ct ?? 0) + (b.sonstiges_ct ?? 0);
+        return { ...v, konto: k, saldo_ct: op?.summe_ct ?? 0, offen: op?.offen.length ?? 0, monatlich_ct: monatlich };
       });
       const kontoIds = vertraege.map((v) => v.konto?.id).filter(Boolean);
       const zahlungen = kontoIds.length ? all(`SELECT b.datum, b.text, b.betrag_ct, CASE WHEN b.haben_id IN (${kontoIds.join(',')}) THEN 'ein' ELSE 'aus' END AS richtung

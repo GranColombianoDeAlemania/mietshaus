@@ -108,10 +108,10 @@ export function Mietanpassung(props: { objekt: Row }) {
         <>
           <p className="hinweis klein">Hier hinterlegst du Staffel- und Indexmieten sowie Mieterhöhungen. Jede Änderung gilt ab ihrem Datum und fließt automatisch in die Sollstellung ein.</p>
           <table>
-            <thead><tr><th>Einheit</th><th>Mieter</th><th>Beginn</th><th className="num">Kaltmiete (Vertrag)</th><th /></tr></thead>
+            <thead><tr><th>Einheit</th><th>Mieter</th><th>Beginn</th><th className="num">Kaltmiete bei Vertragsbeginn</th><th className="num">Kaltmiete heute</th><th /></tr></thead>
             <tbody>
               {vertraege?.filter((v) => v.aktuell).map((v) => (
-                <tr key={v.id}><td>{v.einheit}</td><td>{v.name}</td><td>{datum(v.beginn)}</td><td className="num">{euro(v.kaltmiete_ct)}</td>
+                <tr key={v.id}><td>{v.einheit}</td><td>{v.name}</td><td>{datum(v.beginn)}</td><td className="num">{euro(v.kaltmiete_ct)}</td><td className="num"><b>{euro(v.akt_kaltmiete_ct)}</b></td>
                   <td className="aktionen"><button onClick={() => setOffen(v)}>Anpassungen</button></td></tr>
               ))}
             </tbody>

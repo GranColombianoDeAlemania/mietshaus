@@ -40,13 +40,13 @@ export function OffenePosten(props: { objekt: Row; modus: Modus }) {
         <button className="primary" disabled={!faellig.length} onClick={() => setMahnen(faellig)}>Mahnlauf ({faellig.length})</button>
       </div>
       <table>
-        <thead><tr><th>Konto</th><th>Name</th><th className="num">Offene Posten</th><th className="num">Ältester Verzug</th><th>Letzte Mahnung</th><th className="num">Rückstand</th><th /></tr></thead>
+        <thead><tr><th>Konto</th><th>Name</th><th>Offene Monate</th><th className="num">Ältester Verzug</th><th>Letzte Mahnung</th><th className="num">Rückstand</th><th /></tr></thead>
         <tbody>
           {rueckstand.map((r) => (
             <tr key={r.konto.id} onDoubleClick={() => setDetail(r)}>
               <td className="num">{r.konto.nr}</td>
               <td>{r.konto.bezeichnung}</td>
-              <td className="num">{r.offen.length}</td>
+              <td className="klein">{r.offen.map((o: Row) => (o.monat ? `${o.monat.slice(5)}/${o.monat.slice(2, 4)}${o.status === 'teilweise bezahlt' ? ' (teilw.)' : ''}` : o.text)).join(', ')}</td>
               <td className="num">{Math.max(0, ...r.offen.map((o: Row) => o.verzug))} Tage</td>
               <td>{r.konto.mahnstufe ? `${STUFEN[Math.min(r.konto.mahnstufe, 3)]} am ${datum(r.konto.letzte_mahnung)}` : '–'}</td>
               <td className="num"><b>{euro(r.summe_ct)}</b></td>
@@ -73,16 +73,24 @@ export function OffenePosten(props: { objekt: Row; modus: Modus }) {
         </>
       )}
       {detail && (
-        <Dialog titel={`Offene Posten ${detail.konto.bezeichnung}`} onClose={() => setDetail(null)}>
+        <Dialog titel={`Offene Posten ${detail.konto.bezeichnung}`} onClose={() => setDetail(null)} breit>
           <table>
-            <thead><tr><th>Datum</th><th>Text</th><th className="num">Verzug</th><th className="num">Offen</th></tr></thead>
+            <thead><tr><th>Fällig am</th><th>Forderung</th><th className="num">Soll</th><th className="num">bezahlt</th><th className="num">offen</th><th>Status</th><th className="num">Verzug</th></tr></thead>
             <tbody>
               {detail.offen.map((o: Row) => (
-                <tr key={o.id}><td>{datum(o.datum)}</td><td>{o.text}</td><td className="num">{o.verzug} T.</td><td className="num">{euro(o.offen_ct)}</td></tr>
+                <tr key={o.id}>
+                  <td>{datum(o.datum)}</td>
+                  <td>{o.text}{o.teile?.length > 1 && <div className="klein hinweis">{o.teile.map((t: Row) => `${t.text.replace(/\s\d{2}\/\d{4}.*$/, '')} ${euro(t.betrag_ct)}`).join(' · ')}</div>}</td>
+                  <td className="num">{euro(o.soll_ct)}</td><td className="num">{o.bezahlt_ct ? euro(o.bezahlt_ct) : '–'}</td>
+                  <td className="num"><b>{euro(o.offen_ct)}</b></td>
+                  <td><span className={`tag ${o.status === 'nicht bezahlt' ? 'fehlertext' : ''}`}>{o.status}</span></td>
+                  <td className="num">{o.verzug ? `${o.verzug} T.` : 'heute fällig'}</td>
+                </tr>
               ))}
             </tbody>
-            <tfoot><tr><td colSpan={3}>Summe {detail.guthaben_ct > 0 ? `(abzgl. ${euro(detail.guthaben_ct)} Guthaben)` : ''}</td><td className="num"><Betrag ct={detail.summe_ct} fett /></td></tr></tfoot>
+            <tfoot><tr><td colSpan={4}>Summe {detail.guthaben_ct > 0 ? `(abzgl. ${euro(detail.guthaben_ct)} Guthaben)` : ''}</td><td className="num"><Betrag ct={detail.summe_ct} fett /></td><td colSpan={2} /></tr></tfoot>
           </table>
+          <p className="klein hinweis">Zahlungen werden immer auf den ältesten offenen Monat angerechnet. „Teilweise bezahlt“ heißt: Für diesen Monat ist ein Teil eingegangen, der Rest fehlt.</p>
         </Dialog>
       )}
       {mahnen && <Mahnlauf objekt={props.objekt} faelle={mahnen} stichtag={stichtag} onClose={() => { setMahnen(null); reload(); }} />}
@@ -108,9 +116,9 @@ function Mahnlauf(props: { objekt: Row; faelle: Row[]; stichtag: string; onClose
       const a = auswahl[f.konto.id];
       if (!a?.an) continue;
       const geb = parseCent(gebuehr[a.stufe]);
-      const posten = tabelle(['Datum', 'Posten', '#rOffen'],
-        f.offen.map((o: Row) => [datum(o.datum), esc(o.text), `#r${euro(o.offen_ct)}`]),
-        { summe: ['', 'Summe offener Posten', `#r${euro(f.summe_ct)}`] });
+      const posten = tabelle(['Fällig am', 'Forderung', '#rSoll', '#rgezahlt', '#roffen'],
+        f.offen.map((o: Row) => [datum(o.datum), esc(o.text), `#r${euro(o.soll_ct)}`, `#r${o.bezahlt_ct ? euro(o.bezahlt_ct) : '–'}`, `#r${euro(o.offen_ct)}`]),
+        { summe: ['', f.guthaben_ct > 0 ? `Summe abzüglich Guthaben ${euro(f.guthaben_ct)}` : 'Summe offener Forderungen', '', '', `#r${euro(f.summe_ct)}`] });
       const text = [
         a.stufe === 0
           ? 'sicher ist es Ihrer Aufmerksamkeit entgangen: Auf Ihrem Konto sind folgende Beträge noch offen.'

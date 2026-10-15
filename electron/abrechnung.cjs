@@ -55,9 +55,11 @@ module.exports = function abrechnung({ db, all, get, tx, PERSON_NAME, bh }) {
         const einheiten = [...new Set(segmente.map((s) => s.einheit.id))];
         gesamt = einheiten.reduce((sum, eid) => sum + verbrauchEinheit(eid, von, bis), 0);
       } else {
-        wert = (s) => (werte[s.einheit.id] ?? 0) * s.tage / periodeTage;
-        const einheiten = [...new Set(segmente.map((s) => s.einheit.id))];
-        gesamt = einheiten.reduce((sum, eid) => sum + (werte[eid] ?? 0), 0);
+        // Area, co-ownership shares and unit count always come straight from the units; only manual keys use stored values.
+        const einheitWert = (e) => (k.typ === 'flaeche' ? e.wohnflaeche ?? 0 : k.typ === 'mea' ? e.mea ?? 0 : k.typ === 'einheiten' ? 1 : werte[e.id] ?? 0);
+        wert = (s) => einheitWert(s.einheit) * s.tage / periodeTage;
+        const einheiten = [...new Map(segmente.map((s) => [s.einheit.id, s.einheit])).values()];
+        gesamt = einheiten.reduce((sum, e) => sum + einheitWert(e), 0);
       }
       const r = { k, wert, gesamt };
       cache.set(schluesselId, r);
