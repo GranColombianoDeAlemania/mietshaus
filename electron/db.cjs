@@ -564,6 +564,30 @@ const MIGRATIONS = [
     notiz TEXT
   );
   `,
+  `
+  -- Letting: offer per vacant unit and interested parties.
+  CREATE TABLE angebote (
+    einheit_id INTEGER PRIMARY KEY REFERENCES einheiten(id) ON DELETE CASCADE,
+    kaltmiete_ct INTEGER, bk_vz_ct INTEGER, hk_vz_ct INTEGER, kaution_ct INTEGER,
+    frei_ab TEXT, titel TEXT, beschreibung TEXT, ausstattung TEXT, energie TEXT,
+    aktiv INTEGER NOT NULL DEFAULT 1
+  );
+  CREATE TABLE interessenten (
+    id INTEGER PRIMARY KEY,
+    einheit_id INTEGER NOT NULL REFERENCES einheiten(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    email TEXT, telefon TEXT,
+    status TEXT NOT NULL DEFAULT 'neu',
+    besichtigung TEXT,
+    personen INTEGER, einkommen_ct INTEGER, beruf TEXT,
+    haustiere TEXT, einzug_wunsch TEXT,
+    selbstauskunft INTEGER NOT NULL DEFAULT 0, bonitaet INTEGER NOT NULL DEFAULT 0,
+    bewertung INTEGER,
+    quelle TEXT, notiz TEXT,
+    person_id INTEGER REFERENCES personen(id) ON DELETE SET NULL,
+    erstellt TEXT NOT NULL DEFAULT (date('now'))
+  );
+  `,
 ];
 
 // Columns the renderer may write, per table. Everything else is rejected.
@@ -605,6 +629,8 @@ const TABLES = {
   projekte: ['titel', 'beschreibung', 'status', 'objekt_id', 'einheit_id', 'kosten_konto_id', 'budget_ct', 'beginn', 'ende', 'notiz'],
   projektaufgaben: ['projekt_id', 'titel', 'gewerk', 'beginn', 'ende', 'fortschritt', 'nach_id', 'person_id', 'meilenstein', 'sort', 'notiz'],
   uebergaben: ['einheit_id', 'vertrag_id', 'art', 'datum', 'teilnehmer', 'raeume', 'zaehler', 'schluessel', 'notiz', 'unterschrift_mieter', 'unterschrift_vermieter', 'abgeschlossen', 'dokument_id'],
+  interessenten: ['einheit_id', 'name', 'email', 'telefon', 'status', 'besichtigung', 'personen', 'einkommen_ct', 'beruf', 'haustiere', 'einzug_wunsch',
+    'selbstauskunft', 'bonitaet', 'bewertung', 'quelle', 'notiz', 'person_id'],
   darlehen: ['objekt_id', 'bank', 'vertragsnr', 'betrag_ct', 'auszahlung', 'zinssatz', 'tilgung_satz', 'rate_ct', 'erste_rate', 'zinsbindung_bis', 'sondertilgung_ct', 'notiz'],
   projektposten: ['projekt_id', 'art', 'datum', 'firma', 'person_id', 'titel', 'betrag_ct', 'status', 'bezahlt_am', 'faellig', 'aufgabe_id', 'dokument_id', 'notiz'],
 };
@@ -637,7 +663,7 @@ function open(file, quelle = 'app') {
 }
 
 // Tables whose changes are logged, and columns left out of the log (large or derived).
-const PROTOKOLLIERT = ['uebergaben', 'objekte', 'einheiten', 'personen', 'mietverhaeltnisse', 'eigentum', 'konten', 'buchungen', 'anpassungen',
+const PROTOKOLLIERT = ['interessenten', 'uebergaben', 'objekte', 'einheiten', 'personen', 'mietverhaeltnisse', 'eigentum', 'konten', 'buchungen', 'anpassungen',
   'kautionen', 'kautionsbewegungen', 'dokumente', 'darlehen', 'beschluesse', 'projekte', 'projektposten', 'zaehlerstaende', 'mahnungen', 'abrechnungen'];
 const NICHT_PROTOKOLLIEREN = new Set(['text', 'daten', 'erfasst', 'unterschrift_mieter', 'unterschrift_vermieter']);
 
@@ -854,6 +880,11 @@ function api(db) {
   const au = automatik({ db, all, get, tx, PERSON_NAME, bh, ab, vw, einstellungen: basis.einstellungen });
   return {
     ...bh, ...ab, ...vw, ...ar, ...au, ...pj, ...aw, ...ak, ...dl, ...mw, ...basis,
+    zusage: (interessentId, beginn) => {
+      const r = mw.zusage(interessentId, beginn);
+      bh.syncKonten();
+      return r;
+    },
     // Bank lines paid to a loan account are booked as instalments (interest + repayment).
     bankBuchen: (objektId, geldKontoId, zeilen, lernen) => {
       const istDarlehen = (z) => z.konto_id && z.betrag_ct < 0 && dl.darlehenZuKonto(z.konto_id);

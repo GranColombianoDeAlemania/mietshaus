@@ -2,6 +2,7 @@
 import { useState } from 'react';
 import { anrede, briefName, call, datum, euro, fehler, heute, personName, type Modus, type Row } from '../api';
 import { useLoad } from '../useLoad';
+import { useAktion } from '../aktion';
 import { Liste } from '../Liste';
 import { Dialog, Tabs } from '../ui';
 import { FormDialog, type Field } from '../Form';
@@ -164,6 +165,7 @@ export function Vorgaenge(props: { objekt: Row }) {
   const [personen] = useLoad<Row[]>(() => call('personen'), []);
   const [edit, setEdit] = useState<Row | null>(null);
   const [offen, setOffen] = useState<Row | null>(null);
+  useAktion('neuer-vorgang', () => setEdit({ objekt_id: props.objekt.id, status: 'offen', prioritaet: 2 }));
   const felder: Field[] = [
     { key: 'titel', label: 'Titel', required: true, wide: true },
     { key: 'kategorie', label: 'Kategorie', type: 'select', options: ['Schaden / Reparatur', 'Mieteranfrage', 'Eigentümeranfrage', 'Beschwerde', 'Vermietung', 'Verwaltung', 'Sonstiges'].map((k) => [k, k]) },
@@ -234,6 +236,7 @@ export function Termine(props: { objekte: Row[] }) {
   const [rows, reload] = useLoad<Row[]>(() => call('termineListe', von, bis), [von]);
   const [personen] = useLoad<Row[]>(() => call('personen'), []);
   const [edit, setEdit] = useState<Row | null>(null);
+  useAktion('neuer-termin', () => setEdit({ datum: heute() }));
   const felder: Field[] = [
     { key: 'titel', label: 'Titel', required: true, wide: true }, { key: 'datum', label: 'Datum', type: 'date', required: true },
     { key: 'uhrzeit', label: 'Uhrzeit (z. B. 14:30)' }, { key: 'dauer_min', label: 'Dauer (Minuten)', type: 'number' }, { key: 'ort', label: 'Ort' },

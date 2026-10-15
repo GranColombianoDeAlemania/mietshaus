@@ -22,7 +22,9 @@ import { Kautionen, Mietanpassung, Schluesselverwaltung, Versicherungen } from '
 import { Beschluesse, Kontakte, Versammlungen } from './views/WegExtras';
 import { Briefe, Termine, Vorgaenge } from './views/Kommunikation';
 import { Archiv, DokumentDialog, Postfach, Rechnungen } from './views/Archiv';
-import { Suche } from './Suche';
+import { Suche, type Befehl } from './Suche';
+import { aktionSetzen } from './aktion';
+import { anzeige } from './anzeige';
 import * as I from 'lucide-react';
 
 // One icon per page; unknown ids fall back to a neutral dot.
@@ -40,6 +42,7 @@ const ICON: Record<string, I.LucideIcon> = {
 import { Export } from './views/Export';
 import { Protokoll } from './views/Protokoll';
 import { Uebergaben } from './views/Uebergabe';
+import { Vermietung } from './views/Vermietung';
 import { Auswertungen } from './views/Auswertungen';
 import { Darlehen, PersonAkte, Steckbrief } from './views/Steckbrief';
 import { ProjektCockpit, ProjektDokumente, ProjektKosten, ProjektListe, ProjektZeitplan } from './views/Projekte';
@@ -83,6 +86,7 @@ const SEITEN: Seite[] = [
   { id: 'wipl', label: 'Wirtschaftsplan', gruppe: 'Abrechnung', objekt: true, modi: ['weg'], render: (c) => <Wirtschaftsplan key={c.objekt.id} objekt={c.objekt} /> },
   { id: 'ruecklagen', label: 'Rücklagen & Sonderumlagen', gruppe: 'Abrechnung', objekt: true, modi: ['weg'], render: (c) => <Ruecklagen key={c.objekt.id} objekt={c.objekt} /> },
   { id: 'auswertung', label: 'Rendite & Steuer', gruppe: 'Abrechnung', objekt: true, modi: ['miete'], render: (c) => <Auswertungen key={c.objekt.id} objekt={c.objekt} /> },
+  { id: 'vermietung', label: 'Vermietung', gruppe: 'Verwaltung', objekt: true, modi: ['miete'], render: (c) => <Vermietung key={c.objekt.id} objekt={c.objekt} oeffne={c.oeffne} /> },
   { id: 'uebergabe', label: 'Übergaben & Mieterwechsel', gruppe: 'Verwaltung', objekt: true, modi: ['miete'], render: (c) => <Uebergaben key={c.objekt.id} objekt={c.objekt} /> },
   { id: 'kaution', label: 'Kautionen', gruppe: 'Verwaltung', objekt: true, modi: ['miete'], render: (c) => <Kautionen key={c.objekt.id} objekt={c.objekt} /> },
   { id: 'anpassung', label: 'Mietanpassungen', gruppe: 'Verwaltung', objekt: true, modi: ['miete'], render: (c) => <Mietanpassung key={c.objekt.id} objekt={c.objekt} /> },
@@ -201,6 +205,29 @@ export default function App() {
   const REIHENFOLGE = ['Start', 'Projekte', 'Stammdaten', 'Dokumente', 'Buchhaltung', 'Abrechnung', 'Verwaltung', 'Kommunikation', 'System'];
   const gruppen = [...new Set(sichtbar.map((s) => s.gruppe))].sort((a, b) => REIHENFOLGE.indexOf(a) - REIHENFOLGE.indexOf(b));
 
+  // Command palette: frequent actions first, then every page of the current mode.
+  const geheZu = (s: string, aktion?: string) => { if (aktion) aktionSetzen(aktion); setSeite(s); };
+  const befehle: Befehl[] = [
+    { label: 'Dokumente ablegen', stichworte: 'hochladen import scan', icon: I.FilePlus2, run: schnellAblegen },
+    ...(modus !== 'projekt' ? [
+      { label: 'Neue Buchung', stichworte: 'buchen rechnung zahlung', icon: I.BookOpen, run: () => geheZu('buchen', 'neue-buchung') },
+      { label: 'Mahnlauf / offene Posten', stichworte: 'mahnung rückstand', icon: I.BadgeEuro, run: () => geheZu('op') },
+      { label: 'Kontoauszug importieren', stichworte: 'bank camt mt940 csv', icon: I.Wallet, run: () => geheZu('bank') },
+      { label: 'Neuer Vorgang', stichworte: 'aufgabe schaden anfrage', icon: I.ListChecks, run: () => geheZu('vorgaenge', 'neuer-vorgang') },
+      { label: 'Neues Objekt', stichworte: 'haus anlegen', icon: I.Building2, run: () => geheZu('objekte', 'neues-objekt') },
+    ] : []),
+    { label: 'Neue Person', stichworte: 'kontakt mieter eigentümer adresse', icon: I.UserPlus, run: () => geheZu('personen', 'neue-person') },
+    { label: 'Neuer Termin', stichworte: 'kalender', icon: I.CalendarPlus, run: () => geheZu('termine', 'neuer-termin') },
+    { label: 'Zur Mietverwaltung', icon: I.KeyRound, run: () => wechsle('miete') },
+    { label: 'Zur WEG-Verwaltung', icon: I.Building2, run: () => wechsle('weg') },
+    { label: 'Zu den Projekten', icon: I.Hammer, run: () => wechsle('projekt') },
+    { label: 'Hell / Dunkel umschalten', stichworte: 'dunkelmodus farbschema', icon: I.Moon,
+      run: () => anzeige.setzeThema(document.documentElement.dataset.thema === 'dunkel' ? 'hell' : 'dunkel') },
+    { label: 'Datensicherung erstellen', stichworte: 'backup', icon: I.Download, run: () => { window.hv.sicherung(); } },
+    ...SEITEN.filter((x) => x.alle || (x.modi ? x.modi.includes(modus) : modus !== 'projekt'))
+      .map((x) => ({ label: `Gehe zu: ${typeof x.label === 'function' ? x.label(modus) : x.label}`, stichworte: x.gruppe, icon: ICON[x.id], run: () => setSeite(x.id) })),
+  ];
+
   const ctx: Ctx | null = objekte
     ? { modus, objekt: objekt!, objekte, ladeObjekte, oeffne: (s, id) => { if (id) setObjektId(id); setSeite(s); }, akte: setAkte }
     : null;
@@ -216,7 +243,7 @@ export default function App() {
           <button role="tab" aria-selected={modus === 'projekt'} onClick={() => wechsle('projekt')}><I.Hammer size={15} />Projekte</button>
         </div>
         <button className="schnell" title="Dateien auswählen – sie landen zur Prüfung im Postfach" onClick={schnellAblegen}><I.FilePlus2 size={16} />Dokumente ablegen</button>
-        <Suche onDokument={setDokOffen} onPerson={setAkte} oeffne={(seite, objektId) => { if (objektId) setObjektId(objektId); setSeite(seite); }} />
+        <Suche befehle={befehle} onDokument={setDokOffen} onPerson={setAkte} oeffne={(seite, objektId) => { if (objektId) setObjektId(objektId); setSeite(seite); }} />
         <label className="objektwahl">
           {modus === 'projekt' ? 'Projekt' : 'Objekt'}
           <select value={objektId ?? ''} onChange={(e) => setObjektId(Number(e.target.value))} disabled={!objekte?.length}>

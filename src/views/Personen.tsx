@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { call, personName, type Row } from '../api';
 import { FormDialog, type Field } from '../Form';
 import { useLoad } from '../useLoad';
+import { useAktion } from '../aktion';
 
 const FELDER: Field[] = [
   { key: 'anrede', label: 'Anrede', type: 'select', options: ['Herr', 'Frau', 'Divers', 'Firma', 'Eheleute'].map((a) => [a, a]) },
@@ -26,6 +27,7 @@ const FELDER: Field[] = [
 export function Personen(props: { onAkte?: (id: number) => void }) {
   const [rows, reload] = useLoad<Row[]>(() => call('personen'), []);
   const [edit, setEdit] = useState<Row | null>(null);
+  useAktion('neue-person', () => setEdit({ land: 'Deutschland' }));
   const [suche, setSuche] = useState(() => {
     // Set by the global search when it opens a person.
     const s = sessionStorage.getItem('personSuche') ?? '';

@@ -93,6 +93,40 @@ module.exports = function mieterwechsel({ db, all, get, tx, PERSON_NAME }) {
       ON CONFLICT (vertrag_id) DO UPDATE SET kuendigung_eingang = excluded.kuendigung_eingang, kuendigung_durch = excluded.kuendigung_durch,
         schritte = excluded.schritte, notiz = excluded.notiz`).run(vertragId, w.kuendigung_eingang ?? null, w.kuendigung_durch ?? null, JSON.stringify(w.schritte ?? {}), w.notiz ?? null),
 
+    // Units that are vacant now or become vacant within 4 months, with their offer and interested parties.
+    vermietung: (objektId) => {
+      const t = new Date().toISOString().slice(0, 10);
+      const in4 = new Date(Date.now() + 122 * 864e5).toISOString().slice(0, 10);
+      return all(`SELECT e.*, (SELECT max(m.ende) FROM mietverhaeltnisse m WHERE m.einheit_id = e.id AND m.ende IS NOT NULL AND m.ende <> '') AS letztes_ende,
+          (SELECT count(*) FROM interessenten i WHERE i.einheit_id = e.id AND i.status NOT IN ('absage', 'vermietet')) AS interessenten
+        FROM einheiten e WHERE e.objekt_id = ?1
+          AND NOT EXISTS (SELECT 1 FROM mietverhaeltnisse m WHERE m.einheit_id = e.id AND m.beginn <= ?3 AND (m.ende IS NULL OR m.ende = '' OR m.ende > ?3))
+          AND NOT EXISTS (SELECT 1 FROM eigentum g WHERE g.einheit_id = e.id AND g.selbstnutzer = 1 AND (g.ende IS NULL OR g.ende = '' OR g.ende >= ?2))
+        ORDER BY e.nr`, objektId, t, in4)
+        .map((e) => ({ ...e, angebot: get('SELECT * FROM angebote WHERE einheit_id = ?', e.id) ?? null }));
+    },
+    angebotSpeichern: (einheitId, a) => db.prepare(`INSERT INTO angebote (einheit_id, kaltmiete_ct, bk_vz_ct, hk_vz_ct, kaution_ct, frei_ab, titel, beschreibung, ausstattung, energie)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (einheit_id) DO UPDATE SET kaltmiete_ct = excluded.kaltmiete_ct, bk_vz_ct = excluded.bk_vz_ct,
+      hk_vz_ct = excluded.hk_vz_ct, kaution_ct = excluded.kaution_ct, frei_ab = excluded.frei_ab, titel = excluded.titel, beschreibung = excluded.beschreibung,
+      ausstattung = excluded.ausstattung, energie = excluded.energie, aktiv = 1`).run(einheitId, a.kaltmiete_ct ?? null, a.bk_vz_ct ?? null, a.hk_vz_ct ?? null,
+      a.kaution_ct ?? null, a.frei_ab ?? null, a.titel ?? null, a.beschreibung ?? null, a.ausstattung ?? null, a.energie ?? null),
+    interessentenListe: (einheitId) => all('SELECT * FROM interessenten WHERE einheit_id = ? ORDER BY bewertung DESC, id', einheitId),
+
+    // Accepting an applicant: person and tenancy are created from the applicant and the offer.
+    zusage: (interessentId, beginn) => tx(() => {
+      const i = get('SELECT * FROM interessenten WHERE id = ?', interessentId);
+      const a = get('SELECT * FROM angebote WHERE einheit_id = ?', i.einheit_id) ?? {};
+      const teile = i.name.trim().split(/\s+/);
+      const personId = i.person_id ?? Number(db.prepare('INSERT INTO personen (vorname, nachname, email, telefon) VALUES (?, ?, ?, ?)')
+        .run(teile.length > 1 ? teile.slice(0, -1).join(' ') : null, teile.at(-1), i.email ?? null, i.telefon ?? null).lastInsertRowid);
+      const vid = Number(db.prepare(`INSERT INTO mietverhaeltnisse (einheit_id, person_id, beginn, kaltmiete_ct, bk_vz_ct, hk_vz_ct, kaution_ct, personen_anzahl)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(i.einheit_id, personId, beginn, a.kaltmiete_ct ?? 0, a.bk_vz_ct ?? 0, a.hk_vz_ct ?? 0, a.kaution_ct ?? 0, i.personen ?? 1).lastInsertRowid);
+      db.prepare(`UPDATE interessenten SET status = 'vermietet', person_id = ? WHERE id = ?`).run(personId, interessentId);
+      db.prepare(`UPDATE interessenten SET status = 'absage' WHERE einheit_id = ? AND id <> ? AND status NOT IN ('absage', 'vermietet')`).run(i.einheit_id, interessentId);
+      db.prepare(`UPDATE angebote SET aktiv = 0 WHERE einheit_id = ?`).run(i.einheit_id);
+      return { person_id: personId, vertrag_id: vid };
+    }),
+
     laufendeWechsel: (objektId) => all(`SELECT w.*, m.ende, e.bezeichnung AS einheit, ${PERSON_NAME} AS name FROM mieterwechsel w
       JOIN mietverhaeltnisse m ON m.id = w.vertrag_id JOIN einheiten e ON e.id = m.einheit_id JOIN personen p ON p.id = m.person_id
       WHERE e.objekt_id = ? ORDER BY m.ende`, objektId).map((w) => ({ ...w, schritte: JSON.parse(w.schritte) })),

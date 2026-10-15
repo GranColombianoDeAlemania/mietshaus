@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { call, OBJEKT_ART, zahl, type Modus, type Row } from '../api';
 import { FormDialog, type Field } from '../Form';
+import { useAktion } from '../aktion';
 
 const FELDER: Field[] = [
   { key: 'bezeichnung', label: 'Bezeichnung', required: true, wide: true },
@@ -26,6 +27,7 @@ const FELDER: Field[] = [
 
 export function Objekte(props: { modus: Modus; objekte: Row[]; reload: () => void; onOpen: (id: number) => void }) {
   const [edit, setEdit] = useState<Row | null>(null);
+  useAktion('neues-objekt', () => setEdit({ art: props.modus, wj_beginn: '01-01' }));
 
   return (
     <section>

@@ -54,6 +54,9 @@ db.save('projektposten', { projekt_id: pr, art: 'auftrag', firma: 'Gerüstbau Kr
 db.save('projektposten', { projekt_id: pr, art: 'rechnung', firma: 'Gerüstbau Krause', titel: 'Rechnung Gerüst', betrag_ct: 465000, datum: `${jahr}-09-30`, aufgabe_id: g1, status: 'bezahlt' });
 db.save('projektposten', { projekt_id: pr, art: 'rechnung', firma: 'Dach GmbH', titel: '1. Abschlag', betrag_ct: 1200000, datum: `${jahr}-10-08`, faellig: `${jahr}-10-22`, aufgabe_id: g3 });
 db.save('projekte', { titel: 'Renovierung Ferienwohnung', status: 'planung', budget_ct: 1500000 });
+db.save('interessenten', { einheit_id: e[3], name: 'Lena Neumann', email: 'lena@example.de', personen: 2, einkommen_ct: 420000, beruf: 'Ärztin', bewertung: 5, status: 'auskunft' });
+db.save('interessenten', { einheit_id: e[3], name: 'Max Huber', personen: 1, einkommen_ct: 260000, beruf: 'Student', bewertung: 3, status: 'besichtigung' });
+db.save('interessenten', { einheit_id: e[3], name: 'Familie Yilmaz', personen: 4, einkommen_ct: 510000, bewertung: 4, status: 'neu' });
 db.save('schluessel', { objekt_id: o, bezeichnung: 'Haustür / Wohnung', nummer: 'A-12', anzahl: 8 });
 db.save('termine', { titel: 'Wohnungsübergabe EG rechts', datum: new Date(Date.now() + 2 * 864e5).toISOString().slice(0, 10), uhrzeit: '10:00', objekt_id: o });
 ipcMain.handle('db', (_e, fn, args) => db[fn](...args));
@@ -172,6 +175,11 @@ app.whenReady().then(async () => {
   await js(`document.querySelector('.toolbar select')?.dispatchEvent(new Event('change'))`);
   await js(`(() => { const s = document.querySelector('section .toolbar select'); s.value = s.options[1].value; s.dispatchEvent(new Event('change', { bubbles: true })); })()`); await wait(600);
   await shot('68-mieterwechsel'); await click('Schließen');
+  await click('Vermietung'); await wait(600); await shot('69-vermietung');
+  await js(`(() => { const i = document.querySelector('.globalsuche input'); i.focus(); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(i, 'neu'); i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  await wait(600); await shot('70-befehlspalette');
+  await js(`document.querySelector('.globalsuche input').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))`); await wait(800);
+  console.log('PALETTE →', await js(`document.querySelector('main h1')?.textContent + ' | dialog: ' + (document.querySelector('.dialog h2, .panel .tabs')?.textContent ?? '-')`));
   await js(`document.documentElement.dataset.thema = 'dunkel'`);
   await click('Cockpit'); await wait(700); await shot('64-dunkel-cockpit');
   await click('WEG-Verwaltung'); await click('Konten'); await wait(500); await shot('65-dunkel-weg-konten');

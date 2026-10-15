@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { betrag, call, datum, diesesJahr, fehler, fehlerText, heute, parseCent, type Row } from '../api';
 import { useLoad } from '../useLoad';
 import { KontoSelect, Tabs, Zeitraum } from '../ui';
+import { useAktion } from '../aktion';
 
 type Art = 'einnahme' | 'ausgabe' | 'frei';
 type Pos = { gegen_id: number | ''; soll_id: number | ''; haben_id: number | ''; betrag: string; text: string };
@@ -19,6 +20,7 @@ export function Buchen(props: { objekt: Row }) {
   });
   const [rows, reload] = useLoad<Row[]>(() => call('buchungen', props.objekt.id, { von, bis, suche }), [props.objekt.id, von, bis, suche]);
   const [offen, setOffen] = useState(false);
+  useAktion('neue-buchung', () => setOffen(true));
 
   return (
     <section>
