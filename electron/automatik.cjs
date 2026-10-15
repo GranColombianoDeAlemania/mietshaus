@@ -1,0 +1,228 @@
+// Automation and checks: runs routine work by itself (monthly charges) and reports what needs a decision
+// or is missing. Each hint has a stable key so it can be snoozed or marked as done.
+const { tageZwischen } = require('./buchhaltung.cjs');
+
+const heute = () => new Date().toISOString().slice(0, 10);
+const plusTage = (iso, n) => new Date(Date.parse(iso) + n * 864e5).toISOString().slice(0, 10);
+const plusMonate = (iso, n) => {
+  const d = new Date(iso.slice(0, 7) + '-01T00:00:00Z');
+  d.setUTCMonth(d.getUTCMonth() + n);
+  return d.toISOString().slice(0, 10);
+};
+const euro = (ct) => new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format((ct ?? 0) / 100);
+const datumDe = (iso) => (iso ? iso.split('-').reverse().join('.') : '');
+
+module.exports = function automatik({ db, all, get, tx, PERSON_NAME, bh, ab, vw, einstellungen }) {
+  const einst = () => einstellungen();
+
+  // Monthly charges up to the current month for all objects. Starts with the month automation was switched on,
+  // so older months are never filled in behind the user's back.
+  function sollstellungAutomatisch() {
+    const e = einst();
+    if (e.auto_soll === '0') return { erzeugt: 0 };
+    const monat = heute().slice(0, 7);
+    let ab_monat = e.auto_soll_ab;
+    if (!ab_monat) {
+      ab_monat = monat;
+      db.prepare(`INSERT INTO einstellungen (schluessel, wert) VALUES ('auto_soll_ab', ?) ON CONFLICT (schluessel) DO NOTHING`).run(ab_monat);
+    }
+    let erzeugt = 0;
+    for (const o of all('SELECT id FROM objekte')) {
+      const neu = bh.sollstellung(o.id, ab_monat, monat, true).filter((z) => !z.vorhanden);
+      if (neu.length) {
+        bh.sollstellung(o.id, ab_monat, monat, false);
+        erzeugt += neu.length;
+      }
+    }
+    return { erzeugt, ab_monat };
+  }
+
+  function lauf() {
+    const r = sollstellungAutomatisch();
+    db.prepare(`INSERT INTO einstellungen (schluessel, wert) VALUES ('auto_letzter_lauf', ?) ON CONFLICT (schluessel) DO UPDATE SET wert = excluded.wert`)
+      .run(new Date().toISOString());
+    return r;
+  }
+
+  // ---------- checks ----------
+  // stufe: 'rot' (handeln), 'orange' (bald / prüfen), 'gelb' (Chance / Info). ziel: page to open in the app.
+  function hinweise({ alle = false } = {}) {
+    const h = [];
+    const add = (x) => h.push(x);
+    const t = heute();
+    const jahr = Number(t.slice(0, 4));
+    const monat = Number(t.slice(5, 7));
+    const objekte = all('SELECT * FROM objekte ORDER BY bezeichnung');
+    const e = einst();
+
+    if (!e.verwalter_name) add({ schluessel: 'stamm:verwalter', stufe: 'orange', kategorie: 'Stammdaten', text: 'Verwalterdaten fehlen – sie stehen als Absender auf allen Briefen.', ziel: 'einstellungen' });
+
+    const postfach = get(`SELECT count(*) AS n FROM dokumente WHERE status = 'postfach'`).n;
+    if (postfach) add({ schluessel: 'dok:postfach', stufe: 'orange', kategorie: 'Dokumente', text: `${postfach} Dokument(e) im Postfach warten auf Ablage.`, ziel: 'postfach', dauerhaft: true });
+    const fehler = get(`SELECT count(*) AS n FROM dokumente WHERE analyse LIKE 'fehler%'`).n;
+    if (fehler) add({ schluessel: 'dok:fehler', stufe: 'gelb', kategorie: 'Dokumente', text: `${fehler} Dokument(e) konnten nicht gelesen werden.`, ziel: 'archiv' });
+
+    for (const r of all(`SELECT d.id, d.titel, d.absender, d.betrag_ct, d.faellig, d.objekt_id, o.bezeichnung AS objekt FROM dokumente d
+        LEFT JOIN objekte o ON o.id = d.objekt_id WHERE d.typ = 'Rechnung' AND d.buchung_id IS NULL AND d.faellig IS NOT NULL AND d.faellig <= ?`, plusTage(t, 7))) {
+      add({ schluessel: `re:${r.id}`, stufe: r.faellig < t ? 'rot' : 'orange', kategorie: 'Rechnungen', objekt_id: r.objekt_id, objekt: r.objekt,
+        text: `Rechnung ${r.absender ?? r.titel} über ${euro(r.betrag_ct)} ${r.faellig < t ? 'überfällig seit' : 'fällig am'} ${datumDe(r.faellig)}.`, ziel: 'rechnungen' });
+    }
+
+    for (const o of objekte) {
+      const miete = o.art !== 'weg', weg = o.art !== 'miete';
+      const ziel = (s) => ({ objekt_id: o.id, objekt: o.bezeichnung, ziel: s });
+
+      // Arrears: more than one monthly amount, or anything open for 30+ days.
+      for (const k of all(`SELECT * FROM konten WHERE objekt_id = ? AND klasse = 'person'`, o.id)) {
+        const op = bh.offenePostenKonto(k.id, t);
+        if (op.summe_ct <= 0) continue;
+        const alt = Math.max(0, ...op.offen.map((x) => x.verzug));
+        if (alt >= 30 || op.summe_ct >= 50000) {
+          add({ modus: k.vertrag_typ, schluessel: `op:${k.id}:${t.slice(0, 7)}`, stufe: alt >= 30 ? 'rot' : 'orange', kategorie: k.vertrag_typ === 'weg' ? 'Hausgeld' : 'Miete',
+            text: `Rückstand ${k.bezeichnung}: ${euro(op.summe_ct)} (ältester Posten ${alt} Tage).`, ...ziel('op') });
+        }
+      }
+
+      // Returned direct debits in the last 30 days.
+      for (const b of all(`SELECT b.datum, b.betrag_ct, k.bezeichnung FROM buchungen b JOIN konten k ON k.id = b.soll_id
+          WHERE b.objekt_id = ? AND k.klasse = 'person' AND b.art = 'bank' AND b.datum >= ? AND lower(coalesce(b.text,'')) GLOB '*r*cklastschrift*'`, o.id, plusTage(t, -30))) {
+        add({ schluessel: `rl:${o.id}:${b.datum}:${b.betrag_ct}`, stufe: 'rot', kategorie: 'Bank', text: `Rücklastschrift ${b.bezeichnung} über ${euro(b.betrag_ct)} am ${datumDe(b.datum)}.`, ...ziel('op') });
+      }
+
+      // Service-charge statement for last year: deadline 31.12. of this year (§ 556 Abs. 3 BGB).
+      if (miete && get('SELECT count(*) AS n FROM mietverhaeltnisse m JOIN einheiten e ON e.id = m.einheit_id WHERE e.objekt_id = ? AND m.beginn <= ?', o.id, `${jahr - 1}-12-31`).n) {
+        const fertig = get(`SELECT 1 FROM abrechnungen WHERE objekt_id = ? AND typ = 'nk' AND substr(von, 1, 4) = ?`, o.id, String(jahr - 1));
+        if (!fertig && monat >= 3) {
+          add({ modus: 'miete', schluessel: `nk:${o.id}:${jahr - 1}`, stufe: monat >= 10 ? 'rot' : 'orange', kategorie: 'Abrechnung', ...ziel('nk'),
+            text: `Betriebskostenabrechnung ${jahr - 1} erstellen – Frist 31.12.${jahr} (danach keine Nachforderung mehr).` });
+          // Cost types that had postings two years ago but none last year: an invoice may be missing.
+          for (const k of all(`SELECT k.id, k.bezeichnung FROM konten k WHERE k.objekt_id = ? AND k.klasse = 'kosten' AND k.umlagefaehig = 1
+              AND EXISTS (SELECT 1 FROM buchungen b WHERE b.soll_id = k.id AND substr(b.datum, 1, 4) = ?)
+              AND NOT EXISTS (SELECT 1 FROM buchungen b WHERE b.soll_id = k.id AND substr(b.datum, 1, 4) = ?)`, o.id, String(jahr - 2), String(jahr - 1))) {
+            add({ modus: 'miete', schluessel: `nkfehlt:${k.id}:${jahr - 1}`, stufe: 'orange', kategorie: 'Abrechnung', ...ziel('archiv'),
+              text: `Für „${k.bezeichnung}“ fehlt ${jahr - 1} eine Rechnung (${jahr - 2} war gebucht) – für die Betriebskostenabrechnung nachreichen.` });
+          }
+        }
+      }
+
+      if (weg && get('SELECT count(*) AS n FROM eigentum g JOIN einheiten e ON e.id = g.einheit_id WHERE e.objekt_id = ?', o.id).n) {
+        if (!get(`SELECT 1 FROM abrechnungen WHERE objekt_id = ? AND typ = 'weg' AND substr(von, 1, 4) = ?`, o.id, String(jahr - 1)) && monat >= 3) {
+          add({ modus: 'weg', schluessel: `weg:${o.id}:${jahr - 1}`, stufe: monat >= 7 ? 'rot' : 'orange', kategorie: 'Abrechnung', ...ziel('wegabr'),
+            text: `Jahresabrechnung ${jahr - 1} für die Eigentümerversammlung erstellen.` });
+        }
+        if (monat >= 9 && !get(`SELECT 1 FROM abrechnungen WHERE objekt_id = ? AND typ = 'wipl' AND substr(von, 1, 4) = ?`, o.id, String(jahr + 1))) {
+          add({ modus: 'weg', schluessel: `wipl:${o.id}:${jahr + 1}`, stufe: 'orange', kategorie: 'Abrechnung', ...ziel('wipl'), text: `Wirtschaftsplan ${jahr + 1} vorbereiten.` });
+        }
+        if (monat >= 6 && !get(`SELECT 1 FROM versammlungen WHERE objekt_id = ? AND substr(datum, 1, 4) = ?`, o.id, String(jahr))) {
+          add({ modus: 'weg', schluessel: `vers:${o.id}:${jahr}`, stufe: monat >= 10 ? 'rot' : 'orange', kategorie: 'WEG', ...ziel('versammlungen'),
+            text: `Für ${jahr} ist noch keine Eigentümerversammlung angelegt (mindestens einmal jährlich, Ladungsfrist 3 Wochen).` });
+        }
+        for (const v of all(`SELECT * FROM versammlungen WHERE objekt_id = ? AND datum BETWEEN ? AND ? AND (einladung_am IS NULL OR einladung_am = '')`, o.id, t, plusTage(t, 35))) {
+          add({ modus: 'weg', schluessel: `einl:${v.id}`, stufe: tageZwischen(t, v.datum) <= 24 ? 'rot' : 'orange', kategorie: 'WEG', ...ziel('versammlungen'),
+            text: `Einladung zur Versammlung am ${datumDe(v.datum)} verschicken (spätestens ${datumDe(plusTage(v.datum, -21))}).` });
+        }
+      }
+
+      if (miete) {
+        for (const v of all(`SELECT m.*, e.bezeichnung AS einheit, ${PERSON_NAME} AS name FROM mietverhaeltnisse m JOIN einheiten e ON e.id = m.einheit_id
+            JOIN personen p ON p.id = m.person_id WHERE e.objekt_id = ?1 AND m.beginn <= ?2 AND (m.ende IS NULL OR m.ende = '' OR m.ende >= ?2)`, o.id, t)) {
+          const modell = get('SELECT * FROM mietmodelle WHERE vertrag_id = ?', v.id);
+          // Indexed rent: possible once 12 months have passed and the index has risen.
+          if (modell?.art === 'index') {
+            try {
+              const r = vw.indexBerechnung(v.id);
+              if (r.neue_miete_ct > r.alte_miete_ct) add({ modus: 'miete', schluessel: `idx:${v.id}:${r.neu_monat}`, stufe: 'gelb', kategorie: 'Chance', ...ziel('anpassung'),
+                text: `Indexerhöhung möglich bei ${v.name} (${v.einheit}): +${euro(r.neue_miete_ct - r.alte_miete_ct)} pro Monat, frühestens ab ${datumDe(r.frueheste_wirkung)}.` });
+            } catch (err) {
+              add({ modus: 'miete', schluessel: `idxfehlt:${v.id}`, stufe: 'gelb', kategorie: 'Stammdaten', ...ziel('anpassung'), text: `Indexmiete ${v.name}: ${err.message}` });
+            }
+          } else if (!modell) {
+            const letzte = get(`SELECT max(gueltig_ab) AS d FROM anpassungen WHERE vertrag_typ = 'miete' AND vertrag_id = ? AND kaltmiete_ct IS NOT NULL`, v.id).d ?? v.beginn;
+            if (plusMonate(letzte, 15) <= t) add({ modus: 'miete', schluessel: `mh:${v.id}:${jahr}`, stufe: 'gelb', kategorie: 'Chance', ...ziel('anpassung'),
+              text: `Mieterhöhung prüfen bei ${v.name} (${v.einheit}): Miete seit ${datumDe(letzte)} unverändert.` });
+          }
+          // Deposit not fully paid three months after move-in.
+          if (v.kaution_ct > 0 && plusMonate(v.beginn, 3) <= t) {
+            const k = get('SELECT id FROM kautionen WHERE vertrag_id = ?', v.id);
+            const ist = k ? get(`SELECT coalesce(sum(CASE WHEN art IN ('einzahlung','zinsen') THEN betrag_ct ELSE -betrag_ct END), 0) AS s FROM kautionsbewegungen WHERE kaution_id = ?`, k.id).s : 0;
+            if (ist < v.kaution_ct) add({ modus: 'miete', schluessel: `kau:${v.id}`, stufe: 'orange', kategorie: 'Miete', ...ziel('kaution'),
+              text: `Kaution ${v.name}: ${euro(ist)} von ${euro(v.kaution_ct)} erfasst.` });
+          }
+          if (v.ende && v.ende <= plusTage(t, 60)) add({ modus: 'miete', schluessel: `ende:${v.id}`, stufe: 'orange', kategorie: 'Miete', ...ziel('vertraege'),
+            text: `Mietende ${v.name} (${v.einheit}) am ${datumDe(v.ende)}: Übergabe, Zählerstände, Kautionsabrechnung planen.` });
+          if (v.lastschrift && (!get('SELECT iban FROM personen WHERE id = ?', v.person_id)?.iban || !v.sepa_mandat))
+            add({ modus: 'miete', schluessel: `ls:${v.id}`, stufe: 'orange', kategorie: 'Bank', ...ziel('vertraege'), text: `Lastschrift bei ${v.name}: IBAN oder Mandatsreferenz fehlt.` });
+        }
+        // Advance payments too low: last statement asked for a large back payment and nothing was adjusted since.
+        const nk = get(`SELECT * FROM abrechnungen WHERE objekt_id = ? AND typ = 'nk' ORDER BY bis DESC LIMIT 1`, o.id);
+        if (nk) {
+          const d = JSON.parse(nk.daten);
+          for (const e2 of d.ergebnisse ?? []) {
+            const vz = (e2.bk_vz_ct ?? 0) + (e2.hk_vz_ct ?? 0);
+            if (!e2.segment?.vertrag || vz <= 0 || e2.ergebnis_ct <= vz * 0.15) continue;
+            const angepasst = get(`SELECT 1 FROM anpassungen WHERE vertrag_typ = 'miete' AND vertrag_id = ? AND gueltig_ab > ? AND (bk_vz_ct IS NOT NULL OR hk_vz_ct IS NOT NULL)`, e2.segment.vertrag.id, nk.bis);
+            if (!angepasst && !e2.segment.vertrag.ende) add({ modus: 'miete', schluessel: `vz:${e2.segment.vertrag.id}:${nk.bis}`, stufe: 'gelb', kategorie: 'Chance', ...ziel('nk'),
+              text: `Vorauszahlungen ${e2.segment.vertrag.name} zu niedrig: Nachzahlung ${euro(e2.ergebnis_ct)} bei ${euro(vz)} Vorauszahlungen – anpassen.` });
+          }
+        }
+        const leer = all(`SELECT e.bezeichnung FROM einheiten e WHERE e.objekt_id = ?1 AND NOT EXISTS (SELECT 1 FROM mietverhaeltnisse m WHERE m.einheit_id = e.id
+          AND m.beginn <= ?2 AND (m.ende IS NULL OR m.ende = '' OR m.ende >= ?2)) AND NOT EXISTS (SELECT 1 FROM eigentum g WHERE g.einheit_id = e.id AND g.selbstnutzer = 1)`, o.id, t);
+        if (leer.length) add({ modus: 'miete', schluessel: `leer:${o.id}:${t.slice(0, 7)}`, stufe: 'gelb', kategorie: 'Miete', ...ziel('einheiten'),
+          text: `Leerstand: ${leer.map((x) => x.bezeichnung).join(', ')}.` });
+      }
+
+      if (!o.iban) add({ schluessel: `stamm:iban:${o.id}`, stufe: 'gelb', kategorie: 'Stammdaten', ...ziel('objekte'), text: 'IBAN des Objektkontos fehlt (nötig für Briefe und SEPA).' });
+      const ohneFlaeche = get('SELECT count(*) AS n FROM einheiten WHERE objekt_id = ? AND (wohnflaeche IS NULL OR wohnflaeche = 0)', o.id).n;
+      if (ohneFlaeche) add({ schluessel: `stamm:flaeche:${o.id}`, stufe: 'gelb', kategorie: 'Stammdaten', ...ziel('einheiten'), text: `${ohneFlaeche} Einheit(en) ohne Wohnfläche – wichtig für die Kostenverteilung.` });
+
+      for (const v of all(`SELECT * FROM versicherungen WHERE objekt_id = ? AND kuendbar_bis BETWEEN ? AND ?`, o.id, t, plusTage(t, 60))) {
+        add({ schluessel: `vers:${v.id}:${v.kuendbar_bis}`, stufe: 'orange', kategorie: 'Verträge', ...ziel('versicherungen'),
+          text: `${v.art} (${v.gesellschaft ?? ''}) bis ${datumDe(v.kuendbar_bis)} kündbar – Konditionen prüfen.` });
+      }
+    }
+
+    // Snoozed or done hints are hidden unless all are requested.
+    const status = Object.fromEntries(all('SELECT * FROM hinweis_status').map((s) => [s.schluessel, s]));
+    const ordnung = { rot: 0, orange: 1, gelb: 2 };
+    return h.map((x) => ({ ...x, status: status[x.schluessel] }))
+      .filter((x) => alle || x.dauerhaft || !x.status || (x.status.bis && x.status.bis < t))
+      .sort((a, b) => ordnung[a.stufe] - ordnung[b.stufe]);
+  }
+
+  // Key figures for the overview.
+  function kennzahlen(modus = 'miete') {
+    const t = heute();
+    const monat = t.slice(0, 7);
+    const summe = (sql, ...p) => get(sql, ...p).s ?? 0;
+    // Charges and receipts of this month, only for the contracts of the current mode.
+    const soll = summe(`SELECT sum(b.betrag_ct) AS s FROM buchungen b JOIN konten k ON k.id = b.soll_id
+      WHERE k.klasse = 'person' AND k.vertrag_typ = ? AND b.art = 'soll' AND b.monat = ?`, modus, monat);
+    const ist = summe(`SELECT sum(b.betrag_ct) AS s FROM buchungen b JOIN konten k ON k.id = b.haben_id JOIN konten g ON g.id = b.soll_id
+      WHERE k.klasse = 'person' AND k.vertrag_typ = ? AND g.klasse = 'geld' AND substr(b.datum, 1, 7) = ?`, modus, monat);
+    const geld = summe(`SELECT sum(CASE WHEN k.id = b.soll_id THEN b.betrag_ct ELSE -b.betrag_ct END) AS s FROM buchungen b JOIN konten k ON k.id IN (b.soll_id, b.haben_id) WHERE k.klasse = 'geld'`);
+    const einheiten = get('SELECT count(*) AS n FROM einheiten e JOIN objekte o ON o.id = e.objekt_id WHERE o.art <> \'weg\'').n;
+    const vermietet = get(`SELECT count(DISTINCT m.einheit_id) AS n FROM mietverhaeltnisse m WHERE m.beginn <= ?1 AND (m.ende IS NULL OR m.ende = '' OR m.ende >= ?1)`, t).n;
+    // Cash flow per month: bank inflows and outflows, transfers between own accounts left out.
+    const verlauf = [];
+    for (let i = 11; i >= 0; i--) {
+      const m = plusMonate(`${monat}-01`, -i).slice(0, 7);
+      verlauf.push({
+        monat: m,
+        ein_ct: summe(`SELECT sum(b.betrag_ct) AS s FROM buchungen b JOIN konten s ON s.id = b.soll_id JOIN konten h ON h.id = b.haben_id
+          WHERE s.klasse = 'geld' AND h.klasse <> 'geld' AND substr(b.datum, 1, 7) = ?`, m),
+        aus_ct: summe(`SELECT sum(b.betrag_ct) AS s FROM buchungen b JOIN konten s ON s.id = b.soll_id JOIN konten h ON h.id = b.haben_id
+          WHERE h.klasse = 'geld' AND s.klasse <> 'geld' AND substr(b.datum, 1, 7) = ?`, m),
+      });
+    }
+    return { monat, soll_ct: soll, ist_ct: ist, geld_ct: geld, einheiten, vermietet, verlauf };
+  }
+
+  return {
+    automatikLauf: lauf,
+    hinweise,
+    kennzahlen,
+    hinweisSetzen: (schluessel, status, tage) => db.prepare(`INSERT INTO hinweis_status (schluessel, status, bis) VALUES (?, ?, ?)
+      ON CONFLICT (schluessel) DO UPDATE SET status = excluded.status, bis = excluded.bis`).run(schluessel, status, tage ? plusTage(heute(), tage) : null),
+    hinweisZuruecksetzen: (schluessel) => db.prepare('DELETE FROM hinweis_status WHERE schluessel = ?').run(schluessel),
+  };
+};

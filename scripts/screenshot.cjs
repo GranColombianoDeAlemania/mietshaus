@@ -22,6 +22,7 @@ db.save('eigentum', { einheit_id: e[1], person_id: p[2], beginn: '2019-01-01', h
 db.setzeEinstellungen({ verwalter_name: 'Hausverwaltung Muster', verwalter_strasse: 'Hauptstr. 1', verwalter_plz: '10115', verwalter_ort: 'Berlin', verwalter_telefon: '030 123456', verwalter_email: 'info@example.de' });
 db.save('eigentum', { einheit_id: e[2], person_id: p[3], beginn: '2021-06-01', hausgeld_ct: 39000, ruecklage_ct: 7000, selbstnutzer: 1 });
 for (const k of db.schluessel(o)) db.werteAusStammdaten(k.id);
+db.setzeEinstellungen({ auto_soll_ab: `${new Date().getFullYear()}-01` });
 const jahr = new Date().getFullYear();
 db.sollstellung(o, `${jahr}-01`, `${jahr}-03`);
 const kt = Object.fromEntries(db.konten(o).map((k) => [k.nr, k.id]));
@@ -34,6 +35,13 @@ db.save('tops', { versammlung_id: vs, nr: 2, titel: 'Wirtschaftsplan', beschluss
 db.save('vorlagen', { titel: 'Mietbescheinigung', betreff: 'Mietbescheinigung', text: 'hiermit bestätigen wir, dass {name} seit dem {beginn} die Wohnung {einheit} ({flaeche} m²) gemietet hat. Gesamtmiete: {gesamtmiete}.' });
 const z1 = db.save('zaehler', { objekt_id: o, einheit_id: e[0], art: 'kaltwasser', nummer: 'KW-1001', einheit: 'm³', faktor: 1, eichung_bis: `${jahr}-12-31` });
 db.ablesung(`${jahr - 1}-12-31`, { [z1]: 120.5 });
+// Some bank movements over the last months for the cash-flow chart.
+for (let i = 1; i <= 9; i++) {
+  const m = new Date(Date.UTC(jahr, new Date().getMonth() - 9 + i, 5)).toISOString().slice(0, 10);
+  db.buchen({ objekt_id: o, datum: m, text: 'Mieteingang', positionen: [{ soll_id: kt[1200], haben_id: kt[100200], betrag_ct: 91000 + i * 1000 }] });
+  db.buchen({ objekt_id: o, datum: m, text: 'Ausgaben', positionen: [{ soll_id: kt[45100], haben_id: kt[1200], betrag_ct: 30000 + (i % 3) * 25000 }] });
+}
+db.save('termine', { titel: 'Wohnungsübergabe EG rechts', datum: new Date(Date.now() + 2 * 864e5).toISOString().slice(0, 10), uhrzeit: '10:00', objekt_id: o });
 ipcMain.handle('db', (_e, fn, args) => db[fn](...args));
 // PDFs are printed straight into the output folder instead of asking for a file name.
 ipcMain.handle('pdf', async (_e, html, name) => {
@@ -46,6 +54,7 @@ ipcMain.handle('pdf', async (_e, html, name) => {
   fs.writeFileSync(path.join(out, name.replace(/[^\w.-]+/g, '_')), data);
   return name;
 });
+ipcMain.handle('claudeStatus', () => ({ datei: '-', installiert: true, verbunden: false, eintrag: {} }));
 ipcMain.handle('info', () => ({ dbFile: ':memory:', dokumente: '-', version: app.getVersion() }));
 app.commandLine.appendSwitch('lang', 'de-DE');
 
@@ -75,7 +84,9 @@ app.whenReady().then(async () => {
   const shot = async (name) => { await wait(400); fs.writeFileSync(path.join(out, name + '.png'), (await win.webContents.capturePage()).toPNG()); };
   await js(`localStorage.clear()`);
   await win.reload(); await wait(500);
-  await shot('1-miete-uebersicht');
+  console.log('AUTOMATIK', JSON.stringify(db.automatikLauf()), db.kennzahlen().soll_ct, db.einstellungen().auto_soll_ab);
+  win.setSize(1300, 1250); await click('Cockpit'); await wait(800); await shot('1-miete-uebersicht');
+  await click('WEG-Verwaltung'); await wait(800); await shot('1b-weg-cockpit'); await click('Mietverwaltung'); win.setSize(1300, 760);
   await click('Mietverwaltung'); await wait(200);
   await js(`document.querySelector('.objektwahl select').value='${o}'; document.querySelector('.objektwahl select').dispatchEvent(new Event('change',{bubbles:true}))`);
   await click('Buchungen'); await shot('2-buchungen');

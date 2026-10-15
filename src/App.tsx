@@ -39,7 +39,7 @@ const SEITEN: Seite[] = [
   { id: 'postfach', label: 'Postfach', gruppe: 'Dokumente', render: () => <Postfach /> },
   { id: 'archiv', label: 'Archiv & Suche', gruppe: 'Dokumente', render: (c) => <Archiv objekt={c.objekt} /> },
   { id: 'rechnungen', label: 'Rechnungen', gruppe: 'Dokumente', render: (c) => <Rechnungen objekt={c.objekt} /> },
-  { id: 'uebersicht', label: 'Übersicht', gruppe: 'Stammdaten', render: (c) => <Uebersicht modus={c.modus} /> },
+  { id: 'uebersicht', label: 'Cockpit', gruppe: 'Start', render: (c) => <Uebersicht modus={c.modus} objekte={c.objekte} oeffne={c.oeffne} /> },
   { id: 'objekte', label: 'Objekte', gruppe: 'Stammdaten', render: (c) => <Objekte modus={c.modus} objekte={c.objekte} reload={c.ladeObjekte} onOpen={(id) => c.oeffne('einheiten', id)} /> },
   { id: 'einheiten', label: 'Einheiten', gruppe: 'Stammdaten', objekt: true, render: (c) => <Einheiten key={c.objekt.id} modus={c.modus} objekt={c.objekt} /> },
   { id: 'vertraege', label: (m) => (m === 'weg' ? 'Eigentümer' : 'Mieter'), gruppe: 'Stammdaten', objekt: true, render: (c) => <Vertraege key={c.objekt.id + c.modus} modus={c.modus} objekt={c.objekt} /> },
@@ -137,7 +137,7 @@ export default function App() {
   const sichtbar = SEITEN.filter((s) => !s.modi || s.modi.includes(modus));
   const aktiv = sichtbar.find((s) => s.id === seite) ?? sichtbar[0];
   const label = (s: Seite) => (typeof s.label === 'function' ? s.label(modus) : s.label);
-  const REIHENFOLGE = ['Stammdaten', 'Dokumente', 'Buchhaltung', 'Abrechnung', 'Verwaltung', 'Kommunikation', 'System'];
+  const REIHENFOLGE = ['Start', 'Stammdaten', 'Dokumente', 'Buchhaltung', 'Abrechnung', 'Verwaltung', 'Kommunikation', 'System'];
   const gruppen = [...new Set(sichtbar.map((s) => s.gruppe))].sort((a, b) => REIHENFOLGE.indexOf(a) - REIHENFOLGE.indexOf(b));
 
   const ctx: Ctx | null = objekte

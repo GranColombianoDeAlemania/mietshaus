@@ -30,7 +30,7 @@ Typischer Auftrag: „Arbeite das Postfach ab“. Vorgehen:
    - Zählerablesung: zaehlerstand_erfassen, Termin/Frist: termin_anlegen, Schaden/Anfrage: vorgang_anlegen.
 Beträge immer in Euro angeben (z. B. 1232.40). Datumsangaben im Format JJJJ-MM-TT.
 Wenn etwas nicht eindeutig ist (z. B. welches Objekt), nicht raten: den Nutzer fragen oder das Dokument im Postfach lassen und den Grund in der Zusammenfassung notieren.
-Vor dem Buchen kurz zusammenfassen, was gebucht wird.`;
+Vor dem Buchen kurz zusammenfassen, was gebucht wird.\nFür „Was steht an?“ / ein Tagesbriefing: hinweise und faelligkeiten abrufen und kurz priorisiert zusammenfassen.`;
 
 const text = (x) => ({ content: [{ type: 'text', text: typeof x === 'string' ? x : JSON.stringify(x, null, 1) }] });
 const cent = (eur) => (eur == null ? null : Math.round(Number(eur) * 100));
@@ -113,6 +113,9 @@ function starten() {
 
   werkzeug('faelligkeiten', 'Was in den nächsten Tagen ansteht: Vorgänge, Termine, Vertragsenden, Versicherungsfristen.', { tage: z.number().int().optional() },
     ({ tage }) => text(db.faelligkeiten(tage ?? 30)), true);
+
+  werkzeug('hinweise', 'Was das Programm gerade für wichtig hält: Rückstände, Fristen (z. B. Betriebskostenabrechnung), fehlende Unterlagen, Chancen wie mögliche Mieterhöhungen. Gut für ein Tagesbriefing.',
+    {}, () => text(db.hinweise().map((h) => ({ dringlichkeit: h.stufe, bereich: h.kategorie, objekt: h.objekt, text: h.text }))), true);
 
   // ---------- writing ----------
   werkzeug('dokument_ablegen', 'Setzt die Angaben eines Dokuments und legt es (standardmäßig) aus dem Postfach ins Archiv ab.', {

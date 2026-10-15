@@ -258,3 +258,29 @@ mark { background: #fde68a; color: inherit; padding: 0 1px; border-radius: 2px; 
 .dokformular { overflow-x: hidden; }
 .maske label { min-width: 0; }
 .maske input, .maske select { min-width: 0; width: 100%; }
+
+/* Cockpit */
+.kurzlage { font-size: 15px; margin: -4px 0 14px; }
+.cockpit-raster { display: grid; grid-template-columns: 3fr 2fr; gap: 16px; align-items: start; }
+.panel h3 { margin: 0 0 8px; }
+.hinweisliste { list-style: none; margin: 0; padding: 0; }
+.hinweisliste li { display: flex; gap: 10px; align-items: flex-start; padding: 7px 4px; border-bottom: 1px solid var(--line); }
+.hinweisliste li:last-child { border-bottom: 0; }
+.hinweisliste .inhalt { flex: 1; }
+.hinweisliste .aktionen { display: flex; gap: 4px; white-space: nowrap; }
+.hinweisliste .aktionen button { padding: 2px 8px; font-size: 12px; }
+.hinweisliste .was { color: var(--muted); margin-right: 4px; }
+.hinweisliste li.klickbar { cursor: pointer; }
+.punkt { font-size: 14px; line-height: 20px; }
+.hinweis-rot .punkt { color: #d03b3b; }
+.hinweis-orange .punkt { color: #e08a00; }
+.hinweis-gelb .punkt { color: #2a78d6; }
+.balken { height: 6px; background: var(--accent-soft); border-radius: 3px; margin-top: 8px; overflow: hidden; }
+.balken span { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+.diagramm { position: relative; }
+.diagramm svg { width: 100%; height: auto; display: block; }
+.legende { display: flex; gap: 16px; align-items: center; font-size: 12.5px; color: var(--muted); margin-bottom: 6px; }
+.legende i, .tooltip i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+.tooltip { position: absolute; top: 30px; transform: translateX(-50%); background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+  padding: 6px 10px; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12); font-size: 12.5px; pointer-events: none; white-space: nowrap; }
+button.link { border: 0; background: none; color: var(--accent); padding: 0; text-decoration: underline; }

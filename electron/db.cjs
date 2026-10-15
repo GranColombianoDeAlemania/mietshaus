@@ -4,6 +4,7 @@ const buchhaltung = require('./buchhaltung.cjs');
 const abrechnung = require('./abrechnung.cjs');
 const verwaltung = require('./verwaltung.cjs');
 const archiv = require('./archiv.cjs');
+const automatik = require('./automatik.cjs');
 
 const MIGRATIONS = [
   `
@@ -388,6 +389,10 @@ const MIGRATIONS = [
   -- Search index over normalised text (umlauts folded), rowid = dokumente.id.
   CREATE VIRTUAL TABLE dokumente_fts USING fts5(titel, inhalt, tokenize = 'unicode61 remove_diacritics 2');
   `,
+  `
+  -- Hints the user snoozed (bis = date) or marked as done.
+  CREATE TABLE hinweis_status (schluessel TEXT PRIMARY KEY, status TEXT NOT NULL, bis TEXT, gesetzt TEXT NOT NULL DEFAULT (datetime('now')));
+  `,
 ];
 
 // Columns the renderer may write, per table. Everything else is rejected.
@@ -643,8 +648,9 @@ function api(db) {
           AND NOT EXISTS (SELECT 1 FROM ${vt} v WHERE v.einheit_id = e.id AND ${aktuell('v')})) AS leer`, a, b);
     },
   };
+  const au = automatik({ db, all, get, tx, PERSON_NAME, bh, ab, vw, einstellungen: basis.einstellungen });
   return {
-    ...bh, ...ab, ...vw, ...ar, ...basis,
+    ...bh, ...ab, ...vw, ...ar, ...au, ...basis,
     // Removes the record and its index entry; the caller deletes the file.
     dokumentLoeschen: (id) => {
       const d = get('SELECT datei FROM dokumente WHERE id = ?', id);

@@ -164,6 +164,10 @@ app.whenReady().then(() => {
   ana = analyse({ db: new Proxy({}, { get: (_t, k) => db[k] }), dokumentOrdner, vorschauOrdner, analyseUrl: () => seite('analyse.html'),
     onFertig: (id) => melden('dokumentAnalysiert', id) });
   ana.warteschlange();
+  // Routine work (monthly charges) at start and then hourly.
+  const automatik = () => { try { if (db.automatikLauf().erzeugt) melden('aktualisiert'); } catch (e) { console.error('Automatik', e); } };
+  automatik();
+  setInterval(automatik, 3600_000);
   ipcMain.handle('importieren', (_e, pfade, opt) => ana.importieren(pfade, opt));
   ipcMain.handle('dateienImportieren', async (_e, opt) => {
     const r = await dialog.showOpenDialog({ properties: ['openFile', 'multiSelections'] });
