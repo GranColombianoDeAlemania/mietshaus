@@ -359,3 +359,14 @@ button { font-size: 14px; }
 .stapel select { padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: white; max-width: 210px; }
 
 :root:not([data-plattform='darwin']) header { padding-left: 20px; }
+
+/* Navigation group headings on their own coloured band, so they stand apart from the entries. */
+.navgruppe h4 {
+  background: var(--accent); color: white; opacity: 1; font-size: 12px; font-weight: 800; letter-spacing: 0.7px;
+  padding: 5px 12px; margin: 14px 0 6px; border-radius: 6px; text-transform: uppercase;
+}
+.navgruppe:first-child h4 { margin-top: 0; }
+/* Active entry: white card with an accent bar – clearly different from the coloured group headings. */
+.navgruppe button.active { background: white; color: var(--accent); box-shadow: inset 4px 0 var(--accent), 0 1px 3px rgba(0, 0, 0, 0.08); font-weight: 750; }
+.navgruppe button.active .zaehler { background: #dc2626; color: white; }
+.navgruppe h4 { background: color-mix(in srgb, var(--accent) 82%, black); }

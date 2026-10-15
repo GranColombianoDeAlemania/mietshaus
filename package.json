@@ -9,7 +9,6 @@
     "start": "vite build && electron .",
     "typecheck": "tsc --noEmit",
     "dist:mac": "bash scripts/dist-mac.sh",
-    "dist:win": "bash scripts/dist.sh win32 x64",
     "dist:linux": "bash scripts/dist.sh linux x64"
   },
   "type": "commonjs",

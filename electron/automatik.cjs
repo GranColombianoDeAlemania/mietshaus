@@ -63,7 +63,10 @@ module.exports = function automatik({ db, all, get, tx, PERSON_NAME, bh, ab, vw,
     if (fehler) add({ schluessel: 'dok:fehler', stufe: 'gelb', kategorie: 'Dokumente', text: `${fehler} Dokument(e) konnten nicht gelesen werden.`, ziel: 'archiv' });
 
     for (const r of all(`SELECT d.id, d.titel, d.absender, d.betrag_ct, d.faellig, d.objekt_id, o.bezeichnung AS objekt FROM dokumente d
-        LEFT JOIN objekte o ON o.id = d.objekt_id WHERE d.typ = 'Rechnung' AND d.buchung_id IS NULL AND d.faellig IS NOT NULL AND d.faellig <= ?`, plusTage(t, 7))) {
+        LEFT JOIN objekte o ON o.id = d.objekt_id WHERE d.typ = 'Rechnung' AND d.buchung_id IS NULL AND d.faellig IS NOT NULL AND d.faellig <= ?
+        -- The same invoice stored twice (e.g. PDF and photo) is reported once.
+        AND NOT EXISTS (SELECT 1 FROM dokumente x WHERE x.id < d.id AND x.rechnungsnr = d.rechnungsnr AND coalesce(x.betrag_ct, -1) = coalesce(d.betrag_ct, -1)
+          AND coalesce(x.absender, '') = coalesce(d.absender, ''))`, plusTage(t, 7))) {
       add({ schluessel: `re:${r.id}`, stufe: r.faellig < t ? 'rot' : 'orange', kategorie: 'Rechnungen', objekt_id: r.objekt_id, objekt: r.objekt,
         text: `Rechnung ${r.absender ?? r.titel} über ${euro(r.betrag_ct)} ${r.faellig < t ? 'überfällig seit' : 'fällig am'} ${datumDe(r.faellig)}.`, ziel: 'rechnungen' });
     }
