@@ -25,12 +25,12 @@ Two modes, kept separate but linked:
 | 10 | Dokumente | Letter/mail-merge templates, PDF output, document archive, lists/reports | done |
 | 11 | CRM | Cases, tasks, appointments, calls, e-mail archive | done |
 | 12 | Export & System | DATEV export, CSV/Excel, backup, users/rights | done |
-| 13 | Optional | Online banking (FinTS), portal, AI assistant, scanning | open |
+| 13 | Optional | Not built: online banking (FinTS/HBCI), tenant portal/app, AI assistant, TWAIN scanning, telephony, Outlook sync, multi-user server, report designer | open |
 
 ## Development
 
 ```
 cd ~/Work/wincasa/app
 npm run dev        # Vite + Electron with hot reload (Linux)
-npm run dist:mac   # packages an Apple Silicon app (zip) in release/
+npm run dist:mac   # packages an ad-hoc signed Apple Silicon app (zip) in release/ (needs rcodesign, see scripts/dist-mac.sh)
 ```
