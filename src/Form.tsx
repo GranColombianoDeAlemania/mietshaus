@@ -27,7 +27,7 @@ function toForm(fields: Field[], row: Row): Row {
 function fromForm(fields: Field[], f: Row): Row {
   const r: Row = {};
   for (const d of fields) {
-    const v = f[d.key];
+    const v = f[d.key] ?? '';
     if (d.type === 'check') r[d.key] = v ? 1 : 0;
     else if (d.type === 'money') r[d.key] = Math.round((parseZahl(v) ?? 0) * 100);
     else if (d.type === 'number') r[d.key] = parseZahl(v);
@@ -39,17 +39,20 @@ function fromForm(fields: Field[], f: Row): Row {
 
 export function FormDialog(props: {
   title: string;
-  fields: Field[];
+  // A function lets the visible fields depend on what is currently entered.
+  fields: Field[] | ((current: Row) => Field[]);
   row: Row;
   onSave: (row: Row) => Promise<unknown>;
   onDelete?: () => Promise<unknown>;
   onClose: () => void;
   extra?: ReactNode;
 }) {
-  const [f, setF] = useState(() => toForm(props.fields, props.row));
+  const felderFuer = (r: Row) => (typeof props.fields === 'function' ? props.fields(r) : props.fields);
+  const [f, setF] = useState(() => toForm(felderFuer(props.row), props.row));
   const [fehler, setFehler] = useState('');
+  const fields = felderFuer({ ...props.row, ...f });
 
-  const missing = props.fields.filter((d) => d.required && (f[d.key] === '' || f[d.key] == null));
+  const missing = fields.filter((d) => d.required && (f[d.key] === '' || f[d.key] == null));
 
   async function run(action: () => Promise<unknown>) {
     try {
@@ -67,12 +70,12 @@ export function FormDialog(props: {
         className="dialog"
         onSubmit={(e) => {
           e.preventDefault();
-          if (!missing.length) run(() => props.onSave({ ...(props.row.id ? { id: props.row.id } : {}), ...fromForm(props.fields, f) }));
+          if (!missing.length) run(() => props.onSave({ ...(props.row.id ? { id: props.row.id } : {}), ...fromForm(fields, f) }));
         }}
       >
         <h2>{props.title}</h2>
         <div className="grid">
-          {props.fields.flatMap((d) => {
+          {fields.flatMap((d) => {
             const out = [];
             if (d.section && d.section !== section) {
               section = d.section;
@@ -83,18 +86,18 @@ export function FormDialog(props: {
             let input;
             if (d.type === 'select')
               input = (
-                <select value={f[d.key]} onChange={(e) => set(e.target.value)}>
+                <select value={f[d.key] ?? ''} onChange={(e) => set(e.target.value)}>
                   <option value="" disabled={d.required}>{d.required ? '– bitte wählen –' : '–'}</option>
                   {d.options!.map(([v, l]) => (
                     <option key={v} value={v}>{l}</option>
                   ))}
                 </select>
               );
-            else if (d.type === 'textarea') input = <textarea rows={3} value={f[d.key]} onChange={(e) => set(e.target.value)} />;
+            else if (d.type === 'textarea') input = <textarea rows={3} value={f[d.key] ?? ''} onChange={(e) => set(e.target.value)} />;
             else if (d.type === 'check')
               return [...out, (
                 <label key={d.key} className="check">
-                  <input type="checkbox" checked={f[d.key]} onChange={(e) => set(e.target.checked)} /> {d.label}
+                  <input type="checkbox" checked={!!f[d.key]} onChange={(e) => set(e.target.checked)} /> {d.label}
                 </label>
               )];
             else
@@ -103,7 +106,7 @@ export function FormDialog(props: {
                   type={d.type === 'date' ? 'date' : 'text'}
                   inputMode={d.type === 'money' || d.type === 'number' ? 'decimal' : undefined}
                   className={d.type === 'money' || d.type === 'number' ? 'num' : undefined}
-                  value={f[d.key]}
+                  value={f[d.key] ?? ''}
                   onChange={(e) => set(e.target.value)}
                 />
               );

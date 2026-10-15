@@ -17,7 +17,17 @@ db.save('eigentum', { einheit_id: e[0], person_id: p[2], beginn: '2019-01-01', h
 db.save('eigentum', { einheit_id: e[1], person_id: p[2], beginn: '2019-01-01', hausgeld_ct: 28000, ruecklage_ct: 5000 });
 db.save('eigentum', { einheit_id: e[2], person_id: p[3], beginn: '2021-06-01', hausgeld_ct: 39000, ruecklage_ct: 7000, selbstnutzer: 1 });
 for (const k of db.schluessel(o)) db.werteAusStammdaten(k.id);
+const jahr = new Date().getFullYear();
+db.sollstellung(o, `${jahr}-01`, `${jahr}-03`);
+const kt = Object.fromEntries(db.konten(o).map((k) => [k.nr, k.id]));
+db.buchen({ objekt_id: o, datum: `${jahr}-01-04`, text: 'Miete Januar', art: 'bank', positionen: [{ soll_id: kt[1200], haben_id: kt[100100], betrag_ct: 106000 }] });
+db.buchen({ objekt_id: o, datum: `${jahr}-02-10`, beleg: 'R-001', text: 'Stadtwerke Abschlag', positionen: [
+  { soll_id: kt[40200], haben_id: kt[1200], betrag_ct: 12000, text: 'Wasser' }, { soll_id: kt[40900], haben_id: kt[1200], betrag_ct: 4500, text: 'Allgemeinstrom' }] });
+const z1 = db.save('zaehler', { objekt_id: o, einheit_id: e[0], art: 'kaltwasser', nummer: 'KW-1001', einheit: 'm³', faktor: 1, eichung_bis: `${jahr}-12-31` });
+db.ablesung(`${jahr - 1}-12-31`, { [z1]: 120.5 });
 ipcMain.handle('db', (_e, fn, args) => db[fn](...args));
+ipcMain.handle('info', () => ({ dbFile: ':memory:', dokumente: '-', version: app.getVersion() }));
+app.commandLine.appendSwitch('lang', 'de-DE');
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 app.whenReady().then(async () => {
@@ -31,14 +41,16 @@ app.whenReady().then(async () => {
   await js(`localStorage.clear()`);
   await win.reload(); await wait(500);
   await shot('1-miete-uebersicht');
-  await click('Einheiten'); await shot('2-miete-einheiten');
-  await click('Mieter'); await shot('3-miete-mieter');
-  await click('WEG-Verwaltung'); await click('Einheiten'); await shot('4-weg-einheiten');
-  await click('Eigentümer'); await shot('5-weg-eigentuemer');
-  await click('Umlageschlüssel'); await shot('6-weg-schluessel');
-  await click('Eigentümer'); await wait(300); await click('Neuer Eigentümer'); await shot('7-weg-dialog');
-  await click('Abbrechen'); await click('Mietverwaltung'); await click('Mieter'); await shot('8-miete-mieter');
-  await click('Objekte'); await wait(200);
-  await js(`document.querySelectorAll('tbody tr')[1].dispatchEvent(new MouseEvent('dblclick', {bubbles: true}))`); await shot('9-miete-objekt-dialog');
+  await click('Mietverwaltung'); await wait(200);
+  await js(`document.querySelector('.objektwahl select').value='${o}'; document.querySelector('.objektwahl select').dispatchEvent(new Event('change',{bubbles:true}))`);
+  await click('Buchungen'); await shot('2-buchungen');
+  await click('Neue Buchung'); await shot('3-buchungsmaske');
+  await click('Konten'); await shot('4-konten');
+  await click('Sollstellung'); await shot('5-sollstellung');
+  await click('Offene Posten & Mahnungen'); await shot('6-op');
+  await click('Bank & SEPA'); await click('SEPA-Lastschrift'); await shot('7-lastschrift');
+  await click('Zähler'); await shot('8-zaehler');
+  await click('Einstellungen & Sicherung'); await shot('9-einstellungen');
+  await click('WEG-Verwaltung'); await click('Konten'); await shot('10-weg-konten');
   app.quit();
 });

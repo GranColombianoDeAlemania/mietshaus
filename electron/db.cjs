@@ -1,5 +1,6 @@
 // Local SQLite database: schema migrations and a small whitelisted CRUD layer.
 const { DatabaseSync } = require('node:sqlite');
+const buchhaltung = require('./buchhaltung.cjs');
 
 const MIGRATIONS = [
   `
@@ -86,6 +87,119 @@ const MIGRATIONS = [
     PRIMARY KEY (schluessel_id, einheit_id)
   );
   `,
+  `
+  CREATE TABLE konten (
+    id INTEGER PRIMARY KEY,
+    objekt_id INTEGER NOT NULL REFERENCES objekte(id) ON DELETE CASCADE,
+    nr INTEGER NOT NULL,
+    bezeichnung TEXT NOT NULL,
+    klasse TEXT NOT NULL CHECK (klasse IN ('geld','kosten','einnahme','ruecklage','person')),
+    kategorie TEXT,
+    umlagefaehig INTEGER NOT NULL DEFAULT 0,
+    heizkosten INTEGER NOT NULL DEFAULT 0,
+    schluessel_id INTEGER REFERENCES umlageschluessel(id) ON DELETE SET NULL,
+    weg_schluessel_id INTEGER REFERENCES umlageschluessel(id) ON DELETE SET NULL,
+    aus_ruecklage INTEGER NOT NULL DEFAULT 0,
+    p35a TEXT,
+    iban TEXT,
+    vertrag_typ TEXT CHECK (vertrag_typ IN ('miete','weg')),
+    vertrag_id INTEGER,
+    inaktiv INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (objekt_id, nr)
+  );
+  CREATE UNIQUE INDEX konten_vertrag ON konten (vertrag_typ, vertrag_id) WHERE vertrag_id IS NOT NULL;
+
+  CREATE TABLE buchungen (
+    id INTEGER PRIMARY KEY,
+    objekt_id INTEGER NOT NULL REFERENCES objekte(id) ON DELETE CASCADE,
+    datum TEXT NOT NULL,
+    beleg TEXT,
+    text TEXT,
+    betrag_ct INTEGER NOT NULL CHECK (betrag_ct > 0),
+    soll_id INTEGER NOT NULL REFERENCES konten(id),
+    haben_id INTEGER NOT NULL REFERENCES konten(id),
+    art TEXT NOT NULL DEFAULT 'manuell',
+    monat TEXT,
+    gruppe INTEGER,
+    import_ref TEXT UNIQUE,
+    erfasst TEXT NOT NULL DEFAULT (datetime('now')),
+    CHECK (soll_id <> haben_id)
+  );
+  CREATE INDEX buchungen_datum ON buchungen (objekt_id, datum);
+  CREATE INDEX buchungen_soll ON buchungen (soll_id);
+  CREATE INDEX buchungen_haben ON buchungen (haben_id);
+
+  -- Amount changes over time (stepped/indexed rent, new advance payments, new house money).
+  CREATE TABLE anpassungen (
+    id INTEGER PRIMARY KEY,
+    vertrag_typ TEXT NOT NULL CHECK (vertrag_typ IN ('miete','weg')),
+    vertrag_id INTEGER NOT NULL,
+    gueltig_ab TEXT NOT NULL,
+    grund TEXT NOT NULL DEFAULT 'manuell',
+    kaltmiete_ct INTEGER, bk_vz_ct INTEGER, hk_vz_ct INTEGER, sonstiges_ct INTEGER,
+    hausgeld_ct INTEGER, ruecklage_ct INTEGER,
+    notiz TEXT,
+    UNIQUE (vertrag_typ, vertrag_id, gueltig_ab)
+  );
+
+  CREATE TABLE zaehler (
+    id INTEGER PRIMARY KEY,
+    objekt_id INTEGER NOT NULL REFERENCES objekte(id) ON DELETE CASCADE,
+    einheit_id INTEGER REFERENCES einheiten(id) ON DELETE CASCADE,
+    art TEXT NOT NULL,
+    nummer TEXT,
+    ort TEXT,
+    einheit TEXT,
+    faktor REAL NOT NULL DEFAULT 1,
+    einbau TEXT, ausbau TEXT, eichung_bis TEXT,
+    notiz TEXT
+  );
+  CREATE TABLE zaehlerstaende (
+    id INTEGER PRIMARY KEY,
+    zaehler_id INTEGER NOT NULL REFERENCES zaehler(id) ON DELETE CASCADE,
+    datum TEXT NOT NULL,
+    stand REAL NOT NULL,
+    notiz TEXT,
+    UNIQUE (zaehler_id, datum)
+  );
+
+  CREATE TABLE mahnungen (
+    id INTEGER PRIMARY KEY,
+    konto_id INTEGER NOT NULL REFERENCES konten(id) ON DELETE CASCADE,
+    datum TEXT NOT NULL,
+    stufe INTEGER NOT NULL,
+    offen_ct INTEGER NOT NULL,
+    gebuehr_ct INTEGER NOT NULL DEFAULT 0,
+    frist TEXT
+  );
+
+  CREATE TABLE bankregeln (
+    id INTEGER PRIMARY KEY,
+    objekt_id INTEGER NOT NULL REFERENCES objekte(id) ON DELETE CASCADE,
+    muster TEXT NOT NULL,
+    konto_id INTEGER NOT NULL REFERENCES konten(id) ON DELETE CASCADE,
+    UNIQUE (objekt_id, muster)
+  );
+
+  -- Allocation keys may now come from meter consumption.
+  CREATE TABLE umlageschluessel_neu (
+    id INTEGER PRIMARY KEY,
+    objekt_id INTEGER NOT NULL REFERENCES objekte(id) ON DELETE CASCADE,
+    bezeichnung TEXT NOT NULL,
+    einheit TEXT,
+    typ TEXT NOT NULL CHECK (typ IN ('flaeche','mea','einheiten','personen','manuell','zaehler')),
+    zaehler_art TEXT
+  );
+  INSERT INTO umlageschluessel_neu (id, objekt_id, bezeichnung, einheit, typ)
+    SELECT id, objekt_id, bezeichnung, einheit, typ FROM umlageschluessel;
+  DROP TABLE umlageschluessel;
+  ALTER TABLE umlageschluessel_neu RENAME TO umlageschluessel;
+
+  -- Which standard account groups ('miete', 'weg') were already created for the object.
+  ALTER TABLE objekte ADD COLUMN kontenplan TEXT NOT NULL DEFAULT '';
+
+  CREATE TABLE einstellungen (schluessel TEXT PRIMARY KEY, wert TEXT);
+  `,
 ];
 
 // Columns the renderer may write, per table. Everything else is rejected.
@@ -99,7 +213,14 @@ const TABLES = {
     'hk_vz_ct', 'sonstiges_ct', 'kaution_ct', 'personen_anzahl', 'faelligkeitstag', 'lastschrift', 'sepa_mandat', 'notiz'],
   eigentum: ['einheit_id', 'person_id', 'person2_id', 'beginn', 'ende', 'hausgeld_ct', 'ruecklage_ct',
     'selbstnutzer', 'faelligkeitstag', 'lastschrift', 'sepa_mandat', 'notiz'],
-  umlageschluessel: ['objekt_id', 'bezeichnung', 'einheit', 'typ'],
+  umlageschluessel: ['objekt_id', 'bezeichnung', 'einheit', 'typ', 'zaehler_art'],
+  konten: ['objekt_id', 'nr', 'bezeichnung', 'klasse', 'kategorie', 'umlagefaehig', 'heizkosten', 'schluessel_id',
+    'weg_schluessel_id', 'aus_ruecklage', 'p35a', 'iban', 'inaktiv'],
+  anpassungen: ['vertrag_typ', 'vertrag_id', 'gueltig_ab', 'grund', 'kaltmiete_ct', 'bk_vz_ct', 'hk_vz_ct',
+    'sonstiges_ct', 'hausgeld_ct', 'ruecklage_ct', 'notiz'],
+  zaehler: ['objekt_id', 'einheit_id', 'art', 'nummer', 'ort', 'einheit', 'faktor', 'einbau', 'ausbau', 'eichung_bis', 'notiz'],
+  zaehlerstaende: ['zaehler_id', 'datum', 'stand', 'notiz'],
+  bankregeln: ['objekt_id', 'muster', 'konto_id'],
 };
 
 const PERSON_NAME = `trim(coalesce(p.nachname,'') || coalesce(', ' || p.vorname,'') ||
@@ -110,7 +231,8 @@ const aktuell = (a) => `${a}.beginn <= date('now') AND (${a}.ende IS NULL OR ${a
 
 function open(file) {
   const db = new DatabaseSync(file);
-  db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
+  // Foreign keys stay off while migrations rebuild tables, so cascades cannot fire.
+  db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = OFF;');
   const version = db.prepare('PRAGMA user_version').get().user_version;
   for (let v = version; v < MIGRATIONS.length; v++) {
     db.exec('BEGIN');
@@ -123,6 +245,7 @@ function open(file) {
       throw e;
     }
   }
+  db.exec('PRAGMA foreign_keys = ON;');
   return db;
 }
 
@@ -145,7 +268,7 @@ function api(db) {
     const cols = TABLES[table];
     if (!cols) throw new Error(`Unbekannte Tabelle: ${table}`);
     const keys = cols.filter((c) => c in row);
-    const vals = keys.map((k) => (row[k] === '' ? null : row[k]));
+    const vals = keys.map((k) => (row[k] === '' || row[k] === undefined ? null : row[k]));
     if (row.id) {
       if (keys.length) db.prepare(`UPDATE ${table} SET ${keys.map((k) => `${k} = ?`).join(', ')} WHERE id = ?`).run(...vals, row.id);
       return row.id;
@@ -168,9 +291,38 @@ function api(db) {
   // Object types visible in each mode: mixed houses appear in both.
   const artenFuer = (modus) => (modus === 'weg' ? ['weg', 'gemischt'] : ['miete', 'gemischt']);
 
-  return {
-    save,
-    remove,
+  const bh = buchhaltung({ db, all, get, tx, save, aktuell, PERSON_NAME });
+  bh.syncKonten();
+
+  // Master data changes can create or rename accounts.
+  const SYNC = new Set(['objekte', 'einheiten', 'personen', 'mietverhaeltnisse', 'eigentum']);
+
+  const basis = {
+    einstellungen: () => Object.fromEntries(all('SELECT schluessel, wert FROM einstellungen').map((r) => [r.schluessel, r.wert])),
+    setzeEinstellungen: (werte) => tx(() => {
+      const st = db.prepare(`INSERT INTO einstellungen (schluessel, wert) VALUES (?, ?)
+        ON CONFLICT (schluessel) DO UPDATE SET wert = excluded.wert`);
+      for (const [k, v] of Object.entries(werte)) st.run(k, v == null ? null : String(v));
+    }),
+    save: (table, row) => {
+      const id = save(table, row);
+      if (SYNC.has(table)) bh.syncKonten();
+      return id;
+    },
+    remove: (table, id) => {
+      if (table === 'mietverhaeltnisse' || table === 'eigentum') {
+        const typ = table === 'eigentum' ? 'weg' : 'miete';
+        if (get(`SELECT count(*) AS n FROM buchungen b JOIN konten k ON k.id IN (b.soll_id, b.haben_id)
+          WHERE k.vertrag_typ = ? AND k.vertrag_id = ?`, typ, id).n)
+          throw new Error('Zu diesem Vertrag gibt es Buchungen. Trage stattdessen ein Vertragsende ein.');
+      }
+      if (table === 'einheiten' && get(`SELECT count(*) AS n FROM buchungen b JOIN konten k ON k.id IN (b.soll_id, b.haben_id)
+          WHERE (k.vertrag_typ = 'miete' AND k.vertrag_id IN (SELECT id FROM mietverhaeltnisse WHERE einheit_id = ?1))
+             OR (k.vertrag_typ = 'weg' AND k.vertrag_id IN (SELECT id FROM eigentum WHERE einheit_id = ?1))`, id).n)
+        throw new Error('Für Verträge dieser Einheit gibt es Buchungen; die Einheit kann nicht gelöscht werden.');
+      remove(table, id);
+      if (SYNC.has(table)) bh.syncKonten();
+    },
     get: (table, id) => {
       if (!TABLES[table]) throw new Error(`Unbekannte Tabelle: ${table}`);
       return get(`SELECT * FROM ${table} WHERE id = ?`, id);
@@ -233,6 +385,8 @@ function api(db) {
         personen: `coalesce((SELECT sum(m.personen_anzahl) FROM mietverhaeltnisse m
           WHERE m.einheit_id = e.id AND ${aktuell('m')}), 0)`,
       }[k.typ];
+      // Meter-based keys are computed per statement period, not stored.
+      if (!expr) return;
       db.prepare(`INSERT INTO schluesselwerte (schluessel_id, einheit_id, wert)
         SELECT ?, e.id, ${expr} FROM einheiten e WHERE e.objekt_id = ?
         ON CONFLICT (schluessel_id, einheit_id) DO UPDATE SET wert = excluded.wert`).run(k.id, k.objekt_id);
@@ -246,6 +400,7 @@ function api(db) {
       st.run(id, 'Einheiten', 'Stk.', 'einheiten');
       if (row.art !== 'weg') st.run(id, 'Personen', 'Pers.', 'personen');
       if (row.art !== 'miete') st.run(id, 'Miteigentumsanteile', 'MEA', 'mea');
+      bh.syncKonten();
       return id;
     }),
 
@@ -264,6 +419,7 @@ function api(db) {
           AND NOT EXISTS (SELECT 1 FROM ${vt} v WHERE v.einheit_id = e.id AND ${aktuell('v')})) AS leer`, a, b);
     },
   };
+  return { ...bh, ...basis };
 }
 
 module.exports = { open, api };

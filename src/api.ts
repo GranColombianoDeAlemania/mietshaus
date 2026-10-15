@@ -1,9 +1,23 @@
 export type Modus = 'miete' | 'weg';
 export type Row = Record<string, any>;
 
+type DateiFilter = { name: string; extensions: string[] };
+
 declare global {
   interface Window {
-    hv: { call: (fn: string, ...args: unknown[]) => Promise<any> };
+    hv: {
+      call: (fn: string, ...args: unknown[]) => Promise<any>;
+      pdf: (html: string, name: string) => Promise<string | null>;
+      speichern: (inhalt: string, name: string, filter?: DateiFilter) => Promise<string | null>;
+      oeffnen: (filter?: DateiFilter) => Promise<{ name: string; base64: string } | null>;
+      sicherung: () => Promise<string | null>;
+      wiederherstellen: () => Promise<boolean>;
+      dokumentAblegen: () => Promise<{ name: string; datei: string; groesse: number }[]>;
+      dokumentOeffnen: (datei: string) => Promise<string>;
+      dokumentLoeschen: (datei: string) => Promise<void>;
+      extern: (url: string) => Promise<void>;
+      info: () => Promise<{ dbFile: string; dokumente: string; version: string }>;
+    };
   }
 }
 
@@ -11,8 +25,10 @@ export const call = <T = any>(fn: string, ...args: unknown[]): Promise<T> => win
 
 const eur = new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' });
 const num = new Intl.NumberFormat('de-DE', { maximumFractionDigits: 4 });
+const num2 = new Intl.NumberFormat('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 export const euro = (ct: number | null | undefined) => eur.format((ct ?? 0) / 100);
+export const betrag = (ct: number | null | undefined) => num2.format((ct ?? 0) / 100);
 export const zahl = (n: number | null | undefined) => (n == null ? '' : num.format(n));
 
 export const datum = (iso: string | null | undefined) => {
@@ -21,19 +37,47 @@ export const datum = (iso: string | null | undefined) => {
   return `${d}.${m}.${y}`;
 };
 
+export const heute = () => new Date().toISOString().slice(0, 10);
+export const diesesJahr = () => new Date().getFullYear();
+
 // Parses German input such as "1.234,56" or "1234.5".
-export const parseZahl = (s: string): number | null => {
-  const t = s.trim();
+export const parseZahl = (s: string | number | null | undefined): number | null => {
+  if (typeof s === 'number') return s;
+  const t = (s ?? '').trim();
   if (!t) return null;
   const n = Number(t.includes(',') ? t.replace(/\./g, '').replace(',', '.') : t);
   return Number.isFinite(n) ? n : null;
 };
+export const parseCent = (s: string | number | null | undefined) => Math.round((parseZahl(s) ?? 0) * 100);
 
 export const personName = (p: Row) =>
   [p.nachname, p.vorname].filter(Boolean).join(', ') + (p.firma ? ` (${p.firma})` : '') || '(ohne Namen)';
+
+// Name as used in letters: "Dr. Anna Meier".
+export const briefName = (p: Row) =>
+  [p.titel, p.vorname, p.nachname].filter(Boolean).join(' ') || p.firma || '';
+
+export const anrede = (p: Row) =>
+  p.anrede === 'Herr' ? `Sehr geehrter Herr ${[p.titel, p.nachname].filter(Boolean).join(' ')},`
+    : p.anrede === 'Frau' ? `Sehr geehrte Frau ${[p.titel, p.nachname].filter(Boolean).join(' ')},`
+      : 'Sehr geehrte Damen und Herren,';
 
 export const OBJEKT_ART: Record<string, string> = {
   miete: 'Mietobjekt',
   weg: 'WEG',
   gemischt: 'Miet/WEG gemischt',
 };
+
+export const KLASSEN: Record<string, string> = {
+  geld: 'Geldkonten',
+  einnahme: 'Einnahmen',
+  kosten: 'Kosten',
+  ruecklage: 'Rücklagen',
+  person: 'Mieter- und Eigentümerkonten',
+};
+
+export const kontoLabel = (k: Row) => `${k.nr} ${k.bezeichnung}`;
+
+export const fehlerText = (e: any) => String(e?.message ?? e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+
+export const fehler = (e: any) => alert(fehlerText(e));

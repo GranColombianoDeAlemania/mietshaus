@@ -2,19 +2,22 @@ import { useState } from 'react';
 import { call, parseZahl, zahl, type Row } from '../api';
 import { FormDialog, type Field } from '../Form';
 import { useLoad } from '../useLoad';
+import { ZAEHLER_ARTEN } from './Zaehler';
 
 const TYPEN: [string, string][] = [
   ['flaeche', 'Wohnfläche (aus Einheiten)'],
   ['mea', 'Miteigentumsanteile (aus Einheiten)'],
   ['einheiten', 'Je Einheit gleich'],
   ['personen', 'Personen (aus Mietverhältnissen)'],
+  ['zaehler', 'Zählerverbrauch im Abrechnungszeitraum'],
   ['manuell', 'Manuell eingeben'],
 ];
 
-const FELDER: Field[] = [
+const FELDER = (f: Row): Field[] => [
   { key: 'bezeichnung', label: 'Bezeichnung', required: true },
   { key: 'einheit', label: 'Maßeinheit (z. B. m², MEA)' },
   { key: 'typ', label: 'Werte kommen aus', type: 'select', required: true, options: TYPEN },
+  ...(f.typ === 'zaehler' ? [{ key: 'zaehler_art', label: 'Zählerart', type: 'select', required: true, options: ZAEHLER_ARTEN } as Field] : []),
 ];
 
 // Allocation keys: how each cost is split across the units of an object.
@@ -74,7 +77,9 @@ export function Schluessel(props: { objekt: Row }) {
               {einheiten.map((e) => (
                 <tr key={e.id}>
                   <td>{e.nr} – {e.bezeichnung}</td>
-                  {keys.map((k) => (
+                  {keys.map((k) => k.typ === 'zaehler' ? (
+                    <td key={k.id} className="num klein hinweis">aus Zählern</td>
+                  ) : (
                     <td key={k.id} className="num">
                       <input
                         className="num zelle"

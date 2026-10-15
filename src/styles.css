@@ -183,3 +183,36 @@ input.zelle:focus { border-color: var(--accent); background: white; outline: non
 label.check { flex-direction: row !important; align-items: center; gap: 8px !important; color: var(--ink) !important; font-size: 14px !important; }
 .buttons { display: flex; gap: 8px; margin-top: 18px; }
 .fehler { color: #b42318; background: #fde8e6; padding: 8px 12px; border-radius: 6px; }
+
+/* Navigation groups */
+.navgruppe { margin-bottom: 12px; display: flex; flex-direction: column; gap: 1px; }
+.navgruppe h4, .block h3 { margin: 6px 12px 4px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); }
+.block h3 { margin: 18px 0 8px; }
+.navgruppe button { text-align: left; border: 0; background: transparent; padding: 6px 12px; border-radius: 6px; cursor: pointer; }
+.navgruppe button:hover { background: var(--accent-soft); }
+.navgruppe button.active { background: var(--accent); color: white; font-weight: 600; }
+
+.tabs { display: inline-flex; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 2px; }
+.tabs button { border: 0; background: transparent; padding: 5px 12px; border-radius: 6px; }
+.tabs button.active { background: var(--accent); color: white; }
+.zeitraum { display: inline-flex; align-items: center; gap: 6px; }
+.zeitraum input, .toolbar input[type='date'], .toolbar input[type='month'], .toolbar select, .toolbar input.kurz {
+  padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: white;
+}
+.toolbar label { display: inline-flex; align-items: center; gap: 6px; }
+.toolbar h3 { margin: 0; }
+input.kurz { width: 70px; }
+.panel { background: var(--panel); border-radius: 10px; padding: 14px 16px; margin-bottom: 16px; border-top: 4px solid var(--accent); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08); }
+.maske { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px 14px; margin-bottom: 10px; }
+.maske label { display: flex; flex-direction: column; gap: 3px; font-size: 12.5px; color: var(--muted); }
+.maske label.breit { grid-column: span 2; }
+.maske input, .maske select, table.positionen input, table.positionen select { padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: white; color: var(--ink); width: 100%; }
+table.positionen { box-shadow: none; }
+table.positionen td { padding: 4px 6px; }
+.meldung { color: var(--accent); font-weight: 600; }
+.negativ { color: #b42318; }
+.fehlertext { color: #b42318; }
+tr.split td:first-child { box-shadow: inset 3px 0 var(--accent-soft); }
+tr.zwischen td { background: color-mix(in srgb, var(--accent-soft) 35%, white); font-weight: 600; }
+.dialog.breit { width: min(1100px, 100%); }
+.dialog table { margin-bottom: 6px; }
