@@ -44,6 +44,7 @@ export function Einstellungen() {
           {meldung && <span className="meldung">{meldung}</span>}
         </div>
       </div>
+      <Automatik />
       <ClaudeVerbindung />
       <Dokumenteneingang />
       <div className="block">
@@ -151,6 +152,25 @@ function Dokumenteneingang() {
         </div>
         {e?.mail_letzter_abruf && <p className="klein hinweis">Letzter Abruf: {new Date(e.mail_letzter_abruf).toLocaleString('de-DE')}{e.mail_letzter_fehler ? ` · Fehler: ${e.mail_letzter_fehler}` : ''}</p>}
       </div>
+    </div>
+  );
+}
+
+function Automatik() {
+  const [e, reload] = useLoad<Row>(() => call('einstellungen'), []);
+  if (!e) return null;
+  const an = e.auto_soll !== '0';
+  return (
+    <div className="block">
+      <h3>Automatik</h3>
+      <label className="check">
+        <input type="checkbox" checked={an} onChange={async (ev) => { await call('setzeEinstellungen', { auto_soll: ev.target.checked ? '1' : '0' }); reload(); }} />
+        Monatliche Forderungen (Miete, Vorauszahlungen, Hausgeld) automatisch buchen
+      </label>
+      <p className="klein hinweis">
+        {e.auto_soll_ab ? `Aktiv seit ${e.auto_soll_ab.slice(5)}/${e.auto_soll_ab.slice(0, 4)}; frühere Monate werden nicht automatisch nachgebucht (dafür „Sollstellung“ nutzen).` : 'Startet mit dem aktuellen Monat.'}
+        {e.auto_letzter_lauf ? ` Letzter Lauf: ${new Date(e.auto_letzter_lauf).toLocaleString('de-DE')}.` : ''}
+      </p>
     </div>
   );
 }
