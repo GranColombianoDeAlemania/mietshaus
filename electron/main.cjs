@@ -128,6 +128,35 @@ async function dokumentAblegen() {
 // Only plain file names inside the document folder are accepted.
 const sichererDokPfad = (datei) => path.join(dokumentOrdner(), path.basename(datei));
 
+// Claude Desktop starts Hausverwalter's MCP server from this entry in its configuration file.
+const claudeKonfig = () => (process.platform === 'darwin'
+  ? path.join(app.getPath('home'), 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json')
+  : process.platform === 'win32' ? path.join(app.getPath('appData'), 'Claude', 'claude_desktop_config.json')
+    : path.join(app.getPath('appData'), 'Claude', 'claude_desktop_config.json'));
+const mcpEintrag = () => ({
+  command: process.execPath,
+  args: [path.join(app.getAppPath(), 'electron', 'mcp.cjs')],
+  env: { ELECTRON_RUN_AS_NODE: '1', HAUSVERWALTER_DATEN: app.getPath('userData'), HAUSVERWALTER_DB: dbFile },
+});
+function claudeStatus() {
+  const datei = claudeKonfig();
+  let k = null;
+  try { k = JSON.parse(fs.readFileSync(datei, 'utf8')); } catch {}
+  return { datei, installiert: fs.existsSync(path.dirname(datei)), verbunden: !!k?.mcpServers?.hausverwalter, eintrag: mcpEintrag() };
+}
+function claudeVerbinden() {
+  const datei = claudeKonfig();
+  fs.mkdirSync(path.dirname(datei), { recursive: true });
+  let k = {};
+  if (fs.existsSync(datei)) {
+    fs.copyFileSync(datei, `${datei}.vor-hausverwalter`);
+    k = JSON.parse(fs.readFileSync(datei, 'utf8'));
+  }
+  k.mcpServers = { ...(k.mcpServers ?? {}), hausverwalter: mcpEintrag() };
+  fs.writeFileSync(datei, JSON.stringify(k, null, 2));
+  return claudeStatus();
+}
+
 app.whenReady().then(() => {
   dbFile = process.env.HAUSVERWALTER_DB || path.join(app.getPath('userData'), 'hausverwalter.sqlite');
   oeffneDb();
@@ -160,6 +189,8 @@ app.whenReady().then(() => {
   ipcMain.handle('extern', (_e, url) => {
     if (/^(mailto:|https:)/.test(url)) shell.openExternal(url);
   });
+  ipcMain.handle('claudeStatus', () => claudeStatus());
+  ipcMain.handle('claudeVerbinden', () => claudeVerbinden());
   ipcMain.handle('info', () => ({ dbFile, dokumente: dokumentOrdner(), version: app.getVersion() }));
   createWindow();
   app.on('activate', () => {

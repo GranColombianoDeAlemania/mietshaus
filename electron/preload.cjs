@@ -21,4 +21,6 @@ contextBridge.exposeInMainWorld('hv', {
   },
   extern: (url) => ipcRenderer.invoke('extern', url),
   info: () => ipcRenderer.invoke('info'),
+  claudeStatus: () => ipcRenderer.invoke('claudeStatus'),
+  claudeVerbinden: () => ipcRenderer.invoke('claudeVerbinden'),
 });

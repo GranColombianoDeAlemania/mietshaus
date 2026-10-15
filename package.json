@@ -27,7 +27,8 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.31.0",
     "pdfjs-dist": "6.3.289",
-    "tesseract.js": "7.0.0"
+    "tesseract.js": "7.0.0",
+    "zod": "4.6.7"
   },
   "allowScripts": {
     "tesseract.js": false

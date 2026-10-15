@@ -21,6 +21,8 @@ declare global {
       bei: (kanal: string, fn: (...a: any[]) => void) => () => void;
       extern: (url: string) => Promise<void>;
       info: () => Promise<{ dbFile: string; dokumente: string; version: string }>;
+      claudeStatus: () => Promise<{ datei: string; installiert: boolean; verbunden: boolean; eintrag: Row }>;
+      claudeVerbinden: () => Promise<{ datei: string; installiert: boolean; verbunden: boolean; eintrag: Row }>;
     };
   }
 }

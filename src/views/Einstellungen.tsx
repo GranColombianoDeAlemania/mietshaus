@@ -44,6 +44,7 @@ export function Einstellungen() {
           {meldung && <span className="meldung">{meldung}</span>}
         </div>
       </div>
+      <ClaudeVerbindung />
       <div className="block">
         <h3>Datensicherung</h3>
         <p className="hinweis">
@@ -71,5 +72,34 @@ export function Einstellungen() {
         )}
       </div>
     </section>
+  );
+}
+
+function ClaudeVerbindung() {
+  const [st, reload] = useLoad(() => window.hv.claudeStatus(), []);
+  const [meldung, setMeldung] = useState('');
+  return (
+    <div className="block">
+      <h3>Claude Desktop</h3>
+      <p className="hinweis">
+        Verbindet Hausverwalter mit der Claude-Desktop-App (dein Claude-Abo genügt, kein API-Schlüssel nötig). Danach kannst du in
+        Claude z. B. sagen: „Arbeite das Postfach im Hausverwalter ab“ – Claude liest die Dokumente, legt sie ab und überträgt Rechnungen,
+        Verträge, Zählerstände und Termine ins Programm. Jede Änderung bestätigst du in Claude.
+      </p>
+      {st && (
+        <p>{st.verbunden ? <b className="meldung">✓ Verbunden.</b> : st.installiert ? 'Noch nicht verbunden.' : 'Claude Desktop scheint nicht installiert zu sein (claude.ai/download).'}</p>
+      )}
+      <div className="buttons">
+        <button className="primary" onClick={async () => {
+          try {
+            await window.hv.claudeVerbinden();
+            setMeldung('Eingetragen. Bitte Claude Desktop einmal ganz beenden (⌘Q) und neu starten.');
+            reload();
+          } catch (e) { fehler(e); }
+        }}>{st?.verbunden ? 'Verbindung erneuern' : 'Mit Claude Desktop verbinden'}</button>
+        {meldung && <span className="meldung">{meldung}</span>}
+      </div>
+      {st && <p className="klein hinweis">Konfiguration: {st.datei}</p>}
+    </div>
   );
 }
