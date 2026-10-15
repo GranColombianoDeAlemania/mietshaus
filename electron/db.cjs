@@ -1,6 +1,7 @@
 // Local SQLite database: schema migrations and a small whitelisted CRUD layer.
 const { DatabaseSync } = require('node:sqlite');
 const buchhaltung = require('./buchhaltung.cjs');
+const abrechnung = require('./abrechnung.cjs');
 
 const MIGRATIONS = [
   `
@@ -200,6 +201,19 @@ const MIGRATIONS = [
 
   CREATE TABLE einstellungen (schluessel TEXT PRIMARY KEY, wert TEXT);
   `,
+  `
+  -- Saved statements and budget plans, kept as a snapshot for reprinting.
+  CREATE TABLE abrechnungen (
+    id INTEGER PRIMARY KEY,
+    objekt_id INTEGER NOT NULL REFERENCES objekte(id) ON DELETE CASCADE,
+    typ TEXT NOT NULL,
+    von TEXT, bis TEXT,
+    titel TEXT,
+    daten TEXT NOT NULL,
+    gebucht INTEGER NOT NULL DEFAULT 0,
+    erstellt TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  `,
 ];
 
 // Columns the renderer may write, per table. Everything else is rejected.
@@ -293,6 +307,7 @@ function api(db) {
 
   const bh = buchhaltung({ db, all, get, tx, save, aktuell, PERSON_NAME });
   bh.syncKonten();
+  const ab = abrechnung({ db, all, get, tx, PERSON_NAME, bh });
 
   // Master data changes can create or rename accounts.
   const SYNC = new Set(['objekte', 'einheiten', 'personen', 'mietverhaeltnisse', 'eigentum']);
@@ -419,7 +434,7 @@ function api(db) {
           AND NOT EXISTS (SELECT 1 FROM ${vt} v WHERE v.einheit_id = e.id AND ${aktuell('v')})) AS leer`, a, b);
     },
   };
-  return { ...bh, ...basis };
+  return { ...bh, ...ab, ...basis };
 }
 
 module.exports = { open, api };

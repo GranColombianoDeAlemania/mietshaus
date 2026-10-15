@@ -14,6 +14,10 @@ import { Sollstellung } from './views/Sollstellung';
 import { OffenePosten } from './views/OffenePosten';
 import { Bank } from './views/Bank';
 import { Einstellungen } from './views/Einstellungen';
+import { NkAbrechnung } from './views/NkAbrechnung';
+import { WegAbrechnung } from './views/WegAbrechnung';
+import { Wirtschaftsplan } from './views/Wirtschaftsplan';
+import { Ruecklagen } from './views/Ruecklagen';
 
 type Ctx = { modus: Modus; objekt: Row; objekte: Row[]; ladeObjekte: () => void; oeffne: (seite: string, objektId?: number) => void };
 type Seite = {
@@ -38,13 +42,17 @@ const SEITEN: Seite[] = [
   { id: 'soll', label: 'Sollstellung', gruppe: 'Buchhaltung', objekt: true, render: (c) => <Sollstellung key={c.objekt.id + c.modus} objekt={c.objekt} modus={c.modus} /> },
   { id: 'op', label: 'Offene Posten & Mahnungen', gruppe: 'Buchhaltung', objekt: true, render: (c) => <OffenePosten key={c.objekt.id + c.modus} objekt={c.objekt} modus={c.modus} /> },
   { id: 'bank', label: 'Bank & SEPA', gruppe: 'Buchhaltung', objekt: true, render: (c) => <Bank key={c.objekt.id + c.modus} objekt={c.objekt} modus={c.modus} /> },
+  { id: 'nk', label: 'Betriebskosten', gruppe: 'Abrechnung', objekt: true, modi: ['miete'], render: (c) => <NkAbrechnung key={c.objekt.id} objekt={c.objekt} /> },
+  { id: 'wegabr', label: 'Jahresabrechnung', gruppe: 'Abrechnung', objekt: true, modi: ['weg'], render: (c) => <WegAbrechnung key={c.objekt.id} objekt={c.objekt} /> },
+  { id: 'wipl', label: 'Wirtschaftsplan', gruppe: 'Abrechnung', objekt: true, modi: ['weg'], render: (c) => <Wirtschaftsplan key={c.objekt.id} objekt={c.objekt} /> },
+  { id: 'ruecklagen', label: 'Rücklagen & Sonderumlagen', gruppe: 'Abrechnung', objekt: true, modi: ['weg'], render: (c) => <Ruecklagen key={c.objekt.id} objekt={c.objekt} /> },
   { id: 'einstellungen', label: 'Einstellungen & Sicherung', gruppe: 'System', render: () => <Einstellungen /> },
 ];
 
 // Upcoming areas from PLAN.md, shown so the roadmap stays visible in the app.
 const GEPLANT: Record<Modus, string[]> = {
-  miete: ['Nebenkostenabrechnung', 'Heizkosten', 'Kaution & Mietanpassung', 'Briefe & Dokumente', 'Vorgänge & Termine', 'DATEV & Export'],
-  weg: ['Hausgeldabrechnung', 'Wirtschaftsplan', 'Rücklagen', 'Versammlungen & Beschlüsse', 'Briefe & Dokumente', 'Vorgänge & Termine', 'DATEV & Export'],
+  miete: ['Kaution & Mietanpassung', 'Briefe & Dokumente', 'Vorgänge & Termine', 'DATEV & Export'],
+  weg: ['Versammlungen & Beschlüsse', 'Briefe & Dokumente', 'Vorgänge & Termine', 'DATEV & Export'],
 };
 
 const lesen = (k: string) => {

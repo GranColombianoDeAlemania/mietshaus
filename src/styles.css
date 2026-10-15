@@ -33,7 +33,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 
 .app {
   display: grid;
-  grid-template: 'head head' auto 'nav main' 1fr 'nav foot' auto / 220px 1fr;
+  grid-template: 'head head' auto 'nav main' 1fr 'nav foot' auto / 230px 1fr;
   height: 100%;
 }
 

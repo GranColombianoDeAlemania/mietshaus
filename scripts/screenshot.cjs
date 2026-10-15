@@ -10,11 +10,12 @@ const o = db.neuesObjekt({ bezeichnung: 'Lindenstraße 5', art: 'gemischt', stra
 db.neuesObjekt({ bezeichnung: 'Am Park 12', art: 'miete', plz: '10117', ort: 'Berlin' });
 const e = [['EG links', 72.5, 3, 250], ['EG rechts', 64, 2, 220], ['1. OG', 88, 4, 300], ['Garage 1', 18, 0, 30]]
   .map(([b, f, z, m], i) => db.save('einheiten', { objekt_id: o, nr: i + 1, bezeichnung: b, art: i === 3 ? 'Garage' : 'Wohnung', wohnflaeche: f, zimmer: z, mea: m }));
-const p = [['Anna', 'Meier'], ['Jonas', 'Becker'], ['Petra', 'Schulz'], ['Karl', 'Wagner']].map(([v, n]) => db.save('personen', { vorname: v, nachname: n, ort: 'Berlin' }));
+const p = [['Anna', 'Meier'], ['Jonas', 'Becker'], ['Petra', 'Schulz'], ['Karl', 'Wagner']].map(([v, n], i) => db.save('personen', { anrede: i % 2 ? 'Herr' : 'Frau', vorname: v, nachname: n, strasse: 'Lindenstraße 5', plz: '10115', ort: 'Berlin' }));
 db.save('mietverhaeltnisse', { einheit_id: e[0], person_id: p[0], beginn: '2022-03-01', kaltmiete_ct: 81000, bk_vz_ct: 16000, hk_vz_ct: 9000, personen_anzahl: 2 });
 db.save('mietverhaeltnisse', { einheit_id: e[1], person_id: p[1], beginn: '2024-08-01', kaltmiete_ct: 69000, bk_vz_ct: 14000, hk_vz_ct: 8000 });
 db.save('eigentum', { einheit_id: e[0], person_id: p[2], beginn: '2019-01-01', hausgeld_ct: 32000, ruecklage_ct: 6000 });
 db.save('eigentum', { einheit_id: e[1], person_id: p[2], beginn: '2019-01-01', hausgeld_ct: 28000, ruecklage_ct: 5000 });
+db.setzeEinstellungen({ verwalter_name: 'Hausverwaltung Muster', verwalter_strasse: 'Hauptstr. 1', verwalter_plz: '10115', verwalter_ort: 'Berlin', verwalter_telefon: '030 123456', verwalter_email: 'info@example.de' });
 db.save('eigentum', { einheit_id: e[2], person_id: p[3], beginn: '2021-06-01', hausgeld_ct: 39000, ruecklage_ct: 7000, selbstnutzer: 1 });
 for (const k of db.schluessel(o)) db.werteAusStammdaten(k.id);
 const jahr = new Date().getFullYear();
@@ -26,6 +27,17 @@ db.buchen({ objekt_id: o, datum: `${jahr}-02-10`, beleg: 'R-001', text: 'Stadtwe
 const z1 = db.save('zaehler', { objekt_id: o, einheit_id: e[0], art: 'kaltwasser', nummer: 'KW-1001', einheit: 'm³', faktor: 1, eichung_bis: `${jahr}-12-31` });
 db.ablesung(`${jahr - 1}-12-31`, { [z1]: 120.5 });
 ipcMain.handle('db', (_e, fn, args) => db[fn](...args));
+// PDFs are printed straight into the output folder instead of asking for a file name.
+ipcMain.handle('pdf', async (_e, html, name) => {
+  const tmp = path.join(out, 'tmp.html');
+  fs.writeFileSync(tmp, html);
+  const w = new BrowserWindow({ show: false, webPreferences: { offscreen: true } });
+  await w.loadFile(tmp);
+  const data = await w.webContents.printToPDF({ pageSize: 'A4', printBackground: true, preferCSSPageSize: true });
+  w.destroy();
+  fs.writeFileSync(path.join(out, name.replace(/[^\w.-]+/g, '_')), data);
+  return name;
+});
 ipcMain.handle('info', () => ({ dbFile: ':memory:', dokumente: '-', version: app.getVersion() }));
 app.commandLine.appendSwitch('lang', 'de-DE');
 
@@ -51,6 +63,21 @@ app.whenReady().then(async () => {
   await click('Bank & SEPA'); await click('SEPA-Lastschrift'); await shot('7-lastschrift');
   await click('Zähler'); await shot('8-zaehler');
   await click('Einstellungen & Sicherung'); await shot('9-einstellungen');
+  await click('Mietverwaltung'); await click('Betriebskosten'); await wait(300);
+  await js(`document.querySelectorAll('.maske input[type=date]')[0].value`); 
+  await js(`(() => { const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; const [a, b] = document.querySelectorAll('.maske input[type=date]');
+    set.call(a, '${new Date().getFullYear()}-01-01'); a.dispatchEvent(new Event('input', { bubbles: true }));
+    set.call(b, '${new Date().getFullYear()}-12-31'); b.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  await click('Berechnen'); await wait(500); await shot('11-nk');
+  await click('Abrechnungen als PDF'); await wait(2500);
   await click('WEG-Verwaltung'); await click('Konten'); await shot('10-weg-konten');
+  await click('Jahresabrechnung'); await wait(300);
+  await js(`(() => { const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; const [a, b] = document.querySelectorAll('.maske input[type=date]');
+    set.call(a, '${new Date().getFullYear()}-01-01'); a.dispatchEvent(new Event('input', { bubbles: true }));
+    set.call(b, '${new Date().getFullYear()}-12-31'); b.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  await click('Berechnen'); await wait(500); await shot('12-weg-abrechnung');
+  await click('Abrechnung als PDF'); await wait(2500);
+  await click('Wirtschaftsplan'); await wait(300); await click('Auf Eigentümer verteilen'); await wait(400); await shot('13-wipl');
+  await click('Rücklagen & Sonderumlagen'); await shot('14-ruecklagen');
   app.quit();
 });

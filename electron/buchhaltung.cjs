@@ -206,6 +206,8 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
 
   return {
     syncKonten,
+    kontoVon,
+    saldoBis: (kontoId, bis) => saldo(kontoId, bis),
     betraege,
     verbrauch,
     offenePostenKonto,

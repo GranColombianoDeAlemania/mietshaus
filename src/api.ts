@@ -27,8 +27,9 @@ const eur = new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' 
 const num = new Intl.NumberFormat('de-DE', { maximumFractionDigits: 4 });
 const num2 = new Intl.NumberFormat('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-export const euro = (ct: number | null | undefined) => eur.format((ct ?? 0) / 100);
-export const betrag = (ct: number | null | undefined) => num2.format((ct ?? 0) / 100);
+// `|| 0` turns -0 into 0 so nothing prints as "-0,00".
+export const euro = (ct: number | null | undefined) => eur.format((ct ?? 0) / 100 || 0);
+export const betrag = (ct: number | null | undefined) => num2.format((ct ?? 0) / 100 || 0);
 export const zahl = (n: number | null | undefined) => (n == null ? '' : num.format(n));
 
 export const datum = (iso: string | null | undefined) => {

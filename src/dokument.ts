@@ -9,33 +9,34 @@ export const absaetze = (text: string) =>
   text.split(/\n{2,}/).map((p) => `<p>${esc(p).replace(/\n/g, '<br>')}</p>`).join('');
 
 const CSS = `
-@page { size: A4; margin: 0; }
+@page { size: A4; margin: 12mm 18mm 15mm 25mm; }
 * { box-sizing: border-box; }
-body { margin: 0; font: 10.5pt/1.45 Helvetica, Arial, sans-serif; color: #111; }
-.seite { width: 210mm; min-height: 297mm; padding: 20mm 20mm 25mm 25mm; position: relative; page-break-after: always; }
+body { margin: 0; font: 10pt/1.4 Helvetica, Arial, sans-serif; color: #111; }
+.seite { position: relative; page-break-after: always; }
 .seite:last-child { page-break-after: auto; }
-.kopf { text-align: right; font-size: 9pt; color: #444; height: 25mm; }
+.kopf { text-align: right; font-size: 9pt; color: #444; height: 20mm; }
 .kopf b { font-size: 11pt; color: #111; }
 .ruecksende { font-size: 7pt; color: #555; border-bottom: 0.5pt solid #999; display: inline-block; margin-bottom: 2mm; }
-.anschrift { position: absolute; top: 50mm; left: 25mm; width: 85mm; height: 40mm; }
-.infoblock { position: absolute; top: 55mm; right: 20mm; width: 60mm; font-size: 9pt; }
+/* Positions follow DIN 5008 form B, measured from the top page margin. */
+.anschrift { position: absolute; top: 33mm; left: 0; width: 85mm; height: 40mm; }
+.infoblock { position: absolute; top: 38mm; right: 0; width: 62mm; font-size: 9pt; }
 .infoblock td { padding: 0 0 0 4mm; }
-.inhalt { margin-top: 78mm; }
-h1 { font-size: 12pt; margin: 0 0 6mm; }
-h2 { font-size: 11pt; margin: 6mm 0 2mm; }
-p { margin: 0 0 3mm; }
-table.t { width: 100%; border-collapse: collapse; margin: 3mm 0; font-size: 9.5pt; }
-table.t th, table.t td { padding: 1.2mm 2mm; border-bottom: 0.4pt solid #bbb; text-align: left; vertical-align: top; }
+.inhalt { padding-top: 63mm; }
+h1 { font-size: 12pt; margin: 0 0 5mm; }
+h2 { font-size: 10.5pt; margin: 5mm 0 2mm; page-break-after: avoid; }
+p { margin: 0 0 2.5mm; }
+table.t { width: 100%; border-collapse: collapse; margin: 2mm 0 3mm; font-size: 9pt; }
+table.t th, table.t td { padding: 1mm 1.5mm; border-bottom: 0.4pt solid #bbb; text-align: left; vertical-align: top; }
 table.t th { background: #eee; font-weight: bold; }
+table.t tr { page-break-inside: avoid; }
 table.t .r, .r { text-align: right; white-space: nowrap; }
 table.t tr.summe td { font-weight: bold; border-top: 0.8pt solid #333; border-bottom: none; }
 table.t tr.zwischen td { font-weight: bold; background: #f6f6f6; }
-.fuss { position: absolute; bottom: 10mm; left: 25mm; right: 20mm; font-size: 7.5pt; color: #555; border-top: 0.5pt solid #aaa; padding-top: 2mm; display: flex; justify-content: space-between; gap: 6mm; }
-.bericht { padding: 15mm 15mm 18mm 18mm; }
-.bericht .inhalt { margin-top: 0; }
-.klein { font-size: 8.5pt; color: #444; }
-.hervor { background: #f2f2f2; padding: 3mm 4mm; margin: 4mm 0; font-weight: bold; }
-.unterschrift { margin-top: 15mm; }
+.fuss { margin-top: 8mm; font-size: 7.5pt; color: #555; border-top: 0.5pt solid #aaa; padding-top: 2mm; display: flex; justify-content: space-between; gap: 6mm; page-break-inside: avoid; }
+.bericht .inhalt { padding-top: 0; }
+.klein { font-size: 8pt; color: #444; }
+.hervor { background: #f2f2f2; padding: 2.5mm 4mm; margin: 3mm 0; font-weight: bold; }
+.unterschrift { margin-top: 8mm; page-break-inside: avoid; }
 `;
 
 export type Absender = { name: string; strasse?: string; ort?: string; telefon?: string; email?: string; bank?: string; iban?: string; bic?: string };
