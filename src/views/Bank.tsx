@@ -84,7 +84,8 @@ function Import(props: { objekt: Row }) {
               <tr key={z.ref} className={z.doppelt ? 'inaktiv' : ''}>
                 <td><input type="checkbox" disabled={z.doppelt} checked={z.an} onChange={(e) => set(i, { an: e.target.checked })} /></td>
                 <td>{datum(z.datum)}</td>
-                <td><b>{z.name}</b><div className="klein">{z.zweck}</div>{z.doppelt && <span className="tag">bereits gebucht</span>}</td>
+                <td><b>{z.name}</b><div className="klein">{z.zweck}</div>{z.doppelt && <span className="tag">bereits gebucht</span>}
+                  {(z as Row).hinweis && <div className={`klein ${(z as Row).ruecklast ? 'fehlertext' : 'meldung'}`}>{(z as Row).hinweis}</div>}</td>
                 <td className="num"><span className={z.betrag_ct < 0 ? 'negativ' : ''}>{betrag(z.betrag_ct)}</span></td>
                 <td>
                   <KontoSelect konten={konten} klassen={z.betrag_ct > 0 ? ['person', 'einnahme', 'geld', 'kosten'] : ['kosten', 'person', 'geld', 'ruecklage']}

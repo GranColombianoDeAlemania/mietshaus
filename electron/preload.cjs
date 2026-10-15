@@ -22,5 +22,10 @@ contextBridge.exposeInMainWorld('hv', {
   extern: (url) => ipcRenderer.invoke('extern', url),
   info: () => ipcRenderer.invoke('info'),
   claudeStatus: () => ipcRenderer.invoke('claudeStatus'),
+  eingangsordnerWaehlen: () => ipcRenderer.invoke('eingangsordnerWaehlen'),
+  eingangsordnerAus: () => ipcRenderer.invoke('eingangsordnerAus'),
+  mailSpeichern: (cfg, pw) => ipcRenderer.invoke('mailSpeichern', cfg, pw),
+  mailTesten: () => ipcRenderer.invoke('mailTesten'),
+  mailAbrufen: () => ipcRenderer.invoke('mailAbrufen'),
   claudeVerbinden: () => ipcRenderer.invoke('claudeVerbinden'),
 });

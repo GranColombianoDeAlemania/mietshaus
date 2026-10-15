@@ -21,6 +21,11 @@ declare global {
       bei: (kanal: string, fn: (...a: any[]) => void) => () => void;
       extern: (url: string) => Promise<void>;
       info: () => Promise<{ dbFile: string; dokumente: string; version: string }>;
+      eingangsordnerWaehlen: () => Promise<string | null>;
+      eingangsordnerAus: () => Promise<void>;
+      mailSpeichern: (cfg: Row, pw?: string) => Promise<{ verschluesselt: boolean }>;
+      mailTesten: () => Promise<string>;
+      mailAbrufen: () => Promise<{ neu: number; mails: number }>;
       claudeStatus: () => Promise<{ datei: string; installiert: boolean; verbunden: boolean; eintrag: Row }>;
       claudeVerbinden: () => Promise<{ datei: string; installiert: boolean; verbunden: boolean; eintrag: Row }>;
     };

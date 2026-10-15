@@ -27,7 +27,7 @@ Typischer Auftrag: „Arbeite das Postfach ab“. Vorgehen:
    - bezahlte Rechnung: rechnung_buchen (Kostenkonto aus konten_liste wählen; Betriebskosten auf das passende umlagefähige Konto nach BetrKV),
    - unbezahlte Rechnung: nur ablegen mit Fälligkeit (sie erscheint dann unter „Rechnungen“ als offen),
    - neuer Mietvertrag: person_anlegen + mietvertrag_anlegen, Kaufvertrag/Eigentümerwechsel: eigentum_anlegen,
-   - Zählerablesung: zaehlerstand_erfassen, Termin/Frist: termin_anlegen, Schaden/Anfrage: vorgang_anlegen,\n   - Angebot/Auftrag/Rechnung zu einem Projekt (z. B. Sanierung): projekte_liste, dann projekt_posten_anlegen und dokument_ablegen mit projekt_id.
+   - Zählerablesung: zaehlerstand_erfassen, Termin/Frist: termin_anlegen, Schaden/Anfrage: vorgang_anlegen,\n   - Hausgeldabrechnung einer fremdverwalteten WEG (vermietete Eigentumswohnung): weg_kosten_uebernehmen mit den umlagefähigen Positionen,\n   - Angebot/Auftrag/Rechnung zu einem Projekt (z. B. Sanierung): projekte_liste, dann projekt_posten_anlegen und dokument_ablegen mit projekt_id.
 Beträge immer in Euro angeben (z. B. 1232.40). Datumsangaben im Format JJJJ-MM-TT.
 Wenn etwas nicht eindeutig ist (z. B. welches Objekt), nicht raten: den Nutzer fragen oder das Dokument im Postfach lassen und den Grund in der Zusammenfassung notieren.
 Vor dem Buchen kurz zusammenfassen, was gebucht wird.\nFür „Was steht an?“ / ein Tagesbriefing: hinweise und faelligkeiten abrufen und kurz priorisiert zusammenfassen.`;
@@ -224,6 +224,12 @@ function starten() {
     nach_aufgabe_id: z.number().int().optional(), meilenstein: z.boolean().optional(),
   }, (a) => text(`Aufgabe angelegt, id ${db.save('projektaufgaben', { projekt_id: a.projekt_id, titel: a.titel, beginn: a.beginn, ende: a.meilenstein ? a.beginn : a.ende,
     gewerk: a.gewerk, nach_id: a.nach_aufgabe_id, meilenstein: a.meilenstein ? 1 : 0 })}.`));
+
+  werkzeug('weg_kosten_uebernehmen', 'Für eine vermietete Eigentumswohnung mit fremder WEG-Verwaltung: bucht die umlagefähigen Kostenanteile aus deren Hausgeldabrechnung vom gezahlten Hausgeld auf die passenden Kostenkonten um (Grundlage für die Betriebskostenabrechnung des Mieters).', {
+    objekt_id: z.number().int(), jahr: z.number().int(),
+    positionen: z.array(z.object({ kosten_konto_id: z.number().int(), betrag_eur: z.number(), text: z.string().optional() })),
+  }, (a) => text(`Umgebucht (Buchung ${db.wegKostenUebernehmen(a.objekt_id, `${a.jahr}-12-31`, a.positionen.map((p) => ({ konto_id: p.kosten_konto_id, betrag_ct: cent(p.betrag_eur), text: p.text })),
+    `Umlagefähige Kosten aus WEG-Abrechnung ${a.jahr}`)}).`));
 
   werkzeug('termin_anlegen', 'Legt einen Termin an.', {
     titel: z.string(), datum: z.string(), uhrzeit: z.string().optional(), ort: z.string().optional(), objekt_id: z.number().int().optional(),

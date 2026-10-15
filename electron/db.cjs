@@ -6,6 +6,7 @@ const verwaltung = require('./verwaltung.cjs');
 const archiv = require('./archiv.cjs');
 const automatik = require('./automatik.cjs');
 const projekte = require('./projekte.cjs');
+const auswertung = require('./auswertung.cjs');
 
 const MIGRATIONS = [
   `
@@ -444,12 +445,28 @@ const MIGRATIONS = [
   ALTER TABLE vorgaenge ADD COLUMN projekt_id INTEGER REFERENCES projekte(id) ON DELETE CASCADE;
   ALTER TABLE termine ADD COLUMN projekt_id INTEGER REFERENCES projekte(id) ON DELETE CASCADE;
   `,
+  `
+  -- Purchase data for yield and depreciation, and manual tax inputs per object and year.
+  ALTER TABLE objekte ADD COLUMN kaufpreis_ct INTEGER;
+  ALTER TABLE objekte ADD COLUMN kaufnebenkosten_ct INTEGER;
+  ALTER TABLE objekte ADD COLUMN kaufdatum TEXT;
+  ALTER TABLE objekte ADD COLUMN gebaeudeanteil REAL;
+  ALTER TABLE objekte ADD COLUMN afa_satz REAL;
+  CREATE TABLE steuerangaben (
+    objekt_id INTEGER NOT NULL REFERENCES objekte(id) ON DELETE CASCADE,
+    jahr INTEGER NOT NULL,
+    schuldzinsen_ct INTEGER, geldbeschaffung_ct INTEGER, fahrtkosten_ct INTEGER, sonstige_ct INTEGER,
+    ruecklage_hausgeld_ct INTEGER,
+    notiz TEXT,
+    PRIMARY KEY (objekt_id, jahr)
+  );
+  `,
 ];
 
 // Columns the renderer may write, per table. Everything else is rejected.
 const TABLES = {
   objekte: ['bezeichnung', 'art', 'strasse', 'plz', 'ort', 'baujahr', 'wj_beginn', 'iban', 'bic', 'bank',
-    'ruecklage_iban', 'sepa_glaeubiger_id', 'hausmeister', 'notiz'],
+    'ruecklage_iban', 'sepa_glaeubiger_id', 'hausmeister', 'notiz', 'kaufpreis_ct', 'kaufnebenkosten_ct', 'kaufdatum', 'gebaeudeanteil', 'afa_satz'],
   einheiten: ['objekt_id', 'nr', 'bezeichnung', 'art', 'lage', 'wohnflaeche', 'zimmer', 'mea', 'notiz'],
   personen: ['anrede', 'titel', 'vorname', 'nachname', 'firma', 'strasse', 'plz', 'ort', 'land', 'telefon',
     'mobil', 'email', 'iban', 'bic', 'kontoinhaber', 'geburtsdatum', 'notiz'],
@@ -703,9 +720,10 @@ function api(db) {
     },
   };
   const pj = projekte({ db, all, get, tx, bh });
+  const aw = auswertung({ db, all, get, tx, bh });
   const au = automatik({ db, all, get, tx, PERSON_NAME, bh, ab, vw, einstellungen: basis.einstellungen });
   return {
-    ...bh, ...ab, ...vw, ...ar, ...au, ...pj, ...basis,
+    ...bh, ...ab, ...vw, ...ar, ...au, ...pj, ...aw, ...basis,
     // Removes the record and its index entry; the caller deletes the file.
     dokumentLoeschen: (id) => {
       const d = get('SELECT datei FROM dokumente WHERE id = ?', id);

@@ -305,3 +305,4 @@ button.link { border: 0; background: none; color: var(--accent); padding: 0; tex
 .gantt svg { width: 100%; height: auto; display: block; }
 .gantt .klickbar { cursor: pointer; }
 tr.klickbar { cursor: pointer; }
+td.num, th.num { white-space: nowrap; }

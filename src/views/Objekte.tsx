@@ -16,6 +16,11 @@ const FELDER: Field[] = [
   { key: 'bic', label: 'BIC' },
   { key: 'ruecklage_iban', label: 'IBAN Rücklagenkonto' },
   { key: 'sepa_glaeubiger_id', label: 'SEPA-Gläubiger-ID' },
+  { key: 'kaufpreis_ct', label: 'Kaufpreis', type: 'money', section: 'Kauf & Steuer (für Rendite und AfA)' },
+  { key: 'kaufnebenkosten_ct', label: 'Kaufnebenkosten', type: 'money' },
+  { key: 'kaufdatum', label: 'Kaufdatum', type: 'date' },
+  { key: 'gebaeudeanteil', label: 'Gebäudeanteil am Kaufpreis (%)', type: 'number' },
+  { key: 'afa_satz', label: 'AfA-Satz (% pro Jahr, z. B. 2 / 2,5 / 3)', type: 'number' },
   { key: 'notiz', label: 'Notiz', type: 'textarea', section: 'Sonstiges' },
 ];
 

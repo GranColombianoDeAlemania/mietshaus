@@ -41,6 +41,7 @@ for (let i = 1; i <= 9; i++) {
   db.buchen({ objekt_id: o, datum: m, text: 'Mieteingang', positionen: [{ soll_id: kt[1200], haben_id: kt[100200], betrag_ct: 91000 + i * 1000 }] });
   db.buchen({ objekt_id: o, datum: m, text: 'Ausgaben', positionen: [{ soll_id: kt[45100], haben_id: kt[1200], betrag_ct: 30000 + (i % 3) * 25000 }] });
 }
+db.save('objekte', { id: o, kaufpreis_ct: 85000000, kaufnebenkosten_ct: 8000000, kaufdatum: '2019-05-01', gebaeudeanteil: 70, afa_satz: 2 });
 const pr = db.save('projekte', { titel: 'Dachsanierung', status: 'laufend', objekt_id: o, kosten_konto_id: kt[45400], budget_ct: 4000000, beginn: `${jahr}-09-01` });
 const g1 = db.save('projektaufgaben', { projekt_id: pr, titel: 'Gerüst stellen', gewerk: 'Gerüstbau Krause', beginn: `${jahr}-09-14`, ende: `${jahr}-09-18`, fortschritt: 100 });
 const g2 = db.save('projektaufgaben', { projekt_id: pr, titel: 'Alte Eindeckung entfernen', gewerk: 'Dach GmbH', beginn: `${jahr}-09-21`, ende: `${jahr}-10-02`, fortschritt: 100, nach_id: g1 });
@@ -66,6 +67,7 @@ ipcMain.handle('pdf', async (_e, html, name) => {
   fs.writeFileSync(path.join(out, name.replace(/[^\w.-]+/g, '_')), data);
   return name;
 });
+ipcMain.handle('mailTesten', () => 'ok');
 ipcMain.handle('claudeStatus', () => ({ datei: '-', installiert: true, verbunden: false, eintrag: {} }));
 ipcMain.handle('info', () => ({ dbFile: ':memory:', dokumente: '-', version: app.getVersion() }));
 app.commandLine.appendSwitch('lang', 'de-DE');
@@ -131,6 +133,9 @@ app.whenReady().then(async () => {
     const labels = await js(`[...document.querySelectorAll('nav .navgruppe button')].map(b => b.textContent.trim())`);
     for (const l of labels) { await click(l); await wait(250); const h = await js(`document.querySelector('main h1')?.textContent ?? '(kein Titel)'`); console.log('SEITE', m, '|', l, '→', h); }
   }
+  await click('Mietverwaltung'); await click('Rendite & Steuer'); await wait(500); await shot('40-rendite');
+  await click('Anlage V (Steuer)'); await wait(400); await shot('41-anlagev');
+  await click('Einstellungen & Sicherung'); await wait(300); await js(`window.scrollTo(0, 99999); document.querySelector('main').scrollTo(0, 99999)`); await wait(300); await shot('42-einstellungen');
   await click('Mietverwaltung'); await click('Postfach'); await wait(800); await shot('20-postfach');
   await click('Archiv & Suche'); await wait(300);
   await js(`(() => { const i = document.querySelector('.suche.gross'); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(i, 'abwasser'); i.dispatchEvent(new Event('input', { bubbles: true })); })()`);

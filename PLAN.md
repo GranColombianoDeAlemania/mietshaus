@@ -27,6 +27,18 @@ Two modes, kept separate but linked:
 | 12 | Export & System | DATEV export, CSV/Excel, backup, users/rights | done |
 | 13 | Optional | Not built: online banking (FinTS/HBCI), tenant portal/app, AI assistant, TWAIN scanning, telephony, Outlook sync, multi-user server, report designer | open |
 
+## Version 0.3 – smarter
+
+| Area | Contents | Status |
+|------|----------|--------|
+| Dokumente | Postfach (drag & drop, folder, e-mail), OCR, field recognition, duplicates, full-text search, invoices | done |
+| Claude | MCP connection for Claude Desktop (no API key): inbox processing, filing, booking, master data, projects, hints | done |
+| Cockpit | Automatic monthly charges, rule-based hints with snooze/done, key figures, cash-flow chart | done |
+| Projekte | Third mode: projects with Gantt, dependencies, quotes/orders/invoices, budget forecast, year plan | done |
+| Auswertungen | Yield per object, Anlage V (inflow principle, AfA), cost take-over from external WEG statements | done |
+| Bank | Returned debits detected (with case), outgoing payments matched to open invoices | done |
+| NAS-Sync | One shared database file on the Synology (SMB), lock per device, PDFs local for 4 weeks | open (user sets up NAS first) |
+
 ## Development
 
 ```

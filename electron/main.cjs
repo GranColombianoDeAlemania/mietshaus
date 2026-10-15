@@ -1,10 +1,11 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, protocol } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, protocol, safeStorage } = require('electron');
 const { pathToFileURL } = require('node:url');
 const path = require('node:path');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
 const { open, api } = require('./db.cjs');
 const analyse = require('./analyse.cjs');
+const eingang = require('./eingang.cjs');
 
 let db;
 let rawDb;
@@ -174,6 +175,44 @@ app.whenReady().then(() => {
     return r.canceled ? [] : ana.importieren(r.filePaths, opt);
   });
   ipcMain.handle('neuAnalysieren', (_e, id) => ana.neuAnalysieren(id));
+
+  // The mail password is encrypted with the system keychain where available (always on macOS).
+  const passwort = {
+    lesen: () => {
+      const e = db.einstellungen();
+      if (e.mail_passwort_enc && safeStorage.isEncryptionAvailable()) return safeStorage.decryptString(Buffer.from(e.mail_passwort_enc, 'base64'));
+      return e.mail_passwort_klar ? Buffer.from(e.mail_passwort_klar, 'base64').toString('utf8') : '';
+    },
+    setzen: (pw) => {
+      if (safeStorage.isEncryptionAvailable()) db.setzeEinstellungen({ mail_passwort_enc: safeStorage.encryptString(pw).toString('base64'), mail_passwort_klar: null });
+      else db.setzeEinstellungen({ mail_passwort_klar: Buffer.from(pw, 'utf8').toString('base64'), mail_passwort_enc: null });
+    },
+  };
+  const ein = eingang({
+    db: new Proxy({}, { get: (_t, k) => db[k] }),
+    importieren: (pfade, opt) => { const r = ana.importieren(pfade, opt); melden('aktualisiert'); return r; },
+    melden: (text) => melden('meldung', text),
+    passwort,
+  });
+  ein.ordnerSetzen(db.einstellungen().eingangsordner);
+  ein.mailPlanen();
+  if (db.einstellungen().mail_aktiv === '1') setTimeout(() => ein.mailAbrufen().catch(() => {}), 20_000);
+  ipcMain.handle('eingangsordnerWaehlen', async () => {
+    const r = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] });
+    if (r.canceled || !r.filePaths[0]) return null;
+    db.setzeEinstellungen({ eingangsordner: r.filePaths[0] });
+    ein.ordnerSetzen(r.filePaths[0]);
+    return r.filePaths[0];
+  });
+  ipcMain.handle('eingangsordnerAus', () => { db.setzeEinstellungen({ eingangsordner: null }); ein.ordnerSetzen(null); });
+  ipcMain.handle('mailSpeichern', (_e, cfg, pw) => {
+    db.setzeEinstellungen(cfg);
+    if (pw) passwort.setzen(pw);
+    ein.mailPlanen();
+    return { verschluesselt: safeStorage.isEncryptionAvailable() };
+  });
+  ipcMain.handle('mailTesten', () => ein.mailTesten());
+  ipcMain.handle('mailAbrufen', () => ein.mailAbrufen());
   // One channel for the database API; errors reach the renderer as rejected promises.
   ipcMain.handle('db', (_e, fn, args) => {
     if (typeof db[fn] !== 'function') throw new Error(`Unbekannte Funktion: ${fn}`);

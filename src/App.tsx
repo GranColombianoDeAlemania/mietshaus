@@ -24,6 +24,7 @@ import { Briefe, Termine, Vorgaenge } from './views/Kommunikation';
 import { Archiv, DokumentDialog, Postfach, Rechnungen } from './views/Archiv';
 import { Suche } from './Suche';
 import { Export } from './views/Export';
+import { Auswertungen } from './views/Auswertungen';
 import { ProjektCockpit, ProjektDokumente, ProjektKosten, ProjektListe, ProjektZeitplan } from './views/Projekte';
 
 type Ctx = { modus: Modus; objekt: Row; objekte: Row[]; ladeObjekte: () => void; oeffne: (seite: string, objektId?: number) => void };
@@ -62,6 +63,7 @@ const SEITEN: Seite[] = [
   { id: 'wegabr', label: 'Jahresabrechnung', gruppe: 'Abrechnung', objekt: true, modi: ['weg'], render: (c) => <WegAbrechnung key={c.objekt.id} objekt={c.objekt} /> },
   { id: 'wipl', label: 'Wirtschaftsplan', gruppe: 'Abrechnung', objekt: true, modi: ['weg'], render: (c) => <Wirtschaftsplan key={c.objekt.id} objekt={c.objekt} /> },
   { id: 'ruecklagen', label: 'Rücklagen & Sonderumlagen', gruppe: 'Abrechnung', objekt: true, modi: ['weg'], render: (c) => <Ruecklagen key={c.objekt.id} objekt={c.objekt} /> },
+  { id: 'auswertung', label: 'Rendite & Steuer', gruppe: 'Abrechnung', objekt: true, modi: ['miete'], render: (c) => <Auswertungen key={c.objekt.id} objekt={c.objekt} /> },
   { id: 'kaution', label: 'Kautionen', gruppe: 'Verwaltung', objekt: true, modi: ['miete'], render: (c) => <Kautionen key={c.objekt.id} objekt={c.objekt} /> },
   { id: 'anpassung', label: 'Mietanpassungen', gruppe: 'Verwaltung', objekt: true, modi: ['miete'], render: (c) => <Mietanpassung key={c.objekt.id} objekt={c.objekt} /> },
   { id: 'versammlungen', label: 'Versammlungen', gruppe: 'Verwaltung', objekt: true, modi: ['weg'], render: (c) => <Versammlungen key={c.objekt.id} objekt={c.objekt} /> },
@@ -103,16 +105,17 @@ export default function App() {
   }, [modus]);
   useEffect(() => schreiben('seite', seite), [seite]);
 
+  const [meldung, setMeldung] = useState('');
   // Background events from the main process trigger a data reload everywhere.
   useEffect(() => {
     const feuern = () => window.dispatchEvent(new Event('hv-daten'));
     const a = window.hv.bei('aktualisiert', feuern);
     const b = window.hv.bei('dokumentAnalysiert', feuern);
-    return () => { a(); b(); };
+    const c = window.hv.bei('meldung', (text: string) => { setMeldung(text); feuern(); setTimeout(() => setMeldung(''), 8000); });
+    return () => { a(); b(); c(); };
   }, []);
   const [postfach] = useLoad<number>(() => call('postfachAnzahl'), []);
   const [ziehen, setZiehen] = useState(false);
-  const [meldung, setMeldung] = useState('');
   const [dokOffen, setDokOffen] = useState<Row | null>(null);
 
   // Files dropped anywhere on the window go to the inbox.

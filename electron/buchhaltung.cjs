@@ -351,20 +351,55 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
     }),
 
     // Suggests a counter account for each bank transaction: learned rules first, then the payer's IBAN.
+    // Suggests a counter account for each bank transaction: returned debits, open invoices, learned rules, then the payer's IBAN.
     bankVorschlaege: (objektId, umsaetze) => {
       const regeln = all('SELECT * FROM bankregeln WHERE objekt_id = ? ORDER BY length(muster) DESC', objektId);
-      const personKonten = all(`SELECT k.id, k.vertrag_typ, k.vertrag_id, p.iban, p.nachname FROM konten k
+      const personKonten = all(`SELECT k.id, k.vertrag_typ, k.vertrag_id, k.bezeichnung, p.iban, p.nachname FROM konten k
         JOIN (SELECT 'miete' AS t, id, person_id, ende FROM mietverhaeltnisse UNION ALL SELECT 'weg', id, person_id, ende FROM eigentum) v
           ON v.t = k.vertrag_typ AND v.id = k.vertrag_id
         JOIN personen p ON p.id = v.person_id WHERE k.objekt_id = ? ORDER BY (v.ende IS NULL OR v.ende = '') DESC`, objektId);
+      // Open invoices of this object (documents) and of projects linked to it.
+      const rechnungen = all(`SELECT id, titel, absender, betrag_ct, iban, rechnungsnr FROM dokumente
+        WHERE objekt_id = ? AND typ = 'Rechnung' AND buchung_id IS NULL AND betrag_ct > 0`, objektId);
+      const projektRechnungen = all(`SELECT pp.id, pp.titel, pp.firma, pp.betrag_ct, p.kosten_konto_id, p.titel AS projekt FROM projektposten pp
+        JOIN projekte p ON p.id = pp.projekt_id WHERE p.objekt_id = ? AND pp.art = 'rechnung' AND pp.buchung_id IS NULL AND pp.status <> 'bezahlt'`, objektId);
       const norm = (s) => (s ?? '').replace(/\s/g, '').toUpperCase();
+      const RUECKLAST = /r(ü|ue|u)ck(lastschrift|buchung|ueberweisung|überweisung)|retoure|r-transaktion|(^|\W)(AC04|AC06|AM04|MD01|MD06|MS02|MS03)(\W|$)/i;
       return umsaetze.map((u) => {
         const doppelt = !!get('SELECT 1 FROM buchungen WHERE import_ref = ?', u.ref);
         const text = `${u.name ?? ''} ${u.zweck ?? ''} ${u.iban ?? ''}`.toLowerCase();
-        let konto_id = regeln.find((r) => text.includes(r.muster.toLowerCase()))?.konto_id ?? null;
-        if (!konto_id && u.iban) konto_id = personKonten.find((k) => norm(k.iban) && norm(k.iban) === norm(u.iban))?.id ?? null;
-        if (!konto_id && u.name) konto_id = personKonten.find((k) => k.nachname && u.betrag_ct > 0 && text.includes(k.nachname.toLowerCase()))?.id ?? null;
-        return { ...u, konto_id, doppelt };
+        const r = { ...u, konto_id: null, doppelt, hinweis: null, ruecklast: false, dokument_id: null, projektposten_id: null };
+        // A returned direct debit re-opens the tenant's or owner's charge: book it back onto their account.
+        if (u.betrag_ct < 0 && RUECKLAST.test(`${u.name} ${u.zweck}`)) {
+          const k = (u.iban && personKonten.find((p) => norm(p.iban) && norm(p.iban) === norm(u.iban))) ||
+            personKonten.find((p) => p.nachname && text.includes(p.nachname.toLowerCase()));
+          r.ruecklast = true;
+          r.konto_id = k?.id ?? null;
+          r.hinweis = k ? `Rücklastschrift – wird ${k.bezeichnung} wieder belastet` : 'Rücklastschrift – Person bitte wählen';
+          return r;
+        }
+        if (u.betrag_ct < 0) {
+          const betrag = -u.betrag_ct;
+          const re = rechnungen.find((d) => d.betrag_ct === betrag && ((d.iban && norm(d.iban) === norm(u.iban)) ||
+            (d.rechnungsnr && text.includes(d.rechnungsnr.toLowerCase())) || (d.absender && text.includes(d.absender.toLowerCase().split(' ')[0]))));
+          if (re) {
+            r.dokument_id = re.id;
+            r.konto_id = get(`SELECT b.soll_id FROM dokumente d JOIN buchungen b ON b.id = d.buchung_id
+              WHERE d.objekt_id = ? AND d.absender = ? ORDER BY d.id DESC LIMIT 1`, objektId, re.absender)?.soll_id ?? null;
+            r.hinweis = `Rechnung erkannt: ${re.absender ?? re.titel}${re.rechnungsnr ? ` (${re.rechnungsnr})` : ''}${r.konto_id ? '' : ' – Kostenart wählen'}`;
+          } else {
+            const pr = projektRechnungen.find((x) => x.betrag_ct === betrag && (!x.firma || text.includes(x.firma.toLowerCase().split(' ')[0])));
+            if (pr) {
+              r.projektposten_id = pr.id;
+              r.konto_id = pr.kosten_konto_id;
+              r.hinweis = `Projektrechnung erkannt: ${pr.projekt} – ${pr.firma ?? ''} ${pr.titel}`;
+            }
+          }
+        }
+        if (!r.konto_id) r.konto_id = regeln.find((x) => text.includes(x.muster.toLowerCase()))?.konto_id ?? null;
+        if (!r.konto_id && u.iban) r.konto_id = personKonten.find((k) => norm(k.iban) && norm(k.iban) === norm(u.iban))?.id ?? null;
+        if (!r.konto_id && u.name) r.konto_id = personKonten.find((k) => k.nachname && u.betrag_ct > 0 && text.includes(k.nachname.toLowerCase()))?.id ?? null;
+        return r;
       });
     },
 
@@ -373,11 +408,19 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
       for (const z of zeilen) {
         if (!z.konto_id || get('SELECT 1 FROM buchungen WHERE import_ref = ?', z.ref)) continue;
         const ein = z.betrag_ct > 0;
-        db.prepare(`INSERT INTO buchungen (objekt_id, datum, text, betrag_ct, soll_id, haben_id, art, import_ref)
-          VALUES (?, ?, ?, ?, ?, ?, 'bank', ?)`).run(objektId, z.datum, [z.name, z.zweck].filter(Boolean).join(' – ').slice(0, 300),
-          Math.abs(z.betrag_ct), ein ? geldKontoId : z.konto_id, ein ? z.konto_id : geldKontoId, z.ref);
+        const text = `${z.ruecklast ? 'Rücklastschrift: ' : ''}${[z.name, z.zweck].filter(Boolean).join(' – ')}`.slice(0, 300);
+        const id = Number(db.prepare(`INSERT INTO buchungen (objekt_id, datum, text, betrag_ct, soll_id, haben_id, art, import_ref)
+          VALUES (?, ?, ?, ?, ?, ?, 'bank', ?)`).run(objektId, z.datum, text,
+          Math.abs(z.betrag_ct), ein ? geldKontoId : z.konto_id, ein ? z.konto_id : geldKontoId, z.ref).lastInsertRowid);
         n++;
-        if (lernen && z.muster) db.prepare(`INSERT INTO bankregeln (objekt_id, muster, konto_id) VALUES (?, ?, ?)
+        if (z.dokument_id) db.prepare('UPDATE dokumente SET buchung_id = ? WHERE id = ? AND buchung_id IS NULL').run(id, z.dokument_id);
+        if (z.projektposten_id) db.prepare(`UPDATE projektposten SET buchung_id = ?, status = 'bezahlt', bezahlt_am = ? WHERE id = ?`).run(id, z.datum, z.projektposten_id);
+        // A returned debit gets a case so the follow-up (contact, fee, new debit) is not forgotten.
+        if (z.ruecklast) db.prepare(`INSERT INTO vorgaenge (objekt_id, titel, kategorie, status, prioritaet, faellig, beschreibung)
+          VALUES (?, ?, 'Mieteranfrage', 'offen', 1, date('now', '+3 days'), ?)`).run(objektId,
+          `Rücklastschrift ${get('SELECT bezeichnung FROM konten WHERE id = ?', z.konto_id)?.bezeichnung ?? ''}`,
+          `Rücklastschrift über ${(Math.abs(z.betrag_ct) / 100).toFixed(2).replace('.', ',')} € am ${z.datum}. ${z.zweck ?? ''}\nBitte Kontakt aufnehmen; Bankgebühren können weiterberechnet werden.`);
+        if (lernen && z.muster && !z.ruecklast && !z.dokument_id) db.prepare(`INSERT INTO bankregeln (objekt_id, muster, konto_id) VALUES (?, ?, ?)
           ON CONFLICT (objekt_id, muster) DO UPDATE SET konto_id = excluded.konto_id`).run(objektId, z.muster, z.konto_id);
       }
       return n;
