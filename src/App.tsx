@@ -38,6 +38,7 @@ const ICON: Record<string, I.LucideIcon> = {
   protokoll: I.History, export: I.Download, einstellungen: I.Settings,
 };
 import { Export } from './views/Export';
+import { Protokoll } from './views/Protokoll';
 import { Auswertungen } from './views/Auswertungen';
 import { Darlehen, PersonAkte, Steckbrief } from './views/Steckbrief';
 import { ProjektCockpit, ProjektDokumente, ProjektKosten, ProjektListe, ProjektZeitplan } from './views/Projekte';
@@ -91,6 +92,7 @@ const SEITEN: Seite[] = [
   { id: 'briefe', label: 'Briefe & Serienbriefe', gruppe: 'Kommunikation', objekt: true, render: (c) => <Briefe key={c.objekt.id + c.modus} objekt={c.objekt} modus={c.modus} /> },
   { id: 'vorgaenge', label: 'Vorgänge', gruppe: 'Kommunikation', objekt: true, render: (c) => <Vorgaenge key={c.objekt.id} objekt={c.objekt} /> },
   { id: 'termine', label: 'Termine', gruppe: 'Kommunikation', alle: true, render: (c) => <Termine objekte={c.modus === 'projekt' ? [] : c.objekte} /> },
+  { id: 'protokoll', label: 'Änderungsprotokoll', gruppe: 'System', alle: true, render: () => <Protokoll /> },
   { id: 'export', label: 'Export & DATEV', gruppe: 'System', objekt: true, render: (c) => <Export key={c.objekt.id} objekt={c.objekt} /> },
   { id: 'einstellungen', label: 'Einstellungen & Sicherung', gruppe: 'System', alle: true, render: () => <Einstellungen /> },
 ];

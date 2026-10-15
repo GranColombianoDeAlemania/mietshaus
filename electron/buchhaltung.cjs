@@ -167,7 +167,9 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
     });
   }
 
-  const BUCHUNG_SQL = `SELECT b.*, s.nr AS soll_nr, s.bezeichnung AS soll_bez, h.nr AS haben_nr, h.bezeichnung AS haben_bez
+  const BUCHUNG_SQL = `SELECT b.*, s.nr AS soll_nr, s.bezeichnung AS soll_bez, h.nr AS haben_nr, h.bezeichnung AS haben_bez,
+      EXISTS (SELECT 1 FROM buchungen x WHERE x.storno_von = b.id) AS storniert,
+      b.datum <= coalesce((SELECT wert FROM einstellungen WHERE schluessel = 'festgeschrieben_bis'), '0000-00-00') AS festgeschrieben
     FROM buchungen b JOIN konten s ON s.id = b.soll_id JOIN konten h ON h.id = b.haben_id`;
 
   // First-in-first-out matching of a contract account's credits against its charges.
@@ -235,6 +237,22 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
       ${suche ? "AND (b.text LIKE ? OR b.beleg LIKE ? OR s.bezeichnung LIKE ? OR h.bezeichnung LIKE ?)" : ''}
       ORDER BY b.datum DESC, b.id DESC LIMIT 2000`,
     objektId, von, bis, ...(konto_id ? [konto_id, konto_id] : []), ...(suche ? Array(4).fill(`%${suche}%`) : [])),
+
+    // Reverses a posting (and its whole split group) with counter-postings dated today; the original stays.
+    buchungStornieren: (id, datum = new Date().toISOString().slice(0, 10)) => tx(() => {
+      const b = get('SELECT * FROM buchungen WHERE id = ?', id);
+      if (!b) throw new Error('Buchung nicht gefunden');
+      if (get('SELECT 1 FROM buchungen WHERE storno_von = ?', id)) throw new Error('Diese Buchung wurde bereits storniert.');
+      const gruppe = b.gruppe ? all('SELECT * FROM buchungen WHERE gruppe = ? ORDER BY id', b.gruppe) : [b];
+      let neueGruppe = null;
+      for (const [i, x] of gruppe.entries()) {
+        const nid = Number(db.prepare(`INSERT INTO buchungen (objekt_id, datum, beleg, text, betrag_ct, soll_id, haben_id, art, monat, gruppe, storno_von)
+          VALUES (?, ?, ?, ?, ?, ?, ?, 'storno', ?, ?, ?)`).run(x.objekt_id, datum, x.beleg, `Storno: ${x.text ?? ''}`.slice(0, 300), x.betrag_ct,
+          x.haben_id, x.soll_id, x.monat, neueGruppe, x.id).lastInsertRowid);
+        if (i === 0 && gruppe.length > 1) { neueGruppe = nid; db.prepare('UPDATE buchungen SET gruppe = ? WHERE id = ?').run(nid, nid); }
+      }
+      return gruppe.length;
+    }),
 
     buchungLoeschen: (id) => tx(() => {
       const b = get('SELECT gruppe FROM buchungen WHERE id = ?', id);

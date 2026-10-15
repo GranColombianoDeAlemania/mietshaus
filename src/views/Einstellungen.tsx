@@ -48,6 +48,7 @@ export function Einstellungen() {
       </div>
       <Darstellung />
       <Automatik />
+      <Festschreibung />
       <ClaudeVerbindung />
       <Dokumenteneingang />
       <div className="block">
@@ -192,6 +193,30 @@ function Darstellung() {
           onChange={(f) => { anzeige.setzeSchrift(Number(f)); setSchrift(Number(f)); }} />
       </div>
       <p className="klein hinweis">Gilt für diesen Computer. Die Schrift lässt sich auch jederzeit mit ⌘+ und ⌘− anpassen.</p>
+    </div>
+  );
+}
+
+function Festschreibung() {
+  const [e, reload] = useLoad<Row>(() => call('einstellungen'), []);
+  const [bis, setBis] = useState(`${new Date().getFullYear() - 1}-12-31`);
+  if (!e) return null;
+  return (
+    <div className="block">
+      <h3>Festschreibung (GoBD)</h3>
+      <p className="hinweis">
+        {e.festgeschrieben_bis ? <>Buchungen bis einschließlich <b>{e.festgeschrieben_bis.split('-').reverse().join('.')}</b> sind festgeschrieben: sie können nicht mehr geändert oder gelöscht, nur storniert werden.</>
+          : 'Noch kein Zeitraum festgeschrieben. Nach dem Jahresabschluss bzw. der Abgabe an den Steuerberater sollte das Jahr festgeschrieben werden.'}
+      </p>
+      <div className="toolbar">
+        <label>Festschreiben bis <input type="date" value={bis} onChange={(ev) => setBis(ev.target.value)} /></label>
+        <button onClick={async () => {
+          if (e.festgeschrieben_bis && bis < e.festgeschrieben_bis) return alert('Eine Festschreibung kann nicht zurückgenommen werden.');
+          if (!confirm(`Alle Buchungen bis ${bis.split('-').reverse().join('.')} endgültig festschreiben?`)) return;
+          await call('setzeEinstellungen', { festgeschrieben_bis: bis });
+          reload();
+        }}>Festschreiben</button>
+      </div>
     </div>
   );
 }

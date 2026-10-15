@@ -510,6 +510,33 @@ const MIGRATIONS = [
     notiz TEXT
   );
   `,
+  `
+  -- Change log (GoBD): every insert, change and deletion of important records with time and source.
+  CREATE TABLE protokoll (
+    id INTEGER PRIMARY KEY,
+    zeit TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime')),
+    quelle TEXT NOT NULL,
+    tabelle TEXT NOT NULL,
+    datensatz INTEGER,
+    aktion TEXT NOT NULL,
+    alt TEXT,
+    neu TEXT
+  );
+  CREATE INDEX protokoll_tabelle ON protokoll (tabelle, datensatz);
+  CREATE INDEX protokoll_zeit ON protokoll (zeit);
+  ALTER TABLE buchungen ADD COLUMN storno_von INTEGER REFERENCES buchungen(id);
+
+  -- Closed periods: postings dated on or before the lock date can no longer be changed or deleted.
+  CREATE TRIGGER buchungen_festschreibung_update BEFORE UPDATE ON buchungen
+    WHEN OLD.datum <= coalesce((SELECT wert FROM einstellungen WHERE schluessel = 'festgeschrieben_bis'), '0000-00-00')
+  BEGIN SELECT RAISE(ABORT, 'Diese Buchung liegt in einem festgeschriebenen Zeitraum und kann nur storniert werden.'); END;
+  CREATE TRIGGER buchungen_festschreibung_delete BEFORE DELETE ON buchungen
+    WHEN OLD.datum <= coalesce((SELECT wert FROM einstellungen WHERE schluessel = 'festgeschrieben_bis'), '0000-00-00')
+  BEGIN SELECT RAISE(ABORT, 'Diese Buchung liegt in einem festgeschriebenen Zeitraum und kann nur storniert werden.'); END;
+  CREATE TRIGGER buchungen_festschreibung_insert BEFORE INSERT ON buchungen
+    WHEN NEW.datum <= coalesce((SELECT wert FROM einstellungen WHERE schluessel = 'festgeschrieben_bis'), '0000-00-00')
+  BEGIN SELECT RAISE(ABORT, 'Das Buchungsdatum liegt in einem festgeschriebenen Zeitraum. Bitte ein späteres Datum wählen.'); END;
+  `,
 ];
 
 // Columns the renderer may write, per table. Everything else is rejected.
@@ -560,7 +587,7 @@ const PERSON_NAME = `trim(coalesce(p.nachname,'') || coalesce(', ' || p.vorname,
 // A contract is current when it has started and not yet ended.
 const aktuell = (a) => `${a}.beginn <= date('now') AND (${a}.ende IS NULL OR ${a}.ende = '' OR ${a}.ende >= date('now'))`;
 
-function open(file) {
+function open(file, quelle = 'app') {
   const db = new DatabaseSync(file);
   // Foreign keys stay off while migrations rebuild tables, so cascades cannot fire.
   db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = OFF; PRAGMA busy_timeout = 5000;');
@@ -577,7 +604,29 @@ function open(file) {
     }
   }
   db.exec('PRAGMA foreign_keys = ON;');
+  protokollAktivieren(db, quelle);
   return db;
+}
+
+// Tables whose changes are logged, and columns left out of the log (large or derived).
+const PROTOKOLLIERT = ['objekte', 'einheiten', 'personen', 'mietverhaeltnisse', 'eigentum', 'konten', 'buchungen', 'anpassungen',
+  'kautionen', 'kautionsbewegungen', 'dokumente', 'darlehen', 'beschluesse', 'projekte', 'projektposten', 'zaehlerstaende', 'mahnungen', 'abrechnungen'];
+const NICHT_PROTOKOLLIEREN = new Set(['text', 'daten', 'erfasst']);
+
+// Temporary triggers belong to this connection only, so each process records its own source (app or Claude).
+function protokollAktivieren(db, quelle) {
+  const q = quelle.replace(/'/g, '');
+  for (const t of PROTOKOLLIERT) {
+    const spalten = db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name).filter((c) => !NICHT_PROTOKOLLIEREN.has(c));
+    const json = (alias) => `json_object(${spalten.map((c) => `'${c}', ${alias}.${c}`).join(', ')})`;
+    db.exec(`
+      CREATE TEMP TRIGGER IF NOT EXISTS log_${t}_i AFTER INSERT ON main.${t} BEGIN
+        INSERT INTO main.protokoll (quelle, tabelle, datensatz, aktion, neu) VALUES ('${q}', '${t}', NEW.id, 'angelegt', ${json('NEW')}); END;
+      CREATE TEMP TRIGGER IF NOT EXISTS log_${t}_u AFTER UPDATE ON main.${t} WHEN ${json('OLD')} IS NOT ${json('NEW')} BEGIN
+        INSERT INTO main.protokoll (quelle, tabelle, datensatz, aktion, alt, neu) VALUES ('${q}', '${t}', NEW.id, 'geändert', ${json('OLD')}, ${json('NEW')}); END;
+      CREATE TEMP TRIGGER IF NOT EXISTS log_${t}_d AFTER DELETE ON main.${t} BEGIN
+        INSERT INTO main.protokoll (quelle, tabelle, datensatz, aktion, alt) VALUES ('${q}', '${t}', OLD.id, 'gelöscht', ${json('OLD')}); END;`);
+  }
 }
 
 function api(db) {

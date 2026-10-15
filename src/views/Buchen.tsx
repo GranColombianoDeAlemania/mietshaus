@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { betrag, call, datum, diesesJahr, fehlerText, heute, parseCent, type Row } from '../api';
+import { betrag, call, datum, diesesJahr, fehler, fehlerText, heute, parseCent, type Row } from '../api';
 import { useLoad } from '../useLoad';
 import { KontoSelect, Tabs, Zeitraum } from '../ui';
 
@@ -43,17 +43,28 @@ export function Buchen(props: { objekt: Row }) {
             <tr key={b.id} className={b.gruppe ? 'split' : ''}>
               <td>{datum(b.datum)}</td>
               <td>{b.beleg}</td>
-              <td>{b.text}{b.art === 'soll' && <span className="tag">Soll</span>}{b.art === 'bank' && <span className="tag">Bank</span>}</td>
+              <td>{b.text}{b.art === 'soll' && <span className="tag">Soll</span>}{b.art === 'bank' && <span className="tag">Bank</span>}
+                {b.storniert ? <span className="tag fehlertext">storniert</span> : null}{b.festgeschrieben ? <span className="tag" title="festgeschriebener Zeitraum">🔒</span> : null}</td>
               <td className="klein">{b.soll_nr} {b.soll_bez}</td>
               <td className="klein">{b.haben_nr} {b.haben_bez}</td>
               <td className="num">{betrag(b.betrag_ct)}</td>
               <td className="aktionen">
-                <button title={b.gruppe ? 'Löscht die ganze Splitbuchung' : ''} onClick={async () => {
-                  if (!confirm(b.gruppe ? 'Ganze Splitbuchung löschen?' : 'Buchung löschen?')) return;
-                  await call('buchungLoeschen', b.id);
-                  reload();
-                  ladeKonten();
-                }}>Löschen</button>
+                {!b.storniert && b.art !== 'storno' && (
+                  <button title="Gegenbuchung mit heutigem Datum – die ursprüngliche Buchung bleibt sichtbar" onClick={async () => {
+                    if (!confirm('Buchung stornieren (Gegenbuchung mit heutigem Datum)?')) return;
+                    try { await call('buchungStornieren', b.id); } catch (e) { fehler(e); }
+                    reload();
+                    ladeKonten();
+                  }}>Storno</button>
+                )}
+                {!b.festgeschrieben && (
+                  <button title={b.gruppe ? 'Löscht die ganze Splitbuchung' : ''} onClick={async () => {
+                    if (!confirm(b.gruppe ? 'Ganze Splitbuchung löschen?' : 'Buchung löschen?')) return;
+                    try { await call('buchungLoeschen', b.id); } catch (e) { fehler(e); }
+                    reload();
+                    ladeKonten();
+                  }}>Löschen</button>
+                )}
               </td>
             </tr>
           ))}

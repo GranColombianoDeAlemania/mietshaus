@@ -42,7 +42,7 @@ function starten() {
     process.stderr.write(`Hausverwalter-Datenbank nicht gefunden: ${dbFile}. Bitte das Programm einmal starten.\n`);
     process.exit(1);
   }
-  const db = api(open(dbFile));
+  const db = api(open(dbFile, 'claude'));
   const server = new McpServer({ name: 'hausverwalter', version: '1.0.0' }, { instructions: ANWEISUNGEN });
   const werkzeug = (name, beschreibung, schema, fn, nurLesen = false) =>
     server.registerTool(name, { description: beschreibung, inputSchema: schema, annotations: { readOnlyHint: nurLesen } }, async (args) => {
