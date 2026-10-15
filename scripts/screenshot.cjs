@@ -83,6 +83,15 @@ app.whenReady().then(async () => {
     analyseUrl: () => pathToFileURL(path.join(__dirname, '..', 'dist', 'analyse.html')).href });
   const testDocs = process.env.TESTDOKS ? fs.readdirSync(process.env.TESTDOKS).filter((f) => /\.(pdf|png)$/.test(f)).map((f) => path.join(process.env.TESTDOKS, f)) : [];
   ana.importieren(testDocs);
+  // A few photos filed directly with the house, a unit and the project for the galleries.
+  const fotoQuelle = testDocs.find((f) => f.endsWith('.png'));
+  if (fotoQuelle) {
+    for (const [n, opt] of [['Fassade.png', { objekt_id: o }], ['Bad EG links.png', { objekt_id: o, einheit_id: e[0] }], ['Dach Baustelle.png', { projekt_id: pr }]]) {
+      const kopie = path.join(out, n);
+      fs.writeFileSync(kopie, Buffer.concat([fs.readFileSync(fotoQuelle), Buffer.from(n)]));
+      for (const r of ana.importieren([kopie], { ...opt, status: 'abgelegt', typ: 'Foto' })) void r;
+    }
+  }
   await ana.warteschlange();
   for (let i = 0; i < 60 && db.zuAnalysieren().length; i++) await wait(500);
   ipcMain.handle('neuAnalysieren', (_e, id) => ana.neuAnalysieren(id));
@@ -133,6 +142,11 @@ app.whenReady().then(async () => {
     const labels = await js(`[...document.querySelectorAll('nav .navgruppe button')].map(b => b.textContent.trim())`);
     for (const l of labels) { await click(l); await wait(250); const h = await js(`document.querySelector('main h1')?.textContent ?? '(kein Titel)'`); console.log('SEITE', m, '|', l, '→', h); }
   }
+  await click('Mietverwaltung'); await click('Postfach'); await wait(500);
+  await js(`document.querySelectorAll('.dokliste li input[type=checkbox]')[1]?.click(); document.querySelectorAll('.dokliste li input[type=checkbox]')[2]?.click()`);
+  await wait(400); await shot('50-postfach-stapel');
+  await click('Einheiten'); await wait(400); win.setSize(1300, 1000); await shot('51-einheiten-galerie');
+  await click('Fotos & Dokumente'); await wait(600); await shot('52-einheit-fotos'); await click('Schließen'); win.setSize(1300, 760);
   await click('Mietverwaltung'); await click('Rendite & Steuer'); await wait(500); await shot('40-rendite');
   await click('Anlage V (Steuer)'); await wait(400); await shot('41-anlagev');
   await click('Einstellungen & Sicherung'); await wait(300); await js(`window.scrollTo(0, 99999); document.querySelector('main').scrollTo(0, 99999)`); await wait(300); await shot('42-einstellungen');
@@ -145,7 +159,8 @@ app.whenReady().then(async () => {
   await wait(600); await shot('23-globalsuche');
   await js(`document.activeElement?.blur()`); await click('Projekte'); await wait(500); win.setSize(1300, 1100); await click('Cockpit'); await wait(500); await shot('30-projekt-cockpit');
   await click('Zeitplan'); await wait(500); await shot('31-zeitplan');
-  await click('Kosten & Budget'); await wait(400); await shot('32-kosten'); win.setSize(1300, 760);
+  await click('Kosten & Budget'); await wait(400); await shot('32-kosten');
+  await click('Fotos & Dokumente'); await wait(500); await shot('33-projekt-fotos'); win.setSize(1300, 760);
   await click('WEG-Verwaltung'); await click('Versammlungen'); await wait(200); await click('Neue Versammlung'); await shot('15-versammlung-dialog'); await click('Abbrechen');
   await click('Versammlungen'); await wait(200); await click('Tagesordnung & Beschlüsse'); await wait(300); await click('Einladungen (PDF)'); await wait(2500); await click('Schließen');
   await click('Mietverwaltung'); await click('Briefe & Serienbriefe'); await wait(200);

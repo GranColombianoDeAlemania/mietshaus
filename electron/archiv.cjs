@@ -114,9 +114,9 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME }) {
     dokumentNeu: (row) => {
       const vorhanden = row.sha256 ? get('SELECT id, titel, status FROM dokumente WHERE sha256 = ?', row.sha256) : null;
       if (vorhanden) return { id: vorhanden.id, doppelt: true, titel: vorhanden.titel };
-      const id = Number(db.prepare(`INSERT INTO dokumente (objekt_id, titel, datei, name, groesse, sha256, status, quelle, erfasst, analyse)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, date('now'), 'offen')`).run(row.objekt_id ?? null, row.titel, row.datei, row.name, row.groesse,
-        row.sha256 ?? null, row.status ?? 'postfach', row.quelle ?? 'upload').lastInsertRowid);
+      const id = Number(db.prepare(`INSERT INTO dokumente (objekt_id, einheit_id, projekt_id, typ, titel, datei, name, groesse, sha256, status, quelle, erfasst, analyse)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, date('now'), 'offen')`).run(row.objekt_id ?? null, row.einheit_id ?? null, row.projekt_id ?? null,
+        row.typ ?? null, row.titel, row.datei, row.name, row.groesse, row.sha256 ?? null, row.status ?? 'postfach', row.quelle ?? 'upload').lastInsertRowid);
       indexieren(id);
       return { id, doppelt: false };
     },
@@ -150,6 +150,26 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME }) {
         ORDER BY ${fts ? 'rank' : "coalesce(d.datum, d.erfasst) DESC, d.id DESC"} LIMIT ?`;
       return all(sql, ...[fts || null, status, objekt_id, projekt_id, typ, jahr ? String(jahr) : null].filter((x) => x != null), limit);
     },
+
+    // Applies the same fields to several documents and optionally files them.
+    stapelAblegen: (ids, felder, ablegen) => tx(() => {
+      const erlaubt = ['objekt_id', 'einheit_id', 'projekt_id', 'person_id', 'typ', 'kategorie'];
+      const keys = erlaubt.filter((k) => k in felder);
+      for (const id of ids) {
+        if (keys.length) db.prepare(`UPDATE dokumente SET ${keys.map((k) => `${k} = ?`).join(', ')} WHERE id = ?`)
+          .run(...keys.map((k) => (felder[k] === '' ? null : felder[k])), id);
+        if (ablegen) db.prepare(`UPDATE dokumente SET status = 'abgelegt' WHERE id = ?`).run(id);
+        indexieren(id);
+      }
+      return ids.length;
+    }),
+
+    // Photos and documents linked to an object, a unit or a project (for the galleries).
+    galerie: ({ objekt_id = null, einheit_id = null, projekt_id = null, nur_bilder = false } = {}) => all(`SELECT d.id, d.titel, d.typ, d.datum, d.erfasst,
+        d.datei, d.name, d.einheit_id, d.status, e.bezeichnung AS einheit FROM dokumente d LEFT JOIN einheiten e ON e.id = d.einheit_id
+      WHERE d.status <> 'postfach' AND (?1 IS NULL OR d.objekt_id = ?1) AND (?2 IS NULL OR d.einheit_id = ?2) AND (?3 IS NULL OR d.projekt_id = ?3)
+        AND (?4 = 0 OR lower(d.datei) GLOB '*.png' OR lower(d.datei) GLOB '*.jp*g' OR lower(d.datei) GLOB '*.webp' OR lower(d.datei) GLOB '*.gif')
+      ORDER BY coalesce(d.datum, d.erfasst) DESC, d.id DESC`, objekt_id, einheit_id, projekt_id, nur_bilder ? 1 : 0),
 
     postfachAnzahl: () => get(`SELECT count(*) AS n FROM dokumente WHERE status = 'postfach'`).n,
 

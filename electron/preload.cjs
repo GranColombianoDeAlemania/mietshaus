@@ -1,6 +1,7 @@
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('hv', {
+  plattform: process.platform,
   call: (fn, ...args) => ipcRenderer.invoke('db', fn, args),
   pdf: (html, name) => ipcRenderer.invoke('pdf', html, name),
   speichern: (inhalt, name, filter) => ipcRenderer.invoke('speichern', inhalt, name, filter),

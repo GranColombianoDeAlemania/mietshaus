@@ -145,10 +145,13 @@ function Belegbuchung(props: { dok: Row; onFertig: (buchungId: number) => void; 
 export function Postfach() {
   const [liste, reload] = useLoad<Row[]>(() => call('dokumentListe', { status: 'postfach' }), []);
   const [aktiv, setAktiv] = useState<number | null>(null);
+  const [auswahl, setAuswahl] = useState<Record<number, boolean>>({});
   useEffect(() => {
     if (liste && !liste.some((d) => d.id === aktiv)) setAktiv(liste[0]?.id ?? null);
+    if (liste) setAuswahl((a) => Object.fromEntries(Object.entries(a).filter(([id]) => liste.some((d) => d.id === Number(id)))));
   }, [liste]);
   const d = liste?.find((x) => x.id === aktiv);
+  const gewaehlt = (liste ?? []).filter((x) => auswahl[x.id]);
   return (
     <section className="postfach">
       <div className="toolbar">
@@ -158,28 +161,74 @@ export function Postfach() {
         <button className="primary" onClick={() => window.hv.dateienImportieren({}).then(reload)}>Dateien hinzufügen…</button>
       </div>
       <p className="hinweis klein">
-        Dateien einfach ins Fenster ziehen. Das Programm liest den Text (auch von Scans und Fotos), erkennt Typ, Betrag, Datum, IBAN und
-        das Objekt. Prüfen, ergänzen und ablegen – oder in Claude Desktop sagen: „Arbeite das Postfach im Hausverwalter ab“.
+        Das Programm hat die Dokumente gelesen und Vorschläge eingetragen. Nichts wird abgelegt oder gebucht, bevor du es prüfst:
+        einzeln rechts, oder mehrere links anhaken und gemeinsam zuordnen. Alternativ in Claude Desktop: „Arbeite das Postfach im Hausverwalter ab“.
       </p>
       {liste && !liste.length ? (
         <div className="leer"><p>Das Postfach ist leer.</p></div>
       ) : (
-        <div className="postfach-raster">
-          <ul className="dokliste">
-            {liste?.map((x) => (
-              <li key={x.id} className={x.id === aktiv ? 'aktiv' : ''} onClick={() => setAktiv(x.id)}>
-                <b>{x.titel}</b>
-                <span className="klein">{[x.typ, x.absender, x.betrag_ct != null ? euro(x.betrag_ct) : null, x.objekt].filter(Boolean).join(' · ') || x.name}</span>
-                <span className="klein hinweis">{analyseText(x.analyse) || datum(x.datum ?? x.erfasst)}</span>
-                {x.duplikat_von && <span className="tag fehlertext">mögliches Duplikat</span>}
+        <>
+          {gewaehlt.length > 0 && <Stapel dokumente={gewaehlt} onFertig={() => { setAuswahl({}); reload(); }} />}
+          <div className="postfach-raster">
+            <ul className="dokliste">
+              <li className="kopf">
+                <input type="checkbox" checked={!!liste?.length && gewaehlt.length === liste.length}
+                  onChange={(e) => setAuswahl(e.target.checked ? Object.fromEntries((liste ?? []).map((x) => [x.id, true])) : {})} />
+                <span className="klein"><b>Alle auswählen</b></span>
               </li>
-            ))}
-          </ul>
-          {d && <Vorschau key={d.id} datei={d.datei} />}
-          {d && <DokumentFormular key={d.id + d.analyse} id={d.id} postfach onFertig={reload} />}
-        </div>
+              {liste?.map((x) => (
+                <li key={x.id} className={x.id === aktiv ? 'aktiv' : ''} onClick={() => setAktiv(x.id)}>
+                  <input type="checkbox" checked={!!auswahl[x.id]} onClick={(e) => e.stopPropagation()} onChange={(e) => setAuswahl({ ...auswahl, [x.id]: e.target.checked })} />
+                  <div className="inhalt">
+                    <b>{x.titel}</b>
+                    <span className="klein">{[x.typ, x.absender, x.betrag_ct != null ? euro(x.betrag_ct) : null, x.objekt].filter(Boolean).join(' · ') || x.name}</span>
+                    <span className="klein hinweis">{analyseText(x.analyse) || datum(x.datum ?? x.erfasst)}</span>
+                    {x.duplikat_von && <span className="tag fehlertext">mögliches Duplikat</span>}
+                  </div>
+                </li>
+              ))}
+            </ul>
+            {d && <Vorschau key={d.id} datei={d.datei} />}
+            {d && <DokumentFormular key={d.id + d.analyse} id={d.id} postfach onFertig={reload} />}
+          </div>
+        </>
       )}
     </section>
+  );
+}
+
+// Batch filing: assign object, unit, project or type to all selected documents at once.
+function Stapel(props: { dokumente: Row[]; onFertig: () => void }) {
+  const [typen] = useLoad<string[]>(() => call('dokumentTypen'), []);
+  const [objekte] = useLoad<Row[]>(async () => [...new Map([...await call('objekte', 'miete'), ...await call('objekte', 'weg')].map((o: Row) => [o.id, o])).values()], []);
+  const [projekte] = useLoad<Row[]>(() => call('projektListe'), []);
+  const [f, setF] = useState<Row>({});
+  const [einheiten] = useLoad<Row[]>(async () => (f.objekt_id ? call('einheiten', f.objekt_id) : []), [f.objekt_id]);
+  const ohneObjekt = props.dokumente.filter((x) => !x.objekt_id && !f.objekt_id && !f.projekt_id).length;
+  const go = async (ablegen: boolean) => {
+    const felder = Object.fromEntries(Object.entries(f).filter(([, v]) => v !== '' && v != null));
+    await call('stapelAblegen', props.dokumente.map((x) => x.id), felder, ablegen);
+    props.onFertig();
+  };
+  const sel = (k: string, opts: [number | string, string][], leer: string) => (
+    <select value={f[k] ?? ''} onChange={(e) => setF({ ...f, [k]: e.target.value === '' ? '' : isNaN(Number(e.target.value)) ? e.target.value : Number(e.target.value), ...(k === 'objekt_id' ? { einheit_id: '' } : {}) })}>
+      <option value="">{leer}</option>{opts.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+    </select>
+  );
+  return (
+    <div className="stapel">
+      <div className="toolbar" style={{ marginBottom: 0 }}>
+        <b>{props.dokumente.length} ausgewählt:</b>
+        {sel('objekt_id', (objekte ?? []).map((o) => [o.id, o.bezeichnung]), 'Objekt unverändert')}
+        {f.objekt_id ? sel('einheit_id', (einheiten ?? []).map((e) => [e.id, e.bezeichnung]), 'Einheit unverändert') : null}
+        {sel('projekt_id', (projekte ?? []).map((p) => [p.id, p.titel]), 'Projekt unverändert')}
+        {sel('typ', (typen ?? []).map((t) => [t, t]), 'Typ unverändert')}
+        <span className="spacer" />
+        <button onClick={() => go(false)}>Nur zuordnen</button>
+        <button className="primary" onClick={() => go(true)}>Zuordnen & ablegen</button>
+      </div>
+      {ohneObjekt > 0 && <p className="klein hinweis" style={{ margin: '6px 0 0' }}>{ohneObjekt} der ausgewählten Dokumente haben noch kein Objekt und kein Projekt.</p>}
+    </div>
   );
 }
 

@@ -46,7 +46,7 @@ const SEITEN: Seite[] = [
   { id: 'projekte', label: 'Alle Projekte', gruppe: 'Projekte', modi: ['projekt'], render: (c) => <ProjektListe reload={c.ladeObjekte} oeffne={c.oeffne} /> },
   { id: 'zeitplan', label: 'Zeitplan', gruppe: 'Projekte', objekt: true, modi: ['projekt'], render: (c) => <ProjektZeitplan key={c.objekt.id} projekt={c.objekt} /> },
   { id: 'pkosten', label: 'Kosten & Budget', gruppe: 'Projekte', objekt: true, modi: ['projekt'], render: (c) => <ProjektKosten key={c.objekt.id} projekt={c.objekt} /> },
-  { id: 'pdok', label: 'Projektdokumente', gruppe: 'Projekte', objekt: true, modi: ['projekt'], render: (c) => <ProjektDokumente key={c.objekt.id} projekt={c.objekt} /> },
+  { id: 'pdok', label: 'Fotos & Dokumente', gruppe: 'Projekte', objekt: true, modi: ['projekt'], render: (c) => <ProjektDokumente key={c.objekt.id} projekt={c.objekt} /> },
   { id: 'uebersicht', label: 'Cockpit', gruppe: 'Start', render: (c) => <Uebersicht modus={c.modus} objekte={c.objekte} oeffne={c.oeffne} /> },
   { id: 'objekte', label: 'Objekte', gruppe: 'Stammdaten', render: (c) => <Objekte modus={c.modus} objekte={c.objekte} reload={c.ladeObjekte} onOpen={(id) => c.oeffne('einheiten', id)} /> },
   { id: 'einheiten', label: 'Einheiten', gruppe: 'Stammdaten', objekt: true, render: (c) => <Einheiten key={c.objekt.id} modus={c.modus} objekt={c.objekt} /> },
@@ -118,6 +118,24 @@ export default function App() {
   const [ziehen, setZiehen] = useState(false);
   const [dokOffen, setDokOffen] = useState<Row | null>(null);
 
+  useEffect(() => {
+    const aus = () => setZiehen(false);
+    window.addEventListener('hv-ziehen-aus', aus);
+    return () => window.removeEventListener('hv-ziehen-aus', aus);
+  }, []);
+
+  // Header button: pick files; they go to the inbox, pre-assigned to the current object or project, for review.
+  async function schnellAblegen() {
+    const opt = modus === 'projekt' ? { projekt_id: objektId } : { objekt_id: objektId };
+    const r = await window.hv.dateienImportieren(objektId ? opt : {});
+    if (!r.length) return;
+    const neu = r.filter((x) => !x.doppelt).length;
+    setMeldung(`${neu} Dokument(e) ins Postfach gelegt – bitte dort prüfen und ablegen.${r.length - neu ? ` ${r.length - neu} waren schon vorhanden.` : ''}`);
+    setSeite('postfach');
+    window.dispatchEvent(new Event('hv-daten'));
+    setTimeout(() => setMeldung(''), 6000);
+  }
+
   // Files dropped anywhere on the window go to the inbox.
   async function abgelegt(e: React.DragEvent) {
     e.preventDefault();
@@ -168,6 +186,7 @@ export default function App() {
           <button role="tab" aria-selected={modus === 'weg'} onClick={() => wechsle('weg')}>WEG-Verwaltung</button>
           <button role="tab" aria-selected={modus === 'projekt'} onClick={() => wechsle('projekt')}>Projekte</button>
         </div>
+        <button className="schnell" title="Dateien auswählen – sie landen zur Prüfung im Postfach" onClick={schnellAblegen}>＋ Dokumente ablegen</button>
         <Suche onDokument={setDokOffen} oeffne={(seite, objektId) => { if (objektId) setObjektId(objektId); setSeite(seite); }} />
         <label className="objektwahl">
           {modus === 'projekt' ? 'Projekt' : 'Objekt'}

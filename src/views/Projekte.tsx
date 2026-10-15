@@ -6,6 +6,7 @@ import { FormDialog, type Field } from '../Form';
 import { Gantt, type GanttZeile } from '../Gantt';
 import { Tabs } from '../ui';
 import { DokumentDialog } from './Archiv';
+import { Galerie } from '../Galerie';
 
 export const PROJEKT_STATUS: [string, string][] = [['planung', 'in Planung'], ['laufend', 'läuft'], ['pausiert', 'pausiert'], ['abgeschlossen', 'abgeschlossen']];
 const statusName = (s: string) => PROJEKT_STATUS.find(([k]) => k === s)?.[1] ?? s;
@@ -255,24 +256,11 @@ export function ProjektKosten(props: { projekt: Row }) {
 }
 
 export function ProjektDokumente(props: { projekt: Row }) {
-  const [liste, reload] = useLoad<Row[]>(() => call('dokumentListe', { projekt_id: props.projekt.id }), [props.projekt.id]);
-  const [dok, setDok] = useState<Row | null>(null);
   return (
     <section>
-      <div className="toolbar"><h1>Dokumente – {props.projekt.titel}</h1><span className="spacer" />
-        <button className="primary" onClick={async () => {
-          const r = await window.hv.dateienImportieren({ status: 'abgelegt' });
-          for (const d of r) await call('dokumentSpeichern', { id: d.id, projekt_id: props.projekt.id, objekt_id: props.projekt.objekt_id ?? null });
-          reload();
-        }}>Dateien ablegen…</button></div>
-      <table>
-        <thead><tr><th>Datum</th><th>Titel</th><th>Typ</th><th>Absender</th><th className="num">Betrag</th></tr></thead>
-        <tbody>
-          {liste?.map((d) => <tr key={d.id} onDoubleClick={() => setDok(d)}><td>{datum(d.datum ?? d.erfasst)}</td><td>{d.titel}</td><td>{d.typ}</td><td>{d.absender}</td><td className="num">{d.betrag_ct != null ? euro(d.betrag_ct) : ''}</td></tr>)}
-          {liste && !liste.length && <tr><td colSpan={5} className="hinweis">Noch keine Dokumente. Im Archiv oder Postfach kann jedem Dokument ein Projekt zugeordnet werden.</td></tr>}
-        </tbody>
-      </table>
-      {dok && <DokumentDialog id={dok.id} datei={dok.datei} onClose={() => { setDok(null); reload(); }} />}
+      <div className="toolbar"><h1>Fotos & Dokumente – {props.projekt.titel}</h1></div>
+      <p className="hinweis klein">Baustellenfotos, Angebote, Pläne und Rechnungen. Rechnungen und Angebote zusätzlich unter „Kosten & Budget“ erfassen – oder Claude sagen: „ordne die Rechnung dem Projekt zu“.</p>
+      <Galerie filter={{ projekt_id: props.projekt.id }} hinweis={props.projekt.titel} />
     </section>
   );
 }

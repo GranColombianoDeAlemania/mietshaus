@@ -1,14 +1,16 @@
 {
   "name": "hausverwalter",
-  "version": "0.3.0",
-  "description": "Pers\u00f6nliche Hausverwaltung (Miete & WEG)",
+  "version": "0.4.0",
+  "description": "Persönliche Hausverwaltung (Miete & WEG)",
   "main": "electron/main.cjs",
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "build": "vite build",
     "start": "vite build && electron .",
     "typecheck": "tsc --noEmit",
-    "dist:mac": "bash scripts/dist-mac.sh"
+    "dist:mac": "bash scripts/dist-mac.sh",
+    "dist:win": "bash scripts/dist.sh win32 x64",
+    "dist:linux": "bash scripts/dist.sh linux x64"
   },
   "type": "commonjs",
   "devDependencies": {

@@ -6,6 +6,7 @@ type DateiFilter = { name: string; extensions: string[] };
 declare global {
   interface Window {
     hv: {
+      plattform: string;
       call: (fn: string, ...args: unknown[]) => Promise<any>;
       pdf: (html: string, name: string) => Promise<string | null>;
       speichern: (inhalt: string, name: string, filter?: DateiFilter) => Promise<string | null>;

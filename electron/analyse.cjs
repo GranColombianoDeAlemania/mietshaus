@@ -101,15 +101,25 @@ module.exports = function analyse({ db, dokumentOrdner, vorschauOrdner, analyseU
   }
 
   // Copies files into the archive; identical files (same SHA-256) are only stored once.
-  function importieren(pfade, { objekt_id = null, quelle = 'upload', status = 'postfach' } = {}) {
+  function importieren(pfade, { objekt_id = null, einheit_id = null, projekt_id = null, typ = null, quelle = 'upload', status = 'postfach' } = {}) {
     fs.mkdirSync(dokumentOrdner(), { recursive: true });
     const out = [];
     for (const p of pfade) {
-      const daten = fs.readFileSync(p);
+      let daten = fs.readFileSync(p);
       const sha256 = crypto.createHash('sha256').update(daten).digest('hex');
-      const datei = `${crypto.randomUUID()}${path.extname(p).toLowerCase()}`;
+      let ext = path.extname(p).toLowerCase();
+      // iPhone photos (HEIC) cannot be shown or read by the app; macOS converts them to JPEG with its built-in sips tool.
+      if ((ext === '.heic' || ext === '.heif') && process.platform === 'darwin') {
+        const tmp = path.join(app.getPath('temp'), `${crypto.randomUUID()}.jpg`);
+        try {
+          require('node:child_process').execFileSync('/usr/bin/sips', ['-s', 'format', 'jpeg', p, '--out', tmp], { stdio: 'ignore' });
+          daten = fs.readFileSync(tmp);
+          ext = '.jpg';
+        } catch {} finally { fs.rmSync(tmp, { force: true }); }
+      }
+      const datei = `${crypto.randomUUID()}${ext}`;
       const name = path.basename(p);
-      const r = db.dokumentNeu({ objekt_id, titel: name.replace(/\.[^.]+$/, ''), datei, name, groesse: daten.length, sha256, quelle, status });
+      const r = db.dokumentNeu({ objekt_id, einheit_id, projekt_id, typ, titel: name.replace(/\.[^.]+$/, ''), datei, name, groesse: daten.length, sha256, quelle, status });
       if (!r.doppelt) fs.writeFileSync(path.join(dokumentOrdner(), datei), daten);
       out.push({ ...r, name });
     }

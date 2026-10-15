@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { call, zahl, type Modus, type Row } from '../api';
 import { FormDialog, type Field } from '../Form';
 import { useLoad } from '../useLoad';
+import { Galerie } from '../Galerie';
+import { Dialog } from '../ui';
 
 const ARTEN = ['Wohnung', 'Gewerbe', 'Garage', 'Stellplatz', 'Keller', 'Sonstiges'];
 
@@ -19,6 +21,7 @@ const FELDER: Field[] = [
 export function Einheiten(props: { modus: Modus; objekt: Row }) {
   const [rows, reload] = useLoad<Row[]>(() => call('einheiten', props.objekt.id), [props.objekt.id]);
   const [edit, setEdit] = useState<Row | null>(null);
+  const [fotos, setFotos] = useState<Row | null>(null);
   const gemischt = props.objekt.art === 'gemischt';
   // Mixed houses show both sides; otherwise only the side that belongs to the mode.
   const zeigeMieter = props.modus === 'miete' || gemischt;
@@ -47,6 +50,7 @@ export function Einheiten(props: { modus: Modus; objekt: Row }) {
               {zeigeEigentuemer && <th className="num">MEA</th>}
               {zeigeEigentuemer && <th className="seite-weg">Eigentümer</th>}
               {zeigeMieter && <th className="seite-miete">Mieter</th>}
+              <th />
             </tr>
           </thead>
           <tbody>
@@ -61,6 +65,7 @@ export function Einheiten(props: { modus: Modus; objekt: Row }) {
                 {zeigeEigentuemer && <td className="num">{zahl(e.mea)}</td>}
                 {zeigeEigentuemer && <td className="seite-weg">{e.eigentuemer ?? <i>–</i>}</td>}
                 {zeigeMieter && <td className="seite-miete">{e.mieter ?? <i>{e.selbstgenutzt ? 'selbst genutzt' : 'leer'}</i>}</td>}
+                <td className="aktionen"><button onClick={() => setFotos(e)}>Fotos & Dokumente</button></td>
               </tr>
             ))}
           </tbody>
@@ -71,11 +76,19 @@ export function Einheiten(props: { modus: Modus; objekt: Row }) {
               {zeigeEigentuemer && <td className="num">{zahl(summe('mea'))}</td>}
               {zeigeEigentuemer && <td />}
               {zeigeMieter && <td />}
+              <td />
             </tr>
           </tfoot>
         </table>
       )}
       <p className="hinweis klein">Doppelklick auf eine Zeile zum Bearbeiten.</p>
+      <h3>Fotos & Dokumente des Objekts</h3>
+      <Galerie filter={{ objekt_id: props.objekt.id }} hinweis={props.objekt.bezeichnung} />
+      {fotos && (
+        <Dialog titel={`Fotos & Dokumente – ${fotos.bezeichnung}`} onClose={() => setFotos(null)} breit>
+          <Galerie filter={{ objekt_id: props.objekt.id, einheit_id: fotos.id }} hinweis={`${props.objekt.bezeichnung}, ${fotos.bezeichnung}`} />
+        </Dialog>
+      )}
       {edit && (
         <FormDialog
           title={edit.id ? 'Einheit bearbeiten' : 'Neue Einheit'}
