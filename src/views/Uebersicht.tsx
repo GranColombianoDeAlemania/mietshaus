@@ -2,6 +2,7 @@
 import { useState } from 'react';
 import { call, datum, euro, type Modus, type Row } from '../api';
 import { useLoad } from '../useLoad';
+import { ObjektKacheln } from './Steckbrief';
 
 const STUFE: Record<string, [string, string]> = { rot: ['●', 'Jetzt handeln'], orange: ['●', 'Bald / prüfen'], gelb: ['●', 'Chance / Hinweis'] };
 
@@ -33,6 +34,7 @@ export function Uebersicht(props: { modus: Modus; objekte: Row[]; oeffne: (seite
         {f.termine.length + offeneVorgaenge.length > 0 && ` Diese Woche: ${f.termine.length} Termin(e), ${offeneVorgaenge.length} fällige Vorgänge.`}
       </p>
 
+      <ObjektKacheln modus={props.modus} oeffne={props.oeffne} />
       <div className="kacheln">
         {k.soll_ct > 0 && (
           <div className="kachel">
@@ -44,7 +46,6 @@ export function Uebersicht(props: { modus: Modus; objekte: Row[]; oeffne: (seite
         <div className="kachel"><div className="wert">{euro(k.geld_ct)}</div><div className="label">Kontostände gesamt</div></div>
         <div className="kachel"><div className="wert">{euro(d.soll_monat_ct)}</div><div className="label">{weg ? 'Hausgeld-Soll' : 'Mieten-Soll'} pro Monat</div></div>
         {!weg && <div className="kachel"><div className="wert">{k.einheiten ? Math.round(((k.einheiten - k.vermietet) / k.einheiten) * 100) : 0} %</div><div className="label">Leerstand ({Math.max(0, k.einheiten - k.vermietet)} von {k.einheiten} Einheiten)</div></div>}
-        <div className="kachel"><div className="wert">{d.objekte} / {d.einheiten}</div><div className="label">Objekte / Einheiten</div></div>
       </div>
 
       <div className="cockpit-raster">
@@ -120,7 +121,7 @@ function Hinweis(props: { h: Row; oeffne: (seite: string, objektId?: number) => 
 }
 
 // Grouped bars per month: inflows (slot 1, blue) and outflows (slot 2, orange); hover shows both values.
-const FARBEN = { ein: '#2a78d6', aus: '#eb6834' };
+const FARBEN = { ein: 'var(--c1)', aus: 'var(--c2)' };
 const MONATE = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
 
 function Zahlungsverlauf(props: { verlauf: Row[] }) {
@@ -158,8 +159,8 @@ function Zahlungsverlauf(props: { verlauf: Row[] }) {
         <svg viewBox={`0 0 ${B} ${H}`} role="img" aria-label="Ein- und Auszahlungen pro Monat" onMouseLeave={() => setHover(null)}>
           {[0, 0.25, 0.5, 0.75, 1].map((q) => (
             <g key={q}>
-              <line x1={L} x2={B} y1={y(oben * q)} y2={y(oben * q)} stroke={q === 0 ? '#c3c2b7' : '#e1e0d9'} strokeWidth={1} />
-              <text x={L - 8} y={y(oben * q) + 4} textAnchor="end" fontSize={11} fill="#898781">{kurz(oben * q)}</text>
+              <line x1={L} x2={B} y1={y(oben * q)} y2={y(oben * q)} style={{ stroke: q === 0 ? 'var(--achse)' : 'var(--raster)' }} strokeWidth={1} />
+              <text x={L - 8} y={y(oben * q) + 4} textAnchor="end" fontSize={11} style={{ fill: 'var(--achsentext)' }}>{kurz(oben * q)}</text>
             </g>
           ))}
           {v.map((m, i) => {
@@ -170,14 +171,14 @@ function Zahlungsverlauf(props: { verlauf: Row[] }) {
               // Rounded top, square base on the axis.
               const r = Math.min(4, h, balken / 2);
               const x0 = x + dx, x1 = x0 + balken, y0 = y(ct), yb = y(0);
-              return <path d={`M${x0},${yb} V${y0 + r} Q${x0},${y0} ${x0 + r},${y0} H${x1 - r} Q${x1},${y0} ${x1},${y0 + r} V${yb} Z`} fill={farbe} />;
+              return <path d={`M${x0},${yb} V${y0 + r} Q${x0},${y0} ${x0 + r},${y0} H${x1 - r} Q${x1},${y0} ${x1},${y0 + r} V${yb} Z`} style={{ fill: farbe }} />;
             };
             return (
               <g key={m.monat} onMouseEnter={() => setHover(i)}>
                 <rect x={L + i * breite} y={T} width={breite} height={H - T - U} fill={hover === i ? 'rgba(0,0,0,0.04)' : 'transparent'} />
                 {bar(m.ein_ct, -balken - 1, FARBEN.ein)}
                 {bar(m.aus_ct, 1, FARBEN.aus)}
-                <text x={x} y={H - 8} textAnchor="middle" fontSize={11} fill="#898781">{MONATE[Number(m.monat.slice(5)) - 1]}</text>
+                <text x={x} y={H - 8} textAnchor="middle" fontSize={11} style={{ fill: 'var(--achsentext)' }}>{MONATE[Number(m.monat.slice(5)) - 1]}</text>
               </g>
             );
           })}

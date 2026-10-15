@@ -7,6 +7,7 @@ declare global {
   interface Window {
     hv: {
       plattform: string;
+      zoom: (faktor: number) => void;
       call: (fn: string, ...args: unknown[]) => Promise<any>;
       pdf: (html: string, name: string) => Promise<string | null>;
       speichern: (inhalt: string, name: string, filter?: DateiFilter) => Promise<string | null>;
@@ -87,6 +88,7 @@ export const KLASSEN: Record<string, string> = {
   kosten: 'Kosten',
   ruecklage: 'Rücklagen',
   person: 'Mieter- und Eigentümerkonten',
+  darlehen: 'Darlehen',
 };
 
 export const kontoLabel = (k: Row) => `${k.nr} ${k.bezeichnung}`;

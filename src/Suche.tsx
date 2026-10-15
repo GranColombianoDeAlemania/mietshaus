@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { call, datum, euro, type Row } from './api';
 
-export function Suche(props: { onDokument: (d: Row) => void; oeffne: (seite: string, objektId?: number) => void }) {
+export function Suche(props: { onDokument: (d: Row) => void; onPerson: (id: number) => void; oeffne: (seite: string, objektId?: number) => void }) {
   const [q, setQ] = useState('');
   const [r, setR] = useState<Row | null>(null);
   const [offen, setOffen] = useState(false);
@@ -43,12 +43,12 @@ export function Suche(props: { onDokument: (d: Row) => void; oeffne: (seite: str
           ))}
           {r.personen.length > 0 && <h4>Personen</h4>}
           {r.personen.map((p: Row) => (
-            <button key={'p' + p.id} onClick={() => waehle(() => { sessionStorage.setItem('personSuche', p.name.split(',')[0]); props.oeffne('personen'); })}>
+            <button key={'p' + p.id} onClick={() => waehle(() => props.onPerson(p.id))}>
               <b>{p.name}</b> <span className="klein">{[p.ort, p.telefon, p.email].filter(Boolean).join(' · ')}</span>
             </button>
           ))}
           {r.objekte.length > 0 && <h4>Objekte</h4>}
-          {r.objekte.map((o: Row) => <button key={'o' + o.id} onClick={() => waehle(() => props.oeffne('einheiten', o.id))}><b>{o.bezeichnung}</b> <span className="klein">{o.ort}</span></button>)}
+          {r.objekte.map((o: Row) => <button key={'o' + o.id} onClick={() => waehle(() => props.oeffne('steckbrief', o.id))}><b>{o.bezeichnung}</b> <span className="klein">{o.ort}</span></button>)}
           {r.einheiten.length > 0 && <h4>Einheiten</h4>}
           {r.einheiten.map((e: Row) => <button key={'e' + e.id} onClick={() => waehle(() => props.oeffne('einheiten', e.objekt_id))}><b>{e.bezeichnung}</b> <span className="klein">{e.objekt}</span></button>)}
           {r.buchungen.length > 0 && <h4>Buchungen</h4>}

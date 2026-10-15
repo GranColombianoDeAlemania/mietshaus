@@ -23,7 +23,7 @@ const FELDER: Field[] = [
   { key: 'notiz', label: 'Notiz', type: 'textarea', section: 'Sonstiges' },
 ];
 
-export function Personen() {
+export function Personen(props: { onAkte?: (id: number) => void }) {
   const [rows, reload] = useLoad<Row[]>(() => call('personen'), []);
   const [edit, setEdit] = useState<Row | null>(null);
   const [suche, setSuche] = useState(() => {
@@ -48,11 +48,11 @@ export function Personen() {
       <p className="hinweis klein">Das Adressbuch ist für Miet- und WEG-Verwaltung gemeinsam – eine Person kann Mieter und Eigentümer zugleich sein.</p>
       <table>
         <thead>
-          <tr><th>Name</th><th>Anschrift</th><th>Telefon</th><th>E-Mail</th><th>Rolle</th></tr>
+          <tr><th>Name</th><th>Anschrift</th><th>Telefon</th><th>E-Mail</th><th>Rolle</th><th /></tr>
         </thead>
         <tbody>
           {treffer?.map((p) => (
-            <tr key={p.id} onDoubleClick={() => setEdit(p)}>
+            <tr key={p.id} className="klickbar" onClick={() => props.onAkte?.(p.id)} title="Akte öffnen">
               <td>{personName(p)}</td>
               <td>{[p.strasse, [p.plz, p.ort].filter(Boolean).join(' ')].filter(Boolean).join(', ')}</td>
               <td>{p.telefon || p.mobil}</td>
@@ -61,6 +61,7 @@ export function Personen() {
                 {p.anz_miete > 0 && <span className="tag art-miete">Mieter</span>}
                 {p.anz_eigentum > 0 && <span className="tag art-weg">Eigentümer</span>}
               </td>
+              <td className="aktionen"><button onClick={(e) => { e.stopPropagation(); setEdit(p); }}>Bearbeiten</button></td>
             </tr>
           ))}
         </tbody>

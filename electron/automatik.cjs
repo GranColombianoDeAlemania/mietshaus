@@ -174,6 +174,12 @@ module.exports = function automatik({ db, all, get, tx, PERSON_NAME, bh, ab, vw,
           text: `Leerstand: ${leer.map((x) => x.bezeichnung).join(', ')}.` });
       }
 
+      // Interest rate fixation ends: look for follow-up financing in time (18 months ahead, urgent within 6).
+      for (const d of all(`SELECT * FROM darlehen WHERE objekt_id = ? AND zinsbindung_bis IS NOT NULL AND zinsbindung_bis BETWEEN ? AND ?`, o.id, t, plusMonate(t, 18))) {
+        add({ schluessel: `zb:${d.id}`, stufe: d.zinsbindung_bis <= plusMonate(t, 6) ? 'rot' : 'orange', kategorie: 'Finanzierung', objekt_id: o.id, objekt: o.bezeichnung, ziel: 'darlehen',
+          text: `Zinsbindung Darlehen ${d.bank} endet am ${datumDe(d.zinsbindung_bis)} – Anschlussfinanzierung (z. B. Forward-Darlehen) prüfen.` });
+      }
+
       if (!o.iban) add({ schluessel: `stamm:iban:${o.id}`, stufe: 'gelb', kategorie: 'Stammdaten', ...ziel('objekte'), text: 'IBAN des Objektkontos fehlt (nötig für Briefe und SEPA).' });
       const ohneFlaeche = get('SELECT count(*) AS n FROM einheiten WHERE objekt_id = ? AND (wohnflaeche IS NULL OR wohnflaeche = 0)', o.id).n;
       if (ohneFlaeche) add({ schluessel: `stamm:flaeche:${o.id}`, stufe: 'gelb', kategorie: 'Stammdaten', ...ziel('einheiten'), text: `${ohneFlaeche} Einheit(en) ohne Wohnfläche – wichtig für die Kostenverteilung.` });

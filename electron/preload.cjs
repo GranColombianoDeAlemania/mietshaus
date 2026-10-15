@@ -1,7 +1,9 @@
-const { contextBridge, ipcRenderer, webUtils } = require('electron');
+const { contextBridge, ipcRenderer, webUtils, webFrame } = require('electron');
 
 contextBridge.exposeInMainWorld('hv', {
   plattform: process.platform,
+  // Text size: zooms the whole window like ⌘+ / ⌘−.
+  zoom: (faktor) => webFrame.setZoomFactor(faktor),
   call: (fn, ...args) => ipcRenderer.invoke('db', fn, args),
   pdf: (html, name) => ipcRenderer.invoke('pdf', html, name),
   speichern: (inhalt, name, filter) => ipcRenderer.invoke('speichern', inhalt, name, filter),

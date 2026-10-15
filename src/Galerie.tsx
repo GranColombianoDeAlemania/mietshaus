@@ -62,6 +62,9 @@ export function Galerie(props: { filter: { objekt_id?: number; einheit_id?: numb
             <span>{bilder[gross].titel} · {gross + 1} / {bilder.length}</span>
             <button onClick={() => setGross((gross + 1) % bilder.length)}>›</button>
             <button onClick={() => { setMeta(bilder[gross]); setGross(null); }}>Angaben bearbeiten</button>
+            {props.filter.objekt_id && !props.filter.einheit_id && (
+              <button onClick={async () => { await call('save', 'objekte', { id: props.filter.objekt_id, titelbild_id: bilder[gross].id }); window.dispatchEvent(new Event('hv-daten')); }}>Als Titelbild</button>
+            )}
             <button onClick={() => setGross(null)}>Schließen</button>
           </div>
         </div>

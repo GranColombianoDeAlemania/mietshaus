@@ -7,6 +7,8 @@ const archiv = require('./archiv.cjs');
 const automatik = require('./automatik.cjs');
 const projekte = require('./projekte.cjs');
 const auswertung = require('./auswertung.cjs');
+const akten = require('./akten.cjs');
+const darlehen = require('./darlehen.cjs');
 
 const MIGRATIONS = [
   `
@@ -461,12 +463,59 @@ const MIGRATIONS = [
     PRIMARY KEY (objekt_id, jahr)
   );
   `,
+  `
+  ALTER TABLE objekte ADD COLUMN titelbild_id INTEGER REFERENCES dokumente(id) ON DELETE SET NULL;
+  `,
+  `
+  -- Loans: a new account class 'darlehen' (liability) and the loan master data.
+  CREATE TABLE konten_neu (
+    id INTEGER PRIMARY KEY,
+    objekt_id INTEGER NOT NULL REFERENCES objekte(id) ON DELETE CASCADE,
+    nr INTEGER NOT NULL,
+    bezeichnung TEXT NOT NULL,
+    klasse TEXT NOT NULL CHECK (klasse IN ('geld','kosten','einnahme','ruecklage','person','darlehen')),
+    kategorie TEXT,
+    umlagefaehig INTEGER NOT NULL DEFAULT 0,
+    heizkosten INTEGER NOT NULL DEFAULT 0,
+    schluessel_id INTEGER REFERENCES umlageschluessel(id) ON DELETE SET NULL,
+    weg_schluessel_id INTEGER REFERENCES umlageschluessel(id) ON DELETE SET NULL,
+    aus_ruecklage INTEGER NOT NULL DEFAULT 0,
+    p35a TEXT,
+    iban TEXT,
+    vertrag_typ TEXT CHECK (vertrag_typ IN ('miete','weg')),
+    vertrag_id INTEGER,
+    inaktiv INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (objekt_id, nr)
+  );
+  INSERT INTO konten_neu SELECT id, objekt_id, nr, bezeichnung, klasse, kategorie, umlagefaehig, heizkosten, schluessel_id, weg_schluessel_id,
+    aus_ruecklage, p35a, iban, vertrag_typ, vertrag_id, inaktiv FROM konten;
+  DROP TABLE konten;
+  ALTER TABLE konten_neu RENAME TO konten;
+  CREATE UNIQUE INDEX konten_vertrag ON konten (vertrag_typ, vertrag_id) WHERE vertrag_id IS NOT NULL;
+
+  CREATE TABLE darlehen (
+    id INTEGER PRIMARY KEY,
+    objekt_id INTEGER NOT NULL REFERENCES objekte(id) ON DELETE CASCADE,
+    bank TEXT NOT NULL,
+    vertragsnr TEXT,
+    betrag_ct INTEGER NOT NULL,
+    auszahlung TEXT,
+    zinssatz REAL NOT NULL,
+    tilgung_satz REAL,
+    rate_ct INTEGER,
+    erste_rate TEXT NOT NULL,
+    zinsbindung_bis TEXT,
+    sondertilgung_ct INTEGER,
+    konto_id INTEGER REFERENCES konten(id) ON DELETE SET NULL,
+    notiz TEXT
+  );
+  `,
 ];
 
 // Columns the renderer may write, per table. Everything else is rejected.
 const TABLES = {
   objekte: ['bezeichnung', 'art', 'strasse', 'plz', 'ort', 'baujahr', 'wj_beginn', 'iban', 'bic', 'bank',
-    'ruecklage_iban', 'sepa_glaeubiger_id', 'hausmeister', 'notiz', 'kaufpreis_ct', 'kaufnebenkosten_ct', 'kaufdatum', 'gebaeudeanteil', 'afa_satz'],
+    'ruecklage_iban', 'sepa_glaeubiger_id', 'hausmeister', 'notiz', 'kaufpreis_ct', 'kaufnebenkosten_ct', 'kaufdatum', 'gebaeudeanteil', 'afa_satz', 'titelbild_id'],
   einheiten: ['objekt_id', 'nr', 'bezeichnung', 'art', 'lage', 'wohnflaeche', 'zimmer', 'mea', 'notiz'],
   personen: ['anrede', 'titel', 'vorname', 'nachname', 'firma', 'strasse', 'plz', 'ort', 'land', 'telefon',
     'mobil', 'email', 'iban', 'bic', 'kontoinhaber', 'geburtsdatum', 'notiz'],
@@ -501,6 +550,7 @@ const TABLES = {
   termine: ['objekt_id', 'person_id', 'vorgang_id', 'titel', 'datum', 'uhrzeit', 'dauer_min', 'ort', 'erledigt', 'notiz', 'projekt_id'],
   projekte: ['titel', 'beschreibung', 'status', 'objekt_id', 'einheit_id', 'kosten_konto_id', 'budget_ct', 'beginn', 'ende', 'notiz'],
   projektaufgaben: ['projekt_id', 'titel', 'gewerk', 'beginn', 'ende', 'fortschritt', 'nach_id', 'person_id', 'meilenstein', 'sort', 'notiz'],
+  darlehen: ['objekt_id', 'bank', 'vertragsnr', 'betrag_ct', 'auszahlung', 'zinssatz', 'tilgung_satz', 'rate_ct', 'erste_rate', 'zinsbindung_bis', 'sondertilgung_ct', 'notiz'],
   projektposten: ['projekt_id', 'art', 'datum', 'firma', 'person_id', 'titel', 'betrag_ct', 'status', 'bezahlt_am', 'faellig', 'aufgabe_id', 'dokument_id', 'notiz'],
 };
 
@@ -721,9 +771,22 @@ function api(db) {
   };
   const pj = projekte({ db, all, get, tx, bh });
   const aw = auswertung({ db, all, get, tx, bh });
+  const ak = akten({ db, all, get, PERSON_NAME, bh });
+  const dl = darlehen({ db, all, get, tx, bh });
   const au = automatik({ db, all, get, tx, PERSON_NAME, bh, ab, vw, einstellungen: basis.einstellungen });
   return {
-    ...bh, ...ab, ...vw, ...ar, ...au, ...pj, ...aw, ...basis,
+    ...bh, ...ab, ...vw, ...ar, ...au, ...pj, ...aw, ...ak, ...dl, ...basis,
+    // Bank lines paid to a loan account are booked as instalments (interest + repayment).
+    bankBuchen: (objektId, geldKontoId, zeilen, lernen) => {
+      const istDarlehen = (z) => z.konto_id && z.betrag_ct < 0 && dl.darlehenZuKonto(z.konto_id);
+      let n = 0;
+      for (const z of zeilen.filter(istDarlehen)) {
+        if (get('SELECT 1 FROM buchungen WHERE import_ref = ?', z.ref)) continue;
+        dl.darlehenRateBuchen(dl.darlehenZuKonto(z.konto_id).id, geldKontoId, z.datum, -z.betrag_ct, z.ref);
+        n++;
+      }
+      return n + bh.bankBuchen(objektId, geldKontoId, zeilen.filter((z) => !istDarlehen(z)), lernen);
+    },
     // Removes the record and its index entry; the caller deletes the file.
     dokumentLoeschen: (id) => {
       const d = get('SELECT datei FROM dokumente WHERE id = ?', id);

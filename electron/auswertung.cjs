@@ -6,6 +6,7 @@ const WK_GRUPPEN = [
   ['erhaltung', 'Erhaltungsaufwendungen (sofort abziehbar)', (k) => k.kategorie === 'instandhaltung'],
   ['betriebskosten', 'Grundsteuer, Straßenreinigung, Müllabfuhr, Wasser, Entwässerung, Beleuchtung, Heizung, Warmwasser, Schornsteinfeger, Versicherungen, Hauswart, Reinigung, Aufzug u. ä.', (k) => /^bk/.test(k.kategorie ?? '')],
   ['verwaltung', 'Verwaltungskosten', (k) => k.kategorie === 'verwaltung'],
+  ['schuldzinsen', 'Schuldzinsen (aus Darlehensraten)', (k) => k.kategorie === 'zinsen'],
   ['hausgeld', 'Hausgeld an eine fremdverwaltete WEG', (k) => k.kategorie === 'hausgeld_weg'],
   ['sonstige', 'Sonstige Werbungskosten (z. B. Bankgebühren)', () => true],
 ];

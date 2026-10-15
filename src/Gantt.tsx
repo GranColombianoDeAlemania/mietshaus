@@ -18,7 +18,7 @@ export type GanttZeile = {
 };
 
 // Categorical slots 1–3 of the validated reference palette; never status colours.
-const FARBE: Record<string, string> = { aufgabe: '#2a78d6', projekt: '#2a78d6', frist: '#eb6834', termin: '#1baf7a' };
+const FARBE: Record<string, string> = { aufgabe: 'var(--c1)', projekt: 'var(--c1)', frist: 'var(--c2)', termin: 'var(--c3)' };
 const MONATE = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
 const tag = (iso: string) => Math.floor(Date.parse(iso + 'T00:00:00Z') / 864e5);
 const iso = (t: number) => new Date(t * 864e5).toISOString().slice(0, 10);
@@ -73,13 +73,13 @@ export function Gantt(props: { zeilen: GanttZeile[]; onKlick?: (z: GanttZeile) =
         onMouseMove={(e) => { const r = e.currentTarget.getBoundingClientRect(); setMaus({ x: e.clientX - r.left, y: e.clientY - r.top }); }}>
         {ticks.map((k) => (
           <g key={k.t}>
-            <line x1={x(k.t)} x2={x(k.t)} y1={KOPF - 6} y2={H} stroke="#e1e0d9" />
-            <text x={x(k.t) + 4} y={KOPF - 12} fontSize={11} fill="#898781">{k.label}</text>
+            <line x1={x(k.t)} x2={x(k.t)} y1={KOPF - 6} y2={H} style={{ stroke: 'var(--raster)' }} />
+            <text x={x(k.t) + 4} y={KOPF - 12} fontSize={11} style={{ fill: 'var(--achsentext)' }}>{k.label}</text>
           </g>
         ))}
         {gruppen.map((g, i) => {
           const y = KOPF + i * ZEILE;
-          if (typeof g === 'string') return <text key={'g' + i} x={8} y={y + 20} fontSize={12} fontWeight={700} fill="#52514e">{g}</text>;
+          if (typeof g === 'string') return <text key={'g' + i} x={8} y={y + 20} fontSize={12} fontWeight={700} style={{ fill: 'var(--muted)' }}>{g}</text>;
           const farbe = FARBE[g.art ?? (g.meilenstein ? 'termin' : 'aufgabe')];
           const x0 = x(tag(g.beginn)), x1 = x(tag(g.ende) + 1);
           const mitte = y + ZEILE / 2;
@@ -87,16 +87,16 @@ export function Gantt(props: { zeilen: GanttZeile[]; onKlick?: (z: GanttZeile) =
           const fortschritt = g.erledigt ? 100 : g.fortschritt ?? 0;
           return (
             <g key={g.id} className={props.onKlick ? 'klickbar' : ''} onMouseEnter={() => setHover(g)} onClick={() => props.onKlick?.(g)}>
-              <rect x={0} y={y} width={B} height={ZEILE} fill={hover?.id === g.id ? 'rgba(0,0,0,0.035)' : 'transparent'} />
-              <text x={16} y={mitte + 4} fontSize={12.5} fill={g.erledigt ? '#898781' : '#1b2533'}>
+              <rect x={0} y={y} width={B} height={ZEILE} style={{ fill: hover?.id === g.id ? 'color-mix(in srgb, var(--accent-soft) 50%, transparent)' : 'transparent' }} />
+              <text x={16} y={mitte + 4} fontSize={12.5} style={{ fill: g.erledigt ? 'var(--muted)' : 'var(--ink)' }}>
                 {g.erledigt ? '✓ ' : ''}{g.titel.length > 30 ? g.titel.slice(0, 29) + '…' : g.titel}
               </text>
               {punkt ? (
-                <rect x={x0 - 6} y={mitte - 6} width={12} height={12} transform={`rotate(45 ${x0} ${mitte})`} fill={farbe} opacity={g.erledigt ? 0.45 : 1} />
+                <rect x={x0 - 6} y={mitte - 6} width={12} height={12} transform={`rotate(45 ${x0} ${mitte})`} style={{ fill: farbe }} opacity={g.erledigt ? 0.45 : 1} />
               ) : (
                 <>
-                  <rect x={x0} y={mitte - 8} width={Math.max(3, x1 - x0)} height={16} rx={4} fill={farbe} opacity={0.28} />
-                  {fortschritt > 0 && <rect x={x0} y={mitte - 8} width={Math.max(3, (x1 - x0) * fortschritt / 100)} height={16} rx={4} fill={farbe} />}
+                  <rect x={x0} y={mitte - 8} width={Math.max(3, x1 - x0)} height={16} rx={4} style={{ fill: farbe }} opacity={0.28} />
+                  {fortschritt > 0 && <rect x={x0} y={mitte - 8} width={Math.max(3, (x1 - x0) * fortschritt / 100)} height={16} rx={4} style={{ fill: farbe }} />}
                 </>
               )}
             </g>
@@ -107,9 +107,9 @@ export function Gantt(props: { zeilen: GanttZeile[]; onKlick?: (z: GanttZeile) =
           const vor = z.find((v) => v.id === r.nach)!;
           const xa = x(tag(vor.ende) + 1), ya = zeileY.get(vor.id)!, xb = x(tag(r.beginn)), yb = zeileY.get(r.id)!;
           const xm = Math.max(xa + 6, Math.min(xb - 6, xa + 10));
-          return <path key={'p' + r.id} d={`M${xa},${ya} H${xm} V${yb} H${xb - 2}`} fill="none" stroke="#898781" strokeWidth={1.2} markerEnd="url(#pfeil)" />;
+          return <path key={'p' + r.id} d={`M${xa},${ya} H${xm} V${yb} H${xb - 2}`} fill="none" style={{ stroke: 'var(--achsentext)' }} strokeWidth={1.2} markerEnd="url(#pfeil)" />;
         })}
-        <defs><marker id="pfeil" viewBox="0 0 6 6" refX={5} refY={3} markerWidth={6} markerHeight={6} orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#898781" /></marker></defs>
+        <defs><marker id="pfeil" viewBox="0 0 6 6" refX={5} refY={3} markerWidth={6} markerHeight={6} orient="auto"><path d="M0,0 L6,3 L0,6 Z" style={{ fill: 'var(--achsentext)' }} /></marker></defs>
         {heute >= start && heute <= start + tage && (
           <g>
             <line x1={x(heute)} x2={x(heute)} y1={KOPF - 6} y2={H} stroke="#d03b3b" strokeWidth={1.5} strokeDasharray="4 3" />

@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { call, fehler, type Row } from '../api';
 import { useLoad } from '../useLoad';
+import { anzeige, SCHRIFTGROESSEN, type Thema } from '../anzeige';
+import { Tabs } from '../ui';
 
 const FELDER: [string, string][] = [
   ['verwalter_name', 'Name / Firma'],
@@ -44,6 +46,7 @@ export function Einstellungen() {
           {meldung && <span className="meldung">{meldung}</span>}
         </div>
       </div>
+      <Darstellung />
       <Automatik />
       <ClaudeVerbindung />
       <Dokumenteneingang />
@@ -171,6 +174,24 @@ function Automatik() {
         {e.auto_soll_ab ? `Aktiv seit ${e.auto_soll_ab.slice(5)}/${e.auto_soll_ab.slice(0, 4)}; frühere Monate werden nicht automatisch nachgebucht (dafür „Sollstellung“ nutzen).` : 'Startet mit dem aktuellen Monat.'}
         {e.auto_letzter_lauf ? ` Letzter Lauf: ${new Date(e.auto_letzter_lauf).toLocaleString('de-DE')}.` : ''}
       </p>
+    </div>
+  );
+}
+
+function Darstellung() {
+  const [thema, setThema] = useState<Thema>(anzeige.thema());
+  const [schrift, setSchrift] = useState(anzeige.schrift());
+  return (
+    <div className="block">
+      <h3>Darstellung</h3>
+      <div className="toolbar">
+        <span>Farbschema</span>
+        <Tabs tabs={[['system', 'wie macOS'], ['hell', 'Hell'], ['dunkel', 'Dunkel']]} value={thema} onChange={(t) => { anzeige.setzeThema(t); setThema(t); }} />
+        <span style={{ marginLeft: 20 }}>Schriftgröße</span>
+        <Tabs tabs={SCHRIFTGROESSEN.map(([f, l]) => [String(f), l] as [string, string])} value={String(schrift)}
+          onChange={(f) => { anzeige.setzeSchrift(Number(f)); setSchrift(Number(f)); }} />
+      </div>
+      <p className="klein hinweis">Gilt für diesen Computer. Die Schrift lässt sich auch jederzeit mit ⌘+ und ⌘− anpassen.</p>
     </div>
   );
 }

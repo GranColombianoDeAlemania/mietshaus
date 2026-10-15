@@ -94,6 +94,9 @@ app.whenReady().then(async () => {
   }
   await ana.warteschlange();
   for (let i = 0; i < 60 && db.zuAnalysieren().length; i++) await wait(500);
+  const fassade = db.dokumentListe({ q: '' }).find((d) => d.name === 'Fassade.png');
+  if (fassade) db.save('objekte', { id: o, titelbild_id: fassade.id });
+  db.darlehenSpeichern({ objekt_id: o, bank: 'Sparkasse Berlin', vertragsnr: '4711', betrag_ct: 60000000, zinssatz: 3.2, tilgung_satz: 2, erste_rate: '2022-03-30', zinsbindung_bis: '2027-03-30' });
   ipcMain.handle('neuAnalysieren', (_e, id) => ana.neuAnalysieren(id));
   ipcMain.handle('dokumentLoeschen', (_e, id) => db.dokumentLoeschen(id));
   const win = new BrowserWindow({ width: 1300, height: 760, show: false,
@@ -105,7 +108,7 @@ app.whenReady().then(async () => {
   win.webContents.on('render-process-gone', (_e, d) => console.log('RENDERER-ABSTURZ:', d.reason));
   const click = (text) => js(`[...document.querySelectorAll('button')].find(b => b.textContent.trim() === ${JSON.stringify(text)} || b.firstChild?.textContent?.trim() === ${JSON.stringify(text)})?.click()`);
   const shot = async (name) => { await wait(400); fs.writeFileSync(path.join(out, name + '.png'), (await win.webContents.capturePage()).toPNG()); };
-  await js(`localStorage.clear()`);
+  await js(`localStorage.clear(); localStorage.setItem('thema', 'hell')`);
   await win.reload(); await wait(500);
   console.log('AUTOMATIK', JSON.stringify(db.automatikLauf()), db.kennzahlen().soll_ct, db.einstellungen().auto_soll_ab);
   win.setSize(1300, 1250); await click('Cockpit'); await wait(800); await shot('1-miete-uebersicht');
@@ -139,9 +142,19 @@ app.whenReady().then(async () => {
   // Visit every page in both modes once.
   for (const m of ['Mietverwaltung', 'WEG-Verwaltung']) {
     await click(m); await wait(300);
-    const labels = await js(`[...document.querySelectorAll('nav .navgruppe button')].map(b => b.textContent.trim())`);
+    const labels = await js(`[...document.querySelectorAll('nav .navgruppe .eintrag')].map(b => b.textContent.trim())`);
     for (const l of labels) { await click(l); await wait(250); const h = await js(`document.querySelector('main h1')?.textContent ?? '(kein Titel)'`); console.log('SEITE', m, '|', l, '→', h); }
   }
+  win.setSize(1300, 1100);
+  await click('Mietverwaltung'); await click('Cockpit'); await wait(700); await shot('60-cockpit-kacheln');
+  await click('Steckbrief'); await wait(700); await shot('61-steckbrief');
+  await click('Adressbuch'); await wait(300); await js(`document.querySelector('tbody tr')?.click()`); await wait(700); await shot('62-akte'); await click('Schließen');
+  await click('Darlehen'); await wait(400); await shot('63-darlehen');
+  await js(`document.documentElement.dataset.thema = 'dunkel'`);
+  await click('Cockpit'); await wait(700); await shot('64-dunkel-cockpit');
+  await click('WEG-Verwaltung'); await click('Konten'); await wait(500); await shot('65-dunkel-weg-konten');
+  await click('Projekte'); await click('Zeitplan'); await wait(500); await shot('66-dunkel-gantt');
+  await js(`document.documentElement.dataset.thema = 'hell'`); win.setSize(1300, 760);
   await click('Mietverwaltung'); await click('Postfach'); await wait(500);
   await js(`document.querySelectorAll('.dokliste li input[type=checkbox]')[1]?.click(); document.querySelectorAll('.dokliste li input[type=checkbox]')[2]?.click()`);
   await wait(400); await shot('50-postfach-stapel');

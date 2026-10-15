@@ -88,7 +88,7 @@ function Import(props: { objekt: Row }) {
                   {(z as Row).hinweis && <div className={`klein ${(z as Row).ruecklast ? 'fehlertext' : 'meldung'}`}>{(z as Row).hinweis}</div>}</td>
                 <td className="num"><span className={z.betrag_ct < 0 ? 'negativ' : ''}>{betrag(z.betrag_ct)}</span></td>
                 <td>
-                  <KontoSelect konten={konten} klassen={z.betrag_ct > 0 ? ['person', 'einnahme', 'geld', 'kosten'] : ['kosten', 'person', 'geld', 'ruecklage']}
+                  <KontoSelect konten={konten} klassen={z.betrag_ct > 0 ? ['person', 'einnahme', 'geld', 'kosten', 'darlehen'] : ['kosten', 'darlehen', 'person', 'geld', 'ruecklage']}
                     value={z.konto_id ?? ''} onChange={(id) => set(i, { konto_id: id, an: !!id })} leer="– nicht buchen –" />
                 </td>
                 <td><input type="checkbox" checked={z.lernen} onChange={(e) => set(i, { lernen: e.target.checked })} /></td>

@@ -32,6 +32,8 @@ function createWindow() {
     minHeight: 640,
     title: 'Hausverwalter',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    // macOS: translucent sidebar material behind the navigation.
+    ...(process.platform === 'darwin' ? { vibrancy: 'sidebar', visualEffectState: 'followWindow', backgroundColor: '#00000000' } : {}),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,

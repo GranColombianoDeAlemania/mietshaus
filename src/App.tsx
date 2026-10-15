@@ -23,11 +23,26 @@ import { Beschluesse, Kontakte, Versammlungen } from './views/WegExtras';
 import { Briefe, Termine, Vorgaenge } from './views/Kommunikation';
 import { Archiv, DokumentDialog, Postfach, Rechnungen } from './views/Archiv';
 import { Suche } from './Suche';
+import * as I from 'lucide-react';
+
+// One icon per page; unknown ids fall back to a neutral dot.
+const ICON: Record<string, I.LucideIcon> = {
+  uebersicht: I.Gauge, pcockpit: I.Gauge, projekte: I.FolderKanban, zeitplan: I.CalendarRange, pkosten: I.HandCoins, pdok: I.Image,
+  objekte: I.Building2, steckbrief: I.House, einheiten: I.LayoutGrid, vertraege: I.Users, zaehler: I.Gauge, schluessel: I.Scale, personen: I.Contact,
+  postfach: I.Inbox, archiv: I.Archive, rechnungen: I.Receipt,
+  buchen: I.BookOpen, konten: I.Landmark, soll: I.Repeat, op: I.BadgeEuro, bank: I.Wallet, darlehen: I.PiggyBank,
+  nk: I.Calculator, wegabr: I.Calculator, wipl: I.ClipboardList, ruecklagen: I.PiggyBank, auswertung: I.ChartColumn,
+  kaution: I.Shield, anpassung: I.TrendingUp, vermietung: I.UserPlus, uebergabe: I.ClipboardCheck, versammlungen: I.Gavel, beschluesse: I.ScrollText,
+  kontakte: I.Phone, schluesselv: I.KeyRound, versicherungen: I.Umbrella,
+  briefe: I.Mail, vorgaenge: I.ListChecks, termine: I.CalendarDays,
+  protokoll: I.History, export: I.Download, einstellungen: I.Settings,
+};
 import { Export } from './views/Export';
 import { Auswertungen } from './views/Auswertungen';
+import { Darlehen, PersonAkte, Steckbrief } from './views/Steckbrief';
 import { ProjektCockpit, ProjektDokumente, ProjektKosten, ProjektListe, ProjektZeitplan } from './views/Projekte';
 
-type Ctx = { modus: Modus; objekt: Row; objekte: Row[]; ladeObjekte: () => void; oeffne: (seite: string, objektId?: number) => void };
+type Ctx = { modus: Modus; objekt: Row; objekte: Row[]; ladeObjekte: () => void; oeffne: (seite: string, objektId?: number) => void; akte: (personId: number) => void };
 type Seite = {
   id: string;
   label: string | ((m: Modus) => string);
@@ -48,16 +63,18 @@ const SEITEN: Seite[] = [
   { id: 'pkosten', label: 'Kosten & Budget', gruppe: 'Projekte', objekt: true, modi: ['projekt'], render: (c) => <ProjektKosten key={c.objekt.id} projekt={c.objekt} /> },
   { id: 'pdok', label: 'Fotos & Dokumente', gruppe: 'Projekte', objekt: true, modi: ['projekt'], render: (c) => <ProjektDokumente key={c.objekt.id} projekt={c.objekt} /> },
   { id: 'uebersicht', label: 'Cockpit', gruppe: 'Start', render: (c) => <Uebersicht modus={c.modus} objekte={c.objekte} oeffne={c.oeffne} /> },
+  { id: 'steckbrief', label: 'Steckbrief', gruppe: 'Stammdaten', objekt: true, render: (c) => <Steckbrief key={c.objekt.id} objekt={c.objekt} oeffne={c.oeffne} /> },
   { id: 'objekte', label: 'Objekte', gruppe: 'Stammdaten', render: (c) => <Objekte modus={c.modus} objekte={c.objekte} reload={c.ladeObjekte} onOpen={(id) => c.oeffne('einheiten', id)} /> },
   { id: 'einheiten', label: 'Einheiten', gruppe: 'Stammdaten', objekt: true, render: (c) => <Einheiten key={c.objekt.id} modus={c.modus} objekt={c.objekt} /> },
   { id: 'vertraege', label: (m) => (m === 'weg' ? 'Eigentümer' : 'Mieter'), gruppe: 'Stammdaten', objekt: true, render: (c) => <Vertraege key={c.objekt.id + c.modus} modus={c.modus} objekt={c.objekt} /> },
   { id: 'zaehler', label: 'Zähler', gruppe: 'Stammdaten', objekt: true, render: (c) => <Zaehler key={c.objekt.id} objekt={c.objekt} /> },
   { id: 'schluessel', label: 'Umlageschlüssel', gruppe: 'Stammdaten', objekt: true, render: (c) => <Schluessel key={c.objekt.id} objekt={c.objekt} /> },
-  { id: 'personen', label: 'Adressbuch', gruppe: 'Stammdaten', alle: true, render: () => <Personen /> },
+  { id: 'personen', label: 'Adressbuch', gruppe: 'Stammdaten', alle: true, render: (c) => <Personen onAkte={c.akte} /> },
   { id: 'buchen', label: 'Buchungen', gruppe: 'Buchhaltung', objekt: true, render: (c) => <Buchen key={c.objekt.id} objekt={c.objekt} /> },
   { id: 'konten', label: 'Konten', gruppe: 'Buchhaltung', objekt: true, render: (c) => <Konten key={c.objekt.id + c.modus} objekt={c.objekt} modus={c.modus} /> },
   { id: 'soll', label: 'Sollstellung', gruppe: 'Buchhaltung', objekt: true, render: (c) => <Sollstellung key={c.objekt.id + c.modus} objekt={c.objekt} modus={c.modus} /> },
   { id: 'op', label: 'Offene Posten & Mahnungen', gruppe: 'Buchhaltung', objekt: true, render: (c) => <OffenePosten key={c.objekt.id + c.modus} objekt={c.objekt} modus={c.modus} /> },
+  { id: 'darlehen', label: 'Darlehen', gruppe: 'Buchhaltung', objekt: true, render: (c) => <Darlehen key={c.objekt.id} objekt={c.objekt} /> },
   { id: 'bank', label: 'Bank & SEPA', gruppe: 'Buchhaltung', objekt: true, render: (c) => <Bank key={c.objekt.id + c.modus} objekt={c.objekt} modus={c.modus} /> },
   { id: 'nk', label: 'Betriebskosten', gruppe: 'Abrechnung', objekt: true, modi: ['miete'], render: (c) => <NkAbrechnung key={c.objekt.id} objekt={c.objekt} /> },
   { id: 'wegabr', label: 'Jahresabrechnung', gruppe: 'Abrechnung', objekt: true, modi: ['weg'], render: (c) => <WegAbrechnung key={c.objekt.id} objekt={c.objekt} /> },
@@ -106,6 +123,13 @@ export default function App() {
   useEffect(() => schreiben('seite', seite), [seite]);
 
   const [meldung, setMeldung] = useState('');
+  // Folded navigation groups, remembered per computer.
+  const [zugeklappt, setZugeklappt] = useState<string[]>(() => { try { return JSON.parse(lesen('zugeklappt') ?? '[]'); } catch { return []; } });
+  const klappen = (g: string) => {
+    const neu = zugeklappt.includes(g) ? zugeklappt.filter((x) => x !== g) : [...zugeklappt, g];
+    setZugeklappt(neu);
+    schreiben('zugeklappt', JSON.stringify(neu));
+  };
   // Background events from the main process trigger a data reload everywhere.
   useEffect(() => {
     const feuern = () => window.dispatchEvent(new Event('hv-daten'));
@@ -117,6 +141,7 @@ export default function App() {
   const [postfach] = useLoad<number>(() => call('postfachAnzahl'), []);
   const [ziehen, setZiehen] = useState(false);
   const [dokOffen, setDokOffen] = useState<Row | null>(null);
+  const [akte, setAkte] = useState<number | null>(null);
 
   useEffect(() => {
     const aus = () => setZiehen(false);
@@ -173,21 +198,21 @@ export default function App() {
   const gruppen = [...new Set(sichtbar.map((s) => s.gruppe))].sort((a, b) => REIHENFOLGE.indexOf(a) - REIHENFOLGE.indexOf(b));
 
   const ctx: Ctx | null = objekte
-    ? { modus, objekt: objekt!, objekte, ladeObjekte, oeffne: (s, id) => { if (id) setObjektId(id); setSeite(s); } }
+    ? { modus, objekt: objekt!, objekte, ladeObjekte, oeffne: (s, id) => { if (id) setObjektId(id); setSeite(s); }, akte: setAkte }
     : null;
 
   return (
     <div className={`app${ziehen ? ' ziehen' : ''}`} onDragOver={(e) => { e.preventDefault(); setZiehen(true); }}
       onDragLeave={(e) => { if (e.currentTarget === e.target) setZiehen(false); }} onDrop={abgelegt}>
       <header>
-        <div className="brand">Hausverwalter</div>
+        <div className="brand"><I.House size={19} strokeWidth={2.4} />Hausverwalter</div>
         <div className="modus" role="tablist">
-          <button role="tab" aria-selected={modus === 'miete'} onClick={() => wechsle('miete')}>Mietverwaltung</button>
-          <button role="tab" aria-selected={modus === 'weg'} onClick={() => wechsle('weg')}>WEG-Verwaltung</button>
-          <button role="tab" aria-selected={modus === 'projekt'} onClick={() => wechsle('projekt')}>Projekte</button>
+          <button role="tab" aria-selected={modus === 'miete'} onClick={() => wechsle('miete')}><I.KeyRound size={15} />Mietverwaltung</button>
+          <button role="tab" aria-selected={modus === 'weg'} onClick={() => wechsle('weg')}><I.Building2 size={15} />WEG-Verwaltung</button>
+          <button role="tab" aria-selected={modus === 'projekt'} onClick={() => wechsle('projekt')}><I.Hammer size={15} />Projekte</button>
         </div>
-        <button className="schnell" title="Dateien auswählen – sie landen zur Prüfung im Postfach" onClick={schnellAblegen}>＋ Dokumente ablegen</button>
-        <Suche onDokument={setDokOffen} oeffne={(seite, objektId) => { if (objektId) setObjektId(objektId); setSeite(seite); }} />
+        <button className="schnell" title="Dateien auswählen – sie landen zur Prüfung im Postfach" onClick={schnellAblegen}><I.FilePlus2 size={16} />Dokumente ablegen</button>
+        <Suche onDokument={setDokOffen} onPerson={setAkte} oeffne={(seite, objektId) => { if (objektId) setObjektId(objektId); setSeite(seite); }} />
         <label className="objektwahl">
           {modus === 'projekt' ? 'Projekt' : 'Objekt'}
           <select value={objektId ?? ''} onChange={(e) => setObjektId(Number(e.target.value))} disabled={!objekte?.length}>
@@ -199,16 +224,22 @@ export default function App() {
         </label>
       </header>
       <nav>
-        {gruppen.map((g) => (
-          <div key={g} className="navgruppe">
-            <h4>{g}</h4>
-            {sichtbar.filter((s) => s.gruppe === g).map((s) => (
-              <button key={s.id} className={aktiv.id === s.id ? 'active' : ''} onClick={() => setSeite(s.id)}>
-                {label(s)}{s.id === 'postfach' && !!postfach && <span className="zaehler">{postfach}</span>}
-              </button>
-            ))}
-          </div>
-        ))}
+        {gruppen.map((g) => {
+          const zu = zugeklappt.includes(g) && !sichtbar.some((x) => x.gruppe === g && x.id === aktiv.id);
+          return (
+            <div key={g} className={`navgruppe${zu ? ' zu' : ''}`}>
+              <h4><button onClick={() => klappen(g)} aria-expanded={!zu}>{g}<I.ChevronDown size={15} /></button></h4>
+              {!zu && sichtbar.filter((s) => s.gruppe === g).map((s) => {
+                const Icon = ICON[s.id] ?? I.Dot;
+                return (
+                  <button key={s.id} className={`eintrag${aktiv.id === s.id ? ' active' : ''}`} onClick={() => setSeite(s.id)}>
+                    <Icon size={17} strokeWidth={2} />{label(s)}{s.id === 'postfach' && !!postfach && <span className="zaehler">{postfach}</span>}
+                  </button>
+                );
+              })}
+            </div>
+          );
+        })}
       </nav>
       <main>
         {!ctx ? null : aktiv.objekt && !objekt ? (
@@ -222,6 +253,7 @@ export default function App() {
       </main>
       <footer>{meldung ? <b>{meldung}</b> : objekt ? (modus === 'projekt' ? `Projekt: ${objekt.titel}${objekt.objekt ? ` · ${objekt.objekt}` : ''}` : `${objekt.bezeichnung} · ${OBJEKT_ART[objekt.art]}`) : ''}</footer>
       {ziehen && <div className="dropzone">Dateien loslassen – sie landen im Postfach</div>}
+      {akte && <PersonAkte personId={akte} onClose={() => setAkte(null)} />}
       {dokOffen && <DokumentDialog id={dokOffen.id} datei={dokOffen.datei} onClose={() => setDokOffen(null)} />}
     </div>
   );
