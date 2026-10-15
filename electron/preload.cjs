@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('hv', {
   zoom: (faktor) => webFrame.setZoomFactor(faktor),
   call: (fn, ...args) => ipcRenderer.invoke('db', fn, args),
   pdf: (html, name) => ipcRenderer.invoke('pdf', html, name),
+  pdfAblegen: (html, name, meta) => ipcRenderer.invoke('pdfAblegen', html, name, meta),
   speichern: (inhalt, name, filter) => ipcRenderer.invoke('speichern', inhalt, name, filter),
   oeffnen: (filter) => ipcRenderer.invoke('oeffnen', filter),
   sicherung: () => ipcRenderer.invoke('sicherung'),

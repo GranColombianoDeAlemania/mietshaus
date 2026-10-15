@@ -39,6 +39,7 @@ const ICON: Record<string, I.LucideIcon> = {
 };
 import { Export } from './views/Export';
 import { Protokoll } from './views/Protokoll';
+import { Uebergaben } from './views/Uebergabe';
 import { Auswertungen } from './views/Auswertungen';
 import { Darlehen, PersonAkte, Steckbrief } from './views/Steckbrief';
 import { ProjektCockpit, ProjektDokumente, ProjektKosten, ProjektListe, ProjektZeitplan } from './views/Projekte';
@@ -82,6 +83,7 @@ const SEITEN: Seite[] = [
   { id: 'wipl', label: 'Wirtschaftsplan', gruppe: 'Abrechnung', objekt: true, modi: ['weg'], render: (c) => <Wirtschaftsplan key={c.objekt.id} objekt={c.objekt} /> },
   { id: 'ruecklagen', label: 'Rücklagen & Sonderumlagen', gruppe: 'Abrechnung', objekt: true, modi: ['weg'], render: (c) => <Ruecklagen key={c.objekt.id} objekt={c.objekt} /> },
   { id: 'auswertung', label: 'Rendite & Steuer', gruppe: 'Abrechnung', objekt: true, modi: ['miete'], render: (c) => <Auswertungen key={c.objekt.id} objekt={c.objekt} /> },
+  { id: 'uebergabe', label: 'Übergaben & Mieterwechsel', gruppe: 'Verwaltung', objekt: true, modi: ['miete'], render: (c) => <Uebergaben key={c.objekt.id} objekt={c.objekt} /> },
   { id: 'kaution', label: 'Kautionen', gruppe: 'Verwaltung', objekt: true, modi: ['miete'], render: (c) => <Kautionen key={c.objekt.id} objekt={c.objekt} /> },
   { id: 'anpassung', label: 'Mietanpassungen', gruppe: 'Verwaltung', objekt: true, modi: ['miete'], render: (c) => <Mietanpassung key={c.objekt.id} objekt={c.objekt} /> },
   { id: 'versammlungen', label: 'Versammlungen', gruppe: 'Verwaltung', objekt: true, modi: ['weg'], render: (c) => <Versammlungen key={c.objekt.id} objekt={c.objekt} /> },

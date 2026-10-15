@@ -54,6 +54,7 @@ db.save('projektposten', { projekt_id: pr, art: 'auftrag', firma: 'Gerüstbau Kr
 db.save('projektposten', { projekt_id: pr, art: 'rechnung', firma: 'Gerüstbau Krause', titel: 'Rechnung Gerüst', betrag_ct: 465000, datum: `${jahr}-09-30`, aufgabe_id: g1, status: 'bezahlt' });
 db.save('projektposten', { projekt_id: pr, art: 'rechnung', firma: 'Dach GmbH', titel: '1. Abschlag', betrag_ct: 1200000, datum: `${jahr}-10-08`, faellig: `${jahr}-10-22`, aufgabe_id: g3 });
 db.save('projekte', { titel: 'Renovierung Ferienwohnung', status: 'planung', budget_ct: 1500000 });
+db.save('schluessel', { objekt_id: o, bezeichnung: 'Haustür / Wohnung', nummer: 'A-12', anzahl: 8 });
 db.save('termine', { titel: 'Wohnungsübergabe EG rechts', datum: new Date(Date.now() + 2 * 864e5).toISOString().slice(0, 10), uhrzeit: '10:00', objekt_id: o });
 ipcMain.handle('db', (_e, fn, args) => db[fn](...args));
 // PDFs are printed straight into the output folder instead of asking for a file name.
@@ -98,6 +99,13 @@ app.whenReady().then(async () => {
   if (fassade) db.save('objekte', { id: o, titelbild_id: fassade.id });
   db.darlehenSpeichern({ objekt_id: o, bank: 'Sparkasse Berlin', vertragsnr: '4711', betrag_ct: 60000000, zinssatz: 3.2, tilgung_satz: 2, erste_rate: '2022-03-30', zinsbindung_bis: '2027-03-30' });
   ipcMain.handle('neuAnalysieren', (_e, id) => ana.neuAnalysieren(id));
+  ipcMain.handle('pdfAblegen', async (_e, html, name, meta) => {
+    const tmp = path.join(out, 'ablage.html'); fs.writeFileSync(tmp, html);
+    const w = new BrowserWindow({ show: false, webPreferences: { offscreen: true } }); await w.loadFile(tmp);
+    const pdfPfad = path.join(out, name.replace(/[^\w.-]+/g, '_')); fs.writeFileSync(pdfPfad, await w.webContents.printToPDF({ pageSize: 'A4', printBackground: true, preferCSSPageSize: true })); w.destroy();
+    const [r] = ana.importieren([pdfPfad], { ...meta, status: 'abgelegt' }); return { id: r.id, datei: db.dokument(r.id).datei };
+  });
+  ipcMain.handle('dokumentOeffnen', () => '');
   ipcMain.handle('dokumentLoeschen', (_e, id) => db.dokumentLoeschen(id));
   const win = new BrowserWindow({ width: 1300, height: 760, show: false,
     webPreferences: { preload: path.join(__dirname, '..', 'electron', 'preload.cjs'), contextIsolation: true, sandbox: true, offscreen: true } });
@@ -150,6 +158,20 @@ app.whenReady().then(async () => {
   await click('Steckbrief'); await wait(700); await shot('61-steckbrief');
   await click('Adressbuch'); await wait(300); await js(`document.querySelector('tbody tr')?.click()`); await wait(700); await shot('62-akte'); await click('Schließen');
   await click('Darlehen'); await wait(400); await shot('63-darlehen');
+  await click('Übergaben & Mieterwechsel'); await wait(400);
+  const uid = db.uebergabeNeu({ einheit_id: e[0], vertrag_id: db.vertraege('mietverhaeltnisse', o).find((v) => v.einheit_id === e[0]).id, art: 'auszug', datum: new Date().toISOString().slice(0, 10) });
+  await js(`window.dispatchEvent(new Event('hv-daten'))`); await wait(500);
+  await js(`[...document.querySelectorAll('tbody tr')].find(t => t.textContent.includes('Auszug'))?.click()`); await wait(700);
+  await js(`document.querySelectorAll('.zustand')[4]?.querySelectorAll('button')[2]?.click()`); await wait(300);
+  await js(`(() => { const t = document.querySelector('.raum textarea'); if (!t) return; const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; set.call(t, 'Wasserfleck an der Decke, Silikonfuge erneuern'); t.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  await js(`(() => { const c = document.querySelectorAll('canvas.unterschrift-feld')[0]; const r = c.getBoundingClientRect(); const ev = (t, x, y) => c.dispatchEvent(new PointerEvent(t, { clientX: r.left + x, clientY: r.top + y, bubbles: true, pointerId: 1 }));
+    ev('pointerdown', 20, 90); for (let i = 0; i < 40; i++) ev('pointermove', 20 + i * 8, 90 - Math.sin(i / 3) * 30); ev('pointerup', 340, 90); })()`);
+  await wait(300); await shot('67-uebergabe');
+  await click('Abschließen & Protokoll erstellen'); await wait(3000);
+  const proto = db.dokumentListe({ q: '' }).find((d) => d.typ === 'Protokoll'); console.log('PROTOKOLL', proto?.titel, proto?.datei);
+  await js(`document.querySelector('.toolbar select')?.dispatchEvent(new Event('change'))`);
+  await js(`(() => { const s = document.querySelector('section .toolbar select'); s.value = s.options[1].value; s.dispatchEvent(new Event('change', { bubbles: true })); })()`); await wait(600);
+  await shot('68-mieterwechsel'); await click('Schließen');
   await js(`document.documentElement.dataset.thema = 'dunkel'`);
   await click('Cockpit'); await wait(700); await shot('64-dunkel-cockpit');
   await click('WEG-Verwaltung'); await click('Konten'); await wait(500); await shot('65-dunkel-weg-konten');

@@ -9,6 +9,7 @@ const projekte = require('./projekte.cjs');
 const auswertung = require('./auswertung.cjs');
 const akten = require('./akten.cjs');
 const darlehen = require('./darlehen.cjs');
+const mieterwechsel = require('./mieterwechsel.cjs');
 
 const MIGRATIONS = [
   `
@@ -537,6 +538,32 @@ const MIGRATIONS = [
     WHEN NEW.datum <= coalesce((SELECT wert FROM einstellungen WHERE schluessel = 'festgeschrieben_bis'), '0000-00-00')
   BEGIN SELECT RAISE(ABORT, 'Das Buchungsdatum liegt in einem festgeschriebenen Zeitraum. Bitte ein späteres Datum wählen.'); END;
   `,
+  `
+  -- Hand-over protocols (move-in / move-out) and the tenant change checklist.
+  CREATE TABLE uebergaben (
+    id INTEGER PRIMARY KEY,
+    einheit_id INTEGER NOT NULL REFERENCES einheiten(id) ON DELETE CASCADE,
+    vertrag_id INTEGER REFERENCES mietverhaeltnisse(id) ON DELETE SET NULL,
+    art TEXT NOT NULL CHECK (art IN ('einzug','auszug')),
+    datum TEXT NOT NULL,
+    teilnehmer TEXT,
+    raeume TEXT NOT NULL DEFAULT '[]',
+    zaehler TEXT NOT NULL DEFAULT '[]',
+    schluessel TEXT NOT NULL DEFAULT '[]',
+    notiz TEXT,
+    unterschrift_mieter TEXT,
+    unterschrift_vermieter TEXT,
+    abgeschlossen INTEGER NOT NULL DEFAULT 0,
+    dokument_id INTEGER REFERENCES dokumente(id) ON DELETE SET NULL
+  );
+  CREATE TABLE mieterwechsel (
+    vertrag_id INTEGER PRIMARY KEY REFERENCES mietverhaeltnisse(id) ON DELETE CASCADE,
+    kuendigung_eingang TEXT,
+    kuendigung_durch TEXT,
+    schritte TEXT NOT NULL DEFAULT '{}',
+    notiz TEXT
+  );
+  `,
 ];
 
 // Columns the renderer may write, per table. Everything else is rejected.
@@ -577,6 +604,7 @@ const TABLES = {
   termine: ['objekt_id', 'person_id', 'vorgang_id', 'titel', 'datum', 'uhrzeit', 'dauer_min', 'ort', 'erledigt', 'notiz', 'projekt_id'],
   projekte: ['titel', 'beschreibung', 'status', 'objekt_id', 'einheit_id', 'kosten_konto_id', 'budget_ct', 'beginn', 'ende', 'notiz'],
   projektaufgaben: ['projekt_id', 'titel', 'gewerk', 'beginn', 'ende', 'fortschritt', 'nach_id', 'person_id', 'meilenstein', 'sort', 'notiz'],
+  uebergaben: ['einheit_id', 'vertrag_id', 'art', 'datum', 'teilnehmer', 'raeume', 'zaehler', 'schluessel', 'notiz', 'unterschrift_mieter', 'unterschrift_vermieter', 'abgeschlossen', 'dokument_id'],
   darlehen: ['objekt_id', 'bank', 'vertragsnr', 'betrag_ct', 'auszahlung', 'zinssatz', 'tilgung_satz', 'rate_ct', 'erste_rate', 'zinsbindung_bis', 'sondertilgung_ct', 'notiz'],
   projektposten: ['projekt_id', 'art', 'datum', 'firma', 'person_id', 'titel', 'betrag_ct', 'status', 'bezahlt_am', 'faellig', 'aufgabe_id', 'dokument_id', 'notiz'],
 };
@@ -609,9 +637,9 @@ function open(file, quelle = 'app') {
 }
 
 // Tables whose changes are logged, and columns left out of the log (large or derived).
-const PROTOKOLLIERT = ['objekte', 'einheiten', 'personen', 'mietverhaeltnisse', 'eigentum', 'konten', 'buchungen', 'anpassungen',
+const PROTOKOLLIERT = ['uebergaben', 'objekte', 'einheiten', 'personen', 'mietverhaeltnisse', 'eigentum', 'konten', 'buchungen', 'anpassungen',
   'kautionen', 'kautionsbewegungen', 'dokumente', 'darlehen', 'beschluesse', 'projekte', 'projektposten', 'zaehlerstaende', 'mahnungen', 'abrechnungen'];
-const NICHT_PROTOKOLLIEREN = new Set(['text', 'daten', 'erfasst']);
+const NICHT_PROTOKOLLIEREN = new Set(['text', 'daten', 'erfasst', 'unterschrift_mieter', 'unterschrift_vermieter']);
 
 // Temporary triggers belong to this connection only, so each process records its own source (app or Claude).
 function protokollAktivieren(db, quelle) {
@@ -822,9 +850,10 @@ function api(db) {
   const aw = auswertung({ db, all, get, tx, bh });
   const ak = akten({ db, all, get, PERSON_NAME, bh });
   const dl = darlehen({ db, all, get, tx, bh });
+  const mw = mieterwechsel({ db, all, get, tx, PERSON_NAME });
   const au = automatik({ db, all, get, tx, PERSON_NAME, bh, ab, vw, einstellungen: basis.einstellungen });
   return {
-    ...bh, ...ab, ...vw, ...ar, ...au, ...pj, ...aw, ...ak, ...dl, ...basis,
+    ...bh, ...ab, ...vw, ...ar, ...au, ...pj, ...aw, ...ak, ...dl, ...mw, ...basis,
     // Bank lines paid to a loan account are booked as instalments (interest + repayment).
     bankBuchen: (objektId, geldKontoId, zeilen, lernen) => {
       const istDarlehen = (z) => z.konto_id && z.betrag_ct < 0 && dl.darlehenZuKonto(z.konto_id);

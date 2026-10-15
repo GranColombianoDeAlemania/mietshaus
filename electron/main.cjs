@@ -78,6 +78,25 @@ async function pdf(html, name) {
   }
 }
 
+// Renders HTML to PDF and files it in the archive (e.g. a signed hand-over protocol); returns the document.
+async function pdfAblegen(html, name, meta) {
+  const tmpHtml = path.join(app.getPath('temp'), `hv-${crypto.randomUUID()}.html`);
+  const tmpPdf = path.join(app.getPath('temp'), name.replace(/[/\\:*?"<>|]/g, '_'));
+  fs.writeFileSync(tmpHtml, html);
+  const win = new BrowserWindow({ show: false, webPreferences: { sandbox: true, javascript: false } });
+  try {
+    await win.loadFile(tmpHtml);
+    fs.writeFileSync(tmpPdf, await win.webContents.printToPDF({ pageSize: 'A4', printBackground: true, preferCSSPageSize: true }));
+    const [r] = ana.importieren([tmpPdf], { objekt_id: meta.objekt_id ?? null, einheit_id: meta.einheit_id ?? null, projekt_id: meta.projekt_id ?? null, typ: meta.typ ?? null, status: 'abgelegt', quelle: 'programm' });
+    db.dokumentSpeichern({ id: r.id, titel: meta.titel ?? name.replace(/\.pdf$/i, ''), person_id: meta.person_id ?? null, datum: meta.datum ?? null });
+    return { id: r.id, datei: db.dokument(r.id).datei };
+  } finally {
+    win.destroy();
+    fs.rmSync(tmpHtml, { force: true });
+    fs.rmSync(tmpPdf, { force: true });
+  }
+}
+
 async function speichern(inhalt, name, filter) {
   const ziel = await dialog.showSaveDialog({ defaultPath: path.join(app.getPath('documents'), name), filters: filter ? [filter] : [] });
   if (ziel.canceled || !ziel.filePath) return null;
@@ -221,6 +240,7 @@ app.whenReady().then(() => {
     return db[fn](...args);
   });
   ipcMain.handle('pdf', (_e, html, name) => pdf(html, name));
+  ipcMain.handle('pdfAblegen', (_e, html, name, meta) => pdfAblegen(html, name, meta));
   ipcMain.handle('speichern', (_e, inhalt, name, filter) => speichern(inhalt, name, filter));
   ipcMain.handle('oeffnen', (_e, filter) => oeffnen(filter));
   ipcMain.handle('sicherung', () => sicherung());

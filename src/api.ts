@@ -10,6 +10,7 @@ declare global {
       zoom: (faktor: number) => void;
       call: (fn: string, ...args: unknown[]) => Promise<any>;
       pdf: (html: string, name: string) => Promise<string | null>;
+      pdfAblegen: (html: string, name: string, meta: Row) => Promise<{ id: number; datei: string }>;
       speichern: (inhalt: string, name: string, filter?: DateiFilter) => Promise<string | null>;
       oeffnen: (filter?: DateiFilter) => Promise<{ name: string; base64: string } | null>;
       sicherung: () => Promise<string | null>;

@@ -108,3 +108,8 @@ export function tabelle(kopf: string[], zeilen: (string | number)[][], opts: { s
 export async function alsPdf(seiten: string[], name: string) {
   return window.hv.pdf(dokument(seiten, name), name.endsWith('.pdf') ? name : `${name}.pdf`);
 }
+
+// Files a generated document in the archive instead of asking where to save it.
+export async function alsPdfAblegen(seiten: string[], name: string, meta: Record<string, unknown>) {
+  return window.hv.pdfAblegen(dokument(seiten, name), name.endsWith('.pdf') ? name : `${name}.pdf`, meta);
+}
