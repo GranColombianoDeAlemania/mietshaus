@@ -216,3 +216,11 @@ tr.split td:first-child { box-shadow: inset 3px 0 var(--accent-soft); }
 tr.zwischen td { background: color-mix(in srgb, var(--accent-soft) 35%, white); font-weight: 600; }
 .dialog.breit { width: min(1100px, 100%); }
 .dialog table { margin-bottom: 6px; }
+
+.zweispaltig { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; align-items: start; }
+textarea.brieftext { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; font: 13px/1.5 inherit; resize: vertical; }
+label.eingerueckt { margin-left: 22px; }
+.block label.check { display: flex; padding: 2px 0; }
+details { margin-top: 8px; color: var(--muted); }
+details code { background: var(--accent-soft); padding: 0 4px; border-radius: 3px; }
+.faellig li { margin: 3px 0; }

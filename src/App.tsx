@@ -18,6 +18,10 @@ import { NkAbrechnung } from './views/NkAbrechnung';
 import { WegAbrechnung } from './views/WegAbrechnung';
 import { Wirtschaftsplan } from './views/Wirtschaftsplan';
 import { Ruecklagen } from './views/Ruecklagen';
+import { Kautionen, Mietanpassung, Schluesselverwaltung, Versicherungen } from './views/MieteExtras';
+import { Beschluesse, Kontakte, Versammlungen } from './views/WegExtras';
+import { Briefe, Dokumente, Termine, Vorgaenge } from './views/Kommunikation';
+import { Export } from './views/Export';
 
 type Ctx = { modus: Modus; objekt: Row; objekte: Row[]; ladeObjekte: () => void; oeffne: (seite: string, objektId?: number) => void };
 type Seite = {
@@ -46,14 +50,21 @@ const SEITEN: Seite[] = [
   { id: 'wegabr', label: 'Jahresabrechnung', gruppe: 'Abrechnung', objekt: true, modi: ['weg'], render: (c) => <WegAbrechnung key={c.objekt.id} objekt={c.objekt} /> },
   { id: 'wipl', label: 'Wirtschaftsplan', gruppe: 'Abrechnung', objekt: true, modi: ['weg'], render: (c) => <Wirtschaftsplan key={c.objekt.id} objekt={c.objekt} /> },
   { id: 'ruecklagen', label: 'Rücklagen & Sonderumlagen', gruppe: 'Abrechnung', objekt: true, modi: ['weg'], render: (c) => <Ruecklagen key={c.objekt.id} objekt={c.objekt} /> },
+  { id: 'kaution', label: 'Kautionen', gruppe: 'Verwaltung', objekt: true, modi: ['miete'], render: (c) => <Kautionen key={c.objekt.id} objekt={c.objekt} /> },
+  { id: 'anpassung', label: 'Mietanpassungen', gruppe: 'Verwaltung', objekt: true, modi: ['miete'], render: (c) => <Mietanpassung key={c.objekt.id} objekt={c.objekt} /> },
+  { id: 'versammlungen', label: 'Versammlungen', gruppe: 'Verwaltung', objekt: true, modi: ['weg'], render: (c) => <Versammlungen key={c.objekt.id} objekt={c.objekt} /> },
+  { id: 'beschluesse', label: 'Beschluss-Sammlung', gruppe: 'Verwaltung', objekt: true, modi: ['weg'], render: (c) => <Beschluesse key={c.objekt.id} objekt={c.objekt} /> },
+  { id: 'kontakte', label: (m) => (m === 'weg' ? 'Beirat & Ansprechpartner' : 'Ansprechpartner'), gruppe: 'Verwaltung', objekt: true, render: (c) => <Kontakte key={c.objekt.id + c.modus} objekt={c.objekt} titel={c.modus === 'weg' ? 'Beirat & Ansprechpartner' : 'Ansprechpartner'} /> },
+  { id: 'schluesselv', label: 'Schlüssel', gruppe: 'Verwaltung', objekt: true, render: (c) => <Schluesselverwaltung key={c.objekt.id} objekt={c.objekt} /> },
+  { id: 'versicherungen', label: 'Versicherungen & Verträge', gruppe: 'Verwaltung', objekt: true, render: (c) => <Versicherungen key={c.objekt.id} objekt={c.objekt} /> },
+  { id: 'briefe', label: 'Briefe & Serienbriefe', gruppe: 'Kommunikation', objekt: true, render: (c) => <Briefe key={c.objekt.id + c.modus} objekt={c.objekt} modus={c.modus} /> },
+  { id: 'dokumente', label: 'Dokumente', gruppe: 'Kommunikation', objekt: true, render: (c) => <Dokumente key={c.objekt.id} objekt={c.objekt} /> },
+  { id: 'vorgaenge', label: 'Vorgänge', gruppe: 'Kommunikation', objekt: true, render: (c) => <Vorgaenge key={c.objekt.id} objekt={c.objekt} /> },
+  { id: 'termine', label: 'Termine', gruppe: 'Kommunikation', render: (c) => <Termine objekte={c.objekte} /> },
+  { id: 'export', label: 'Export & DATEV', gruppe: 'System', objekt: true, render: (c) => <Export key={c.objekt.id} objekt={c.objekt} /> },
   { id: 'einstellungen', label: 'Einstellungen & Sicherung', gruppe: 'System', render: () => <Einstellungen /> },
 ];
 
-// Upcoming areas from PLAN.md, shown so the roadmap stays visible in the app.
-const GEPLANT: Record<Modus, string[]> = {
-  miete: ['Kaution & Mietanpassung', 'Briefe & Dokumente', 'Vorgänge & Termine', 'DATEV & Export'],
-  weg: ['Versammlungen & Beschlüsse', 'Briefe & Dokumente', 'Vorgänge & Termine', 'DATEV & Export'],
-};
 
 const lesen = (k: string) => {
   try {
@@ -131,12 +142,6 @@ export default function App() {
             ))}
           </div>
         ))}
-        {GEPLANT[modus].length > 0 && (
-          <div className="geplant">
-            <h4>In Planung</h4>
-            {GEPLANT[modus].map((g) => <div key={g}>{g}</div>)}
-          </div>
-        )}
       </nav>
       <main>
         {!ctx ? null : aktiv.objekt && !objekt ? (

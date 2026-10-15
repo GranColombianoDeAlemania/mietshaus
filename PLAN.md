@@ -20,11 +20,11 @@ Two modes, kept separate but linked:
 | 5 | Bank | CAMT.053/MT940 import, learning auto-assignment, SEPA XML (pain.001/pain.008), mandates | done |
 | 6 | Abrechnungen Miete | Service-charge statement, CO2 cost split, §35a, heating costs, adjustment of advance payments (NKMASTER/NKDETAIL/HK_*) | done |
 | 7 | Abrechnungen WEG | House-money statement, budget plan, reserves, asset statement (WIPL/RUECK*) | done |
-| 8 | Miete extras | Deposit incl. interest, indexed and stepped rent, rent increase, keys, insurance | open |
-| 9 | WEG extras | Meetings, votes, resolution register, advisory board, sub-communities | open |
-| 10 | Dokumente | Letter/mail-merge templates, PDF output, document archive, lists/reports | open |
-| 11 | CRM | Cases, tasks, appointments, calls, e-mail archive | open |
-| 12 | Export & System | DATEV export, CSV/Excel, backup, users/rights | open |
+| 8 | Miete extras | Deposit incl. interest, indexed and stepped rent, rent increase, keys, insurance | done |
+| 9 | WEG extras | Meetings, votes, resolution register, advisory board, sub-communities | done |
+| 10 | Dokumente | Letter/mail-merge templates, PDF output, document archive, lists/reports | done |
+| 11 | CRM | Cases, tasks, appointments, calls, e-mail archive | done |
+| 12 | Export & System | DATEV export, CSV/Excel, backup, users/rights | done |
 | 13 | Optional | Online banking (FinTS), portal, AI assistant, scanning | open |
 
 ## Development

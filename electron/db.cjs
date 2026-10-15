@@ -2,6 +2,7 @@
 const { DatabaseSync } = require('node:sqlite');
 const buchhaltung = require('./buchhaltung.cjs');
 const abrechnung = require('./abrechnung.cjs');
+const verwaltung = require('./verwaltung.cjs');
 
 const MIGRATIONS = [
   `
@@ -214,6 +215,154 @@ const MIGRATIONS = [
     erstellt TEXT NOT NULL DEFAULT (datetime('now'))
   );
   `,
+  `
+  -- Phase 8: tenancy extras.
+  CREATE TABLE kautionen (
+    id INTEGER PRIMARY KEY,
+    vertrag_id INTEGER NOT NULL UNIQUE REFERENCES mietverhaeltnisse(id) ON DELETE CASCADE,
+    art TEXT NOT NULL DEFAULT 'konto',
+    bank TEXT, iban TEXT, zinssatz REAL,
+    notiz TEXT
+  );
+  CREATE TABLE kautionsbewegungen (
+    id INTEGER PRIMARY KEY,
+    kaution_id INTEGER NOT NULL REFERENCES kautionen(id) ON DELETE CASCADE,
+    datum TEXT NOT NULL,
+    art TEXT NOT NULL,
+    betrag_ct INTEGER NOT NULL,
+    text TEXT
+  );
+  CREATE TABLE indexwerte (monat TEXT PRIMARY KEY, wert REAL NOT NULL);
+  CREATE TABLE mietmodelle (
+    vertrag_id INTEGER PRIMARY KEY REFERENCES mietverhaeltnisse(id) ON DELETE CASCADE,
+    art TEXT NOT NULL CHECK (art IN ('index','staffel')),
+    basis_monat TEXT,
+    mindestabstand_monate INTEGER NOT NULL DEFAULT 12
+  );
+  CREATE TABLE schluessel (
+    id INTEGER PRIMARY KEY,
+    objekt_id INTEGER NOT NULL REFERENCES objekte(id) ON DELETE CASCADE,
+    bezeichnung TEXT NOT NULL,
+    nummer TEXT,
+    anzahl INTEGER NOT NULL DEFAULT 1,
+    notiz TEXT
+  );
+  CREATE TABLE schluesselausgaben (
+    id INTEGER PRIMARY KEY,
+    schluessel_id INTEGER NOT NULL REFERENCES schluessel(id) ON DELETE CASCADE,
+    person_id INTEGER NOT NULL REFERENCES personen(id),
+    anzahl INTEGER NOT NULL DEFAULT 1,
+    ausgabe TEXT NOT NULL,
+    rueckgabe TEXT,
+    notiz TEXT
+  );
+  CREATE TABLE versicherungen (
+    id INTEGER PRIMARY KEY,
+    objekt_id INTEGER NOT NULL REFERENCES objekte(id) ON DELETE CASCADE,
+    art TEXT NOT NULL,
+    gesellschaft TEXT, police TEXT,
+    beitrag_ct INTEGER, faellig TEXT, kuendbar_bis TEXT, ablauf TEXT,
+    notiz TEXT
+  );
+
+  -- Phase 9: owners' association.
+  CREATE TABLE versammlungen (
+    id INTEGER PRIMARY KEY,
+    objekt_id INTEGER NOT NULL REFERENCES objekte(id) ON DELETE CASCADE,
+    datum TEXT NOT NULL, uhrzeit TEXT, ort TEXT,
+    art TEXT NOT NULL DEFAULT 'ordentlich',
+    einladung_am TEXT,
+    leitung TEXT, protokoll TEXT,
+    notiz TEXT
+  );
+  CREATE TABLE tops (
+    id INTEGER PRIMARY KEY,
+    versammlung_id INTEGER NOT NULL REFERENCES versammlungen(id) ON DELETE CASCADE,
+    nr INTEGER NOT NULL,
+    titel TEXT NOT NULL,
+    erlaeuterung TEXT,
+    beschlussvorschlag TEXT,
+    abstimmungsart TEXT NOT NULL DEFAULT 'kopf',
+    ja REAL, nein REAL, enthaltung REAL,
+    ergebnis TEXT,
+    beschluss_id INTEGER REFERENCES beschluesse(id) ON DELETE SET NULL
+  );
+  CREATE TABLE beschluesse (
+    id INTEGER PRIMARY KEY,
+    objekt_id INTEGER NOT NULL REFERENCES objekte(id) ON DELETE CASCADE,
+    nr INTEGER NOT NULL,
+    datum TEXT NOT NULL,
+    art TEXT NOT NULL DEFAULT 'versammlung',
+    titel TEXT NOT NULL,
+    text TEXT,
+    ergebnis TEXT,
+    status TEXT NOT NULL DEFAULT 'gueltig',
+    vermerk TEXT,
+    UNIQUE (objekt_id, nr)
+  );
+  CREATE TABLE rollen (
+    id INTEGER PRIMARY KEY,
+    objekt_id INTEGER NOT NULL REFERENCES objekte(id) ON DELETE CASCADE,
+    person_id INTEGER NOT NULL REFERENCES personen(id),
+    rolle TEXT NOT NULL,
+    von TEXT, bis TEXT,
+    notiz TEXT
+  );
+
+  -- Phase 10/11: documents, templates, cases and appointments.
+  CREATE TABLE vorlagen (
+    id INTEGER PRIMARY KEY,
+    titel TEXT NOT NULL,
+    kategorie TEXT,
+    betreff TEXT,
+    text TEXT
+  );
+  CREATE TABLE dokumente (
+    id INTEGER PRIMARY KEY,
+    objekt_id INTEGER REFERENCES objekte(id) ON DELETE CASCADE,
+    person_id INTEGER REFERENCES personen(id) ON DELETE SET NULL,
+    einheit_id INTEGER REFERENCES einheiten(id) ON DELETE SET NULL,
+    titel TEXT NOT NULL,
+    kategorie TEXT,
+    datum TEXT,
+    datei TEXT NOT NULL,
+    name TEXT,
+    groesse INTEGER,
+    notiz TEXT
+  );
+  CREATE TABLE vorgaenge (
+    id INTEGER PRIMARY KEY,
+    objekt_id INTEGER REFERENCES objekte(id) ON DELETE CASCADE,
+    person_id INTEGER REFERENCES personen(id) ON DELETE SET NULL,
+    einheit_id INTEGER REFERENCES einheiten(id) ON DELETE SET NULL,
+    titel TEXT NOT NULL,
+    kategorie TEXT,
+    status TEXT NOT NULL DEFAULT 'offen',
+    prioritaet INTEGER NOT NULL DEFAULT 2,
+    faellig TEXT,
+    beschreibung TEXT,
+    erstellt TEXT NOT NULL DEFAULT (date('now'))
+  );
+  CREATE TABLE vorgangseintraege (
+    id INTEGER PRIMARY KEY,
+    vorgang_id INTEGER NOT NULL REFERENCES vorgaenge(id) ON DELETE CASCADE,
+    datum TEXT NOT NULL,
+    art TEXT NOT NULL DEFAULT 'notiz',
+    text TEXT NOT NULL
+  );
+  CREATE TABLE termine (
+    id INTEGER PRIMARY KEY,
+    objekt_id INTEGER REFERENCES objekte(id) ON DELETE CASCADE,
+    person_id INTEGER REFERENCES personen(id) ON DELETE SET NULL,
+    vorgang_id INTEGER REFERENCES vorgaenge(id) ON DELETE SET NULL,
+    titel TEXT NOT NULL,
+    datum TEXT NOT NULL,
+    uhrzeit TEXT, dauer_min INTEGER,
+    ort TEXT,
+    erledigt INTEGER NOT NULL DEFAULT 0,
+    notiz TEXT
+  );
+  `,
 ];
 
 // Columns the renderer may write, per table. Everything else is rejected.
@@ -235,6 +384,22 @@ const TABLES = {
   zaehler: ['objekt_id', 'einheit_id', 'art', 'nummer', 'ort', 'einheit', 'faktor', 'einbau', 'ausbau', 'eichung_bis', 'notiz'],
   zaehlerstaende: ['zaehler_id', 'datum', 'stand', 'notiz'],
   bankregeln: ['objekt_id', 'muster', 'konto_id'],
+  kautionen: ['vertrag_id', 'art', 'bank', 'iban', 'zinssatz', 'notiz'],
+  kautionsbewegungen: ['kaution_id', 'datum', 'art', 'betrag_ct', 'text'],
+  indexwerte: [],
+  mietmodelle: [],
+  schluessel: ['objekt_id', 'bezeichnung', 'nummer', 'anzahl', 'notiz'],
+  schluesselausgaben: ['schluessel_id', 'person_id', 'anzahl', 'ausgabe', 'rueckgabe', 'notiz'],
+  versicherungen: ['objekt_id', 'art', 'gesellschaft', 'police', 'beitrag_ct', 'faellig', 'kuendbar_bis', 'ablauf', 'notiz'],
+  versammlungen: ['objekt_id', 'datum', 'uhrzeit', 'ort', 'art', 'einladung_am', 'leitung', 'protokoll', 'notiz'],
+  tops: ['versammlung_id', 'nr', 'titel', 'erlaeuterung', 'beschlussvorschlag', 'abstimmungsart', 'ja', 'nein', 'enthaltung', 'ergebnis', 'beschluss_id'],
+  beschluesse: ['objekt_id', 'nr', 'datum', 'art', 'titel', 'text', 'ergebnis', 'status', 'vermerk'],
+  rollen: ['objekt_id', 'person_id', 'rolle', 'von', 'bis', 'notiz'],
+  vorlagen: ['titel', 'kategorie', 'betreff', 'text'],
+  dokumente: ['objekt_id', 'person_id', 'einheit_id', 'titel', 'kategorie', 'datum', 'datei', 'name', 'groesse', 'notiz'],
+  vorgaenge: ['objekt_id', 'person_id', 'einheit_id', 'titel', 'kategorie', 'status', 'prioritaet', 'faellig', 'beschreibung'],
+  vorgangseintraege: ['vorgang_id', 'datum', 'art', 'text'],
+  termine: ['objekt_id', 'person_id', 'vorgang_id', 'titel', 'datum', 'uhrzeit', 'dauer_min', 'ort', 'erledigt', 'notiz'],
 };
 
 const PERSON_NAME = `trim(coalesce(p.nachname,'') || coalesce(', ' || p.vorname,'') ||
@@ -298,8 +463,15 @@ function api(db) {
         (SELECT count(*) FROM mietverhaeltnisse WHERE person_id = ?1 OR person2_id = ?1) +
         (SELECT count(*) FROM eigentum WHERE person_id = ?1 OR person2_id = ?1) AS n`, id).n;
       if (used) throw new Error('Diese Person ist noch einem Miet- oder Eigentumsverhältnis zugeordnet.');
+      if (get('SELECT (SELECT count(*) FROM rollen WHERE person_id = ?1) + (SELECT count(*) FROM schluesselausgaben WHERE person_id = ?1) AS n', id).n)
+        throw new Error('Diese Person hat noch eine Rolle im Objekt oder ausgegebene Schlüssel.');
     }
-    db.prepare(`DELETE FROM ${table} WHERE id = ?`).run(id);
+    try {
+      db.prepare(`DELETE FROM ${table} WHERE id = ?`).run(id);
+    } catch (e) {
+      if (/FOREIGN KEY/.test(String(e.message))) throw new Error('Der Eintrag wird an anderer Stelle noch verwendet und kann nicht gelöscht werden.');
+      throw e;
+    }
   }
 
   // Object types visible in each mode: mixed houses appear in both.
@@ -308,6 +480,7 @@ function api(db) {
   const bh = buchhaltung({ db, all, get, tx, save, aktuell, PERSON_NAME });
   bh.syncKonten();
   const ab = abrechnung({ db, all, get, tx, PERSON_NAME, bh });
+  const vw = verwaltung({ db, all, get, tx, PERSON_NAME, bh });
 
   // Master data changes can create or rename accounts.
   const SYNC = new Set(['objekte', 'einheiten', 'personen', 'mietverhaeltnisse', 'eigentum']);
@@ -337,6 +510,15 @@ function api(db) {
         throw new Error('Für Verträge dieser Einheit gibt es Buchungen; die Einheit kann nicht gelöscht werden.');
       remove(table, id);
       if (SYNC.has(table)) bh.syncKonten();
+    },
+    // Lists a table, optionally filtered by whitelisted columns, e.g. liste('versicherungen', { objekt_id: 3 }).
+    liste: (table, filter = {}, order = 'id') => {
+      const cols = TABLES[table];
+      if (!cols) throw new Error(`Unbekannte Tabelle: ${table}`);
+      const keys = Object.keys(filter).filter((k) => cols.includes(k) || k === 'id');
+      if (!/^[a-z_]+( DESC)?(, [a-z_]+( DESC)?)*$/.test(order)) throw new Error('Ungültige Sortierung');
+      return all(`SELECT * FROM ${table} ${keys.length ? 'WHERE ' + keys.map((k) => `${k} = ?`).join(' AND ') : ''} ORDER BY ${order}`,
+        ...keys.map((k) => filter[k]));
     },
     get: (table, id) => {
       if (!TABLES[table]) throw new Error(`Unbekannte Tabelle: ${table}`);
@@ -434,7 +616,7 @@ function api(db) {
           AND NOT EXISTS (SELECT 1 FROM ${vt} v WHERE v.einheit_id = e.id AND ${aktuell('v')})) AS leer`, a, b);
     },
   };
-  return { ...bh, ...ab, ...basis };
+  return { ...bh, ...ab, ...vw, ...basis };
 }
 
 module.exports = { open, api };

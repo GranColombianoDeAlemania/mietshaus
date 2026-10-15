@@ -24,6 +24,10 @@ const kt = Object.fromEntries(db.konten(o).map((k) => [k.nr, k.id]));
 db.buchen({ objekt_id: o, datum: `${jahr}-01-04`, text: 'Miete Januar', art: 'bank', positionen: [{ soll_id: kt[1200], haben_id: kt[100100], betrag_ct: 106000 }] });
 db.buchen({ objekt_id: o, datum: `${jahr}-02-10`, beleg: 'R-001', text: 'Stadtwerke Abschlag', positionen: [
   { soll_id: kt[40200], haben_id: kt[1200], betrag_ct: 12000, text: 'Wasser' }, { soll_id: kt[40900], haben_id: kt[1200], betrag_ct: 4500, text: 'Allgemeinstrom' }] });
+const vs = db.save('versammlungen', { objekt_id: o, datum: `${jahr}-11-20`, uhrzeit: '18:00', ort: 'Gemeinschaftsraum', art: 'ordentlich' });
+db.save('tops', { versammlung_id: vs, nr: 1, titel: 'Jahresabrechnung', beschlussvorschlag: 'Die Nachschüsse werden genehmigt.', abstimmungsart: 'kopf' });
+db.save('tops', { versammlung_id: vs, nr: 2, titel: 'Wirtschaftsplan', beschlussvorschlag: 'Der Wirtschaftsplan wird beschlossen.', abstimmungsart: 'mea' });
+db.save('vorlagen', { titel: 'Mietbescheinigung', betreff: 'Mietbescheinigung', text: 'hiermit bestätigen wir, dass {name} seit dem {beginn} die Wohnung {einheit} ({flaeche} m²) gemietet hat. Gesamtmiete: {gesamtmiete}.' });
 const z1 = db.save('zaehler', { objekt_id: o, einheit_id: e[0], art: 'kaltwasser', nummer: 'KW-1001', einheit: 'm³', faktor: 1, eichung_bis: `${jahr}-12-31` });
 db.ablesung(`${jahr - 1}-12-31`, { [z1]: 120.5 });
 ipcMain.handle('db', (_e, fn, args) => db[fn](...args));
@@ -48,6 +52,9 @@ app.whenReady().then(async () => {
     webPreferences: { preload: path.join(__dirname, '..', 'electron', 'preload.cjs'), contextIsolation: true, sandbox: true, offscreen: true } });
   await win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   const js = (s) => win.webContents.executeJavaScript(s);
+  // Renderer errors are printed so a test run shows broken pages.
+  win.webContents.on('console-message', (e) => { if (e.level === 'error' || e.level === 3) console.log('RENDERER-FEHLER:', e.message); });
+  win.webContents.on('render-process-gone', (_e, d) => console.log('RENDERER-ABSTURZ:', d.reason));
   const click = (text) => js(`[...document.querySelectorAll('button')].find(b => b.textContent.trim() === ${JSON.stringify(text)})?.click()`);
   const shot = async (name) => { await wait(400); fs.writeFileSync(path.join(out, name + '.png'), (await win.webContents.capturePage()).toPNG()); };
   await js(`localStorage.clear()`);
@@ -79,5 +86,20 @@ app.whenReady().then(async () => {
   await click('Abrechnung als PDF'); await wait(2500);
   await click('Wirtschaftsplan'); await wait(300); await click('Auf Eigentümer verteilen'); await wait(400); await shot('13-wipl');
   await click('Rücklagen & Sonderumlagen'); await shot('14-ruecklagen');
+  // Visit every page in both modes once.
+  for (const m of ['Mietverwaltung', 'WEG-Verwaltung']) {
+    await click(m); await wait(300);
+    const labels = await js(`[...document.querySelectorAll('nav .navgruppe button')].map(b => b.textContent.trim())`);
+    for (const l of labels) { await click(l); await wait(250); const h = await js(`document.querySelector('main h1')?.textContent ?? '(kein Titel)'`); console.log('SEITE', m, '|', l, '→', h); }
+  }
+  await click('WEG-Verwaltung'); await click('Versammlungen'); await wait(200); await click('Neue Versammlung'); await shot('15-versammlung-dialog'); await click('Abbrechen');
+  await click('Versammlungen'); await wait(200); await click('Tagesordnung & Beschlüsse'); await wait(300); await click('Einladungen (PDF)'); await wait(2500); await click('Schließen');
+  await click('Mietverwaltung'); await click('Briefe & Serienbriefe'); await wait(200);
+  await js(`(() => { const sel = document.querySelector('.maske select'); sel.value = sel.options[1].value; sel.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+  await wait(200); await click('Alle Mieter'); 
+  await js(`[...document.querySelectorAll('label.check')].find(l => l.textContent.includes('Alle Mieter'))?.querySelector('input').click()`); await wait(200);
+  await shot('16-briefe');
+  await js(`[...document.querySelectorAll('button')].find(b => /als PDF$/.test(b.textContent.trim()) && !b.disabled)?.click()`); await wait(2500);
+  await click('Mietanpassungen'); await wait(200); await click('Anpassungen'); await wait(300); await shot('17-anpassungen');
   app.quit();
 });
