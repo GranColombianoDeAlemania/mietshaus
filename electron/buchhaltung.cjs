@@ -139,7 +139,8 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
     kontoId, von, bis).s;
   }
 
-  function buchen({ objekt_id, datum, beleg, text, art = 'manuell', monat = null, import_ref = null, positionen }) {
+  // ohneTx: for callers that already run inside a transaction.
+  function buchen({ objekt_id, datum, beleg, text, art = 'manuell', monat = null, import_ref = null, positionen }, ohneTx = false) {
     if (!datum) throw new Error('Bitte ein Buchungsdatum angeben.');
     const pos = positionen.filter((p) => p.betrag_ct);
     if (!pos.length) throw new Error('Bitte einen Betrag angeben.');
@@ -149,7 +150,7 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
       // A negative amount is booked the other way round.
       if (p.betrag_ct < 0) [p.soll_id, p.haben_id, p.betrag_ct] = [p.haben_id, p.soll_id, -p.betrag_ct];
     }
-    return tx(() => {
+    return (ohneTx ? (f) => f() : tx)(() => {
       const st = db.prepare(`INSERT INTO buchungen (objekt_id, datum, beleg, text, betrag_ct, soll_id, haben_id, art, monat, gruppe, import_ref)
         VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
       let gruppe = null;
@@ -207,6 +208,7 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
   return {
     syncKonten,
     kontoVon,
+    buchenIntern: (b) => buchen(b, true),
     saldoBis: (kontoId, bis) => saldo(kontoId, bis),
     betraege,
     verbrauch,

@@ -24,6 +24,7 @@ import { Briefe, Termine, Vorgaenge } from './views/Kommunikation';
 import { Archiv, DokumentDialog, Postfach, Rechnungen } from './views/Archiv';
 import { Suche } from './Suche';
 import { Export } from './views/Export';
+import { ProjektCockpit, ProjektDokumente, ProjektKosten, ProjektListe, ProjektZeitplan } from './views/Projekte';
 
 type Ctx = { modus: Modus; objekt: Row; objekte: Row[]; ladeObjekte: () => void; oeffne: (seite: string, objektId?: number) => void };
 type Seite = {
@@ -31,21 +32,27 @@ type Seite = {
   label: string | ((m: Modus) => string);
   gruppe: string;
   objekt?: boolean; // needs a selected object
-  modi?: Modus[];
+  modi?: Modus[]; // default: rental and WEG mode
+  alle?: boolean; // shown in every mode, including projects
   render: (c: Ctx) => ReactNode;
 };
 
 const SEITEN: Seite[] = [
-  { id: 'postfach', label: 'Postfach', gruppe: 'Dokumente', render: () => <Postfach /> },
-  { id: 'archiv', label: 'Archiv & Suche', gruppe: 'Dokumente', render: (c) => <Archiv objekt={c.objekt} /> },
-  { id: 'rechnungen', label: 'Rechnungen', gruppe: 'Dokumente', render: (c) => <Rechnungen objekt={c.objekt} /> },
+  { id: 'postfach', label: 'Postfach', gruppe: 'Dokumente', alle: true, render: () => <Postfach /> },
+  { id: 'archiv', label: 'Archiv & Suche', gruppe: 'Dokumente', alle: true, render: (c) => <Archiv objekt={c.modus === 'projekt' ? undefined : c.objekt} /> },
+  { id: 'rechnungen', label: 'Rechnungen', gruppe: 'Dokumente', alle: true, render: (c) => <Rechnungen objekt={c.modus === 'projekt' ? undefined : c.objekt} /> },
+  { id: 'pcockpit', label: 'Cockpit', gruppe: 'Start', modi: ['projekt'], render: (c) => <ProjektCockpit oeffne={c.oeffne} /> },
+  { id: 'projekte', label: 'Alle Projekte', gruppe: 'Projekte', modi: ['projekt'], render: (c) => <ProjektListe reload={c.ladeObjekte} oeffne={c.oeffne} /> },
+  { id: 'zeitplan', label: 'Zeitplan', gruppe: 'Projekte', objekt: true, modi: ['projekt'], render: (c) => <ProjektZeitplan key={c.objekt.id} projekt={c.objekt} /> },
+  { id: 'pkosten', label: 'Kosten & Budget', gruppe: 'Projekte', objekt: true, modi: ['projekt'], render: (c) => <ProjektKosten key={c.objekt.id} projekt={c.objekt} /> },
+  { id: 'pdok', label: 'Projektdokumente', gruppe: 'Projekte', objekt: true, modi: ['projekt'], render: (c) => <ProjektDokumente key={c.objekt.id} projekt={c.objekt} /> },
   { id: 'uebersicht', label: 'Cockpit', gruppe: 'Start', render: (c) => <Uebersicht modus={c.modus} objekte={c.objekte} oeffne={c.oeffne} /> },
   { id: 'objekte', label: 'Objekte', gruppe: 'Stammdaten', render: (c) => <Objekte modus={c.modus} objekte={c.objekte} reload={c.ladeObjekte} onOpen={(id) => c.oeffne('einheiten', id)} /> },
   { id: 'einheiten', label: 'Einheiten', gruppe: 'Stammdaten', objekt: true, render: (c) => <Einheiten key={c.objekt.id} modus={c.modus} objekt={c.objekt} /> },
   { id: 'vertraege', label: (m) => (m === 'weg' ? 'Eigentümer' : 'Mieter'), gruppe: 'Stammdaten', objekt: true, render: (c) => <Vertraege key={c.objekt.id + c.modus} modus={c.modus} objekt={c.objekt} /> },
   { id: 'zaehler', label: 'Zähler', gruppe: 'Stammdaten', objekt: true, render: (c) => <Zaehler key={c.objekt.id} objekt={c.objekt} /> },
   { id: 'schluessel', label: 'Umlageschlüssel', gruppe: 'Stammdaten', objekt: true, render: (c) => <Schluessel key={c.objekt.id} objekt={c.objekt} /> },
-  { id: 'personen', label: 'Adressbuch', gruppe: 'Stammdaten', render: () => <Personen /> },
+  { id: 'personen', label: 'Adressbuch', gruppe: 'Stammdaten', alle: true, render: () => <Personen /> },
   { id: 'buchen', label: 'Buchungen', gruppe: 'Buchhaltung', objekt: true, render: (c) => <Buchen key={c.objekt.id} objekt={c.objekt} /> },
   { id: 'konten', label: 'Konten', gruppe: 'Buchhaltung', objekt: true, render: (c) => <Konten key={c.objekt.id + c.modus} objekt={c.objekt} modus={c.modus} /> },
   { id: 'soll', label: 'Sollstellung', gruppe: 'Buchhaltung', objekt: true, render: (c) => <Sollstellung key={c.objekt.id + c.modus} objekt={c.objekt} modus={c.modus} /> },
@@ -64,9 +71,9 @@ const SEITEN: Seite[] = [
   { id: 'versicherungen', label: 'Versicherungen & Verträge', gruppe: 'Verwaltung', objekt: true, render: (c) => <Versicherungen key={c.objekt.id} objekt={c.objekt} /> },
   { id: 'briefe', label: 'Briefe & Serienbriefe', gruppe: 'Kommunikation', objekt: true, render: (c) => <Briefe key={c.objekt.id + c.modus} objekt={c.objekt} modus={c.modus} /> },
   { id: 'vorgaenge', label: 'Vorgänge', gruppe: 'Kommunikation', objekt: true, render: (c) => <Vorgaenge key={c.objekt.id} objekt={c.objekt} /> },
-  { id: 'termine', label: 'Termine', gruppe: 'Kommunikation', render: (c) => <Termine objekte={c.objekte} /> },
+  { id: 'termine', label: 'Termine', gruppe: 'Kommunikation', alle: true, render: (c) => <Termine objekte={c.modus === 'projekt' ? [] : c.objekte} /> },
   { id: 'export', label: 'Export & DATEV', gruppe: 'System', objekt: true, render: (c) => <Export key={c.objekt.id} objekt={c.objekt} /> },
-  { id: 'einstellungen', label: 'Einstellungen & Sicherung', gruppe: 'System', render: () => <Einstellungen /> },
+  { id: 'einstellungen', label: 'Einstellungen & Sicherung', gruppe: 'System', alle: true, render: () => <Einstellungen /> },
 ];
 
 
@@ -84,10 +91,11 @@ const schreiben = (k: string, v: string) => {
 };
 
 export default function App() {
-  const [modus, setModus] = useState<Modus>(() => (lesen('modus') === 'weg' ? 'weg' : 'miete'));
+  const [modus, setModus] = useState<Modus>(() => { const m = lesen('modus'); return m === 'weg' || m === 'projekt' ? m : 'miete'; });
   const [seite, setSeite] = useState(() => lesen('seite') ?? 'uebersicht');
   const [objektId, setObjektId] = useState<number | null>(() => Number(lesen(`objekt_${modus}`)) || null);
-  const [objekte, ladeObjekte] = useLoad<Row[]>(() => call('objekte', modus), [modus]);
+  // In project mode the header selects a project instead of an object.
+  const [objekte, ladeObjekte] = useLoad<Row[]>(() => (modus === 'projekt' ? call('projektListe') : call('objekte', modus)), [modus]);
 
   useEffect(() => {
     document.documentElement.dataset.modus = modus;
@@ -128,16 +136,19 @@ export default function App() {
     if (objektId) schreiben(`objekt_${modus}`, String(objektId));
   }, [objektId, modus]);
 
+  // Each mode remembers its own last page and selected object/project.
   function wechsle(m: Modus) {
+    schreiben(`seite_${modus}`, seite);
     setModus(m);
+    setSeite(lesen(`seite_${m}`) ?? (m === 'projekt' ? 'pcockpit' : 'uebersicht'));
     setObjektId(Number(lesen(`objekt_${m}`)) || null);
   }
 
   const objekt = objekte?.find((o) => o.id === objektId);
-  const sichtbar = SEITEN.filter((s) => !s.modi || s.modi.includes(modus));
-  const aktiv = sichtbar.find((s) => s.id === seite) ?? sichtbar[0];
+  const sichtbar = SEITEN.filter((s) => s.alle || (s.modi ? s.modi.includes(modus) : modus !== 'projekt'));
+  const aktiv = sichtbar.find((s) => s.id === seite) ?? sichtbar.find((s) => s.gruppe === 'Start') ?? sichtbar[0];
   const label = (s: Seite) => (typeof s.label === 'function' ? s.label(modus) : s.label);
-  const REIHENFOLGE = ['Start', 'Stammdaten', 'Dokumente', 'Buchhaltung', 'Abrechnung', 'Verwaltung', 'Kommunikation', 'System'];
+  const REIHENFOLGE = ['Start', 'Projekte', 'Stammdaten', 'Dokumente', 'Buchhaltung', 'Abrechnung', 'Verwaltung', 'Kommunikation', 'System'];
   const gruppen = [...new Set(sichtbar.map((s) => s.gruppe))].sort((a, b) => REIHENFOLGE.indexOf(a) - REIHENFOLGE.indexOf(b));
 
   const ctx: Ctx | null = objekte
@@ -152,14 +163,15 @@ export default function App() {
         <div className="modus" role="tablist">
           <button role="tab" aria-selected={modus === 'miete'} onClick={() => wechsle('miete')}>Mietverwaltung</button>
           <button role="tab" aria-selected={modus === 'weg'} onClick={() => wechsle('weg')}>WEG-Verwaltung</button>
+          <button role="tab" aria-selected={modus === 'projekt'} onClick={() => wechsle('projekt')}>Projekte</button>
         </div>
         <Suche onDokument={setDokOffen} oeffne={(seite, objektId) => { if (objektId) setObjektId(objektId); setSeite(seite); }} />
         <label className="objektwahl">
-          Objekt
+          {modus === 'projekt' ? 'Projekt' : 'Objekt'}
           <select value={objektId ?? ''} onChange={(e) => setObjektId(Number(e.target.value))} disabled={!objekte?.length}>
-            {!objekte?.length && <option value="">– noch keine Objekte –</option>}
+            {!objekte?.length && <option value="">{modus === 'projekt' ? '– noch keine Projekte –' : '– noch keine Objekte –'}</option>}
             {objekte?.map((o) => (
-              <option key={o.id} value={o.id}>{o.bezeichnung}{o.art === 'gemischt' ? ' (gemischt)' : ''}</option>
+              <option key={o.id} value={o.id}>{o.bezeichnung ?? o.titel}{o.art === 'gemischt' ? ' (gemischt)' : ''}</option>
             ))}
           </select>
         </label>
@@ -179,14 +191,14 @@ export default function App() {
       <main>
         {!ctx ? null : aktiv.objekt && !objekt ? (
           <div className="leer">
-            <p>Bitte zuerst ein Objekt anlegen.</p>
-            <button className="primary" onClick={() => setSeite('objekte')}>Zu den Objekten</button>
+            <p>{modus === 'projekt' ? 'Bitte zuerst ein Projekt anlegen.' : 'Bitte zuerst ein Objekt anlegen.'}</p>
+            <button className="primary" onClick={() => setSeite(modus === 'projekt' ? 'projekte' : 'objekte')}>{modus === 'projekt' ? 'Zu den Projekten' : 'Zu den Objekten'}</button>
           </div>
         ) : (
           aktiv.render(ctx)
         )}
       </main>
-      <footer>{meldung ? <b>{meldung}</b> : objekt ? `${objekt.bezeichnung} · ${OBJEKT_ART[objekt.art]}` : ''}</footer>
+      <footer>{meldung ? <b>{meldung}</b> : objekt ? (modus === 'projekt' ? `Projekt: ${objekt.titel}${objekt.objekt ? ` · ${objekt.objekt}` : ''}` : `${objekt.bezeichnung} · ${OBJEKT_ART[objekt.art]}`) : ''}</footer>
       {ziehen && <div className="dropzone">Dateien loslassen – sie landen im Postfach</div>}
       {dokOffen && <DokumentDialog id={dokOffen.id} datei={dokOffen.datei} onClose={() => setDokOffen(null)} />}
     </div>

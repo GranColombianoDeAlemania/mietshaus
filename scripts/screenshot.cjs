@@ -41,6 +41,18 @@ for (let i = 1; i <= 9; i++) {
   db.buchen({ objekt_id: o, datum: m, text: 'Mieteingang', positionen: [{ soll_id: kt[1200], haben_id: kt[100200], betrag_ct: 91000 + i * 1000 }] });
   db.buchen({ objekt_id: o, datum: m, text: 'Ausgaben', positionen: [{ soll_id: kt[45100], haben_id: kt[1200], betrag_ct: 30000 + (i % 3) * 25000 }] });
 }
+const pr = db.save('projekte', { titel: 'Dachsanierung', status: 'laufend', objekt_id: o, kosten_konto_id: kt[45400], budget_ct: 4000000, beginn: `${jahr}-09-01` });
+const g1 = db.save('projektaufgaben', { projekt_id: pr, titel: 'Gerüst stellen', gewerk: 'Gerüstbau Krause', beginn: `${jahr}-09-14`, ende: `${jahr}-09-18`, fortschritt: 100 });
+const g2 = db.save('projektaufgaben', { projekt_id: pr, titel: 'Alte Eindeckung entfernen', gewerk: 'Dach GmbH', beginn: `${jahr}-09-21`, ende: `${jahr}-10-02`, fortschritt: 100, nach_id: g1 });
+const g3 = db.save('projektaufgaben', { projekt_id: pr, titel: 'Dämmung & Neueindeckung', gewerk: 'Dach GmbH', beginn: `${jahr}-10-05`, ende: `${jahr}-11-06`, fortschritt: 35, nach_id: g2 });
+const g4 = db.save('projektaufgaben', { projekt_id: pr, titel: 'Dachrinnen & Klempner', gewerk: 'Klempnerei Lutz', beginn: `${jahr}-11-02`, ende: `${jahr}-11-13`, fortschritt: 0, nach_id: g3 });
+db.save('projektaufgaben', { projekt_id: pr, titel: 'Abnahme', beginn: `${jahr}-11-17`, ende: `${jahr}-11-17`, meilenstein: 1, nach_id: g4 });
+db.save('projektposten', { projekt_id: pr, art: 'angebot', firma: 'Dach GmbH', titel: 'Angebot Dachsanierung', betrag_ct: 3480000, status: 'angenommen', datum: `${jahr}-07-10` });
+db.save('projektposten', { projekt_id: pr, art: 'auftrag', firma: 'Dach GmbH', titel: 'Auftrag Dachsanierung', betrag_ct: 3480000, datum: `${jahr}-08-01`, aufgabe_id: g3 });
+db.save('projektposten', { projekt_id: pr, art: 'auftrag', firma: 'Gerüstbau Krause', titel: 'Gerüst', betrag_ct: 420000, datum: `${jahr}-08-03`, aufgabe_id: g1 });
+db.save('projektposten', { projekt_id: pr, art: 'rechnung', firma: 'Gerüstbau Krause', titel: 'Rechnung Gerüst', betrag_ct: 465000, datum: `${jahr}-09-30`, aufgabe_id: g1, status: 'bezahlt' });
+db.save('projektposten', { projekt_id: pr, art: 'rechnung', firma: 'Dach GmbH', titel: '1. Abschlag', betrag_ct: 1200000, datum: `${jahr}-10-08`, faellig: `${jahr}-10-22`, aufgabe_id: g3 });
+db.save('projekte', { titel: 'Renovierung Ferienwohnung', status: 'planung', budget_ct: 1500000 });
 db.save('termine', { titel: 'Wohnungsübergabe EG rechts', datum: new Date(Date.now() + 2 * 864e5).toISOString().slice(0, 10), uhrzeit: '10:00', objekt_id: o });
 ipcMain.handle('db', (_e, fn, args) => db[fn](...args));
 // PDFs are printed straight into the output folder instead of asking for a file name.
@@ -126,6 +138,9 @@ app.whenReady().then(async () => {
   await click('Rechnungen'); await wait(300); await shot('22-rechnungen');
   await js(`(() => { const i = document.querySelector('.globalsuche input'); i.focus(); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(i, 'meier'); i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
   await wait(600); await shot('23-globalsuche');
+  await js(`document.activeElement?.blur()`); await click('Projekte'); await wait(500); win.setSize(1300, 1100); await click('Cockpit'); await wait(500); await shot('30-projekt-cockpit');
+  await click('Zeitplan'); await wait(500); await shot('31-zeitplan');
+  await click('Kosten & Budget'); await wait(400); await shot('32-kosten'); win.setSize(1300, 760);
   await click('WEG-Verwaltung'); await click('Versammlungen'); await wait(200); await click('Neue Versammlung'); await shot('15-versammlung-dialog'); await click('Abbrechen');
   await click('Versammlungen'); await wait(200); await click('Tagesordnung & Beschlüsse'); await wait(300); await click('Einladungen (PDF)'); await wait(2500); await click('Schließen');
   await click('Mietverwaltung'); await click('Briefe & Serienbriefe'); await wait(200);

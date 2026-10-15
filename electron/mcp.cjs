@@ -27,7 +27,7 @@ Typischer Auftrag: „Arbeite das Postfach ab“. Vorgehen:
    - bezahlte Rechnung: rechnung_buchen (Kostenkonto aus konten_liste wählen; Betriebskosten auf das passende umlagefähige Konto nach BetrKV),
    - unbezahlte Rechnung: nur ablegen mit Fälligkeit (sie erscheint dann unter „Rechnungen“ als offen),
    - neuer Mietvertrag: person_anlegen + mietvertrag_anlegen, Kaufvertrag/Eigentümerwechsel: eigentum_anlegen,
-   - Zählerablesung: zaehlerstand_erfassen, Termin/Frist: termin_anlegen, Schaden/Anfrage: vorgang_anlegen.
+   - Zählerablesung: zaehlerstand_erfassen, Termin/Frist: termin_anlegen, Schaden/Anfrage: vorgang_anlegen,\n   - Angebot/Auftrag/Rechnung zu einem Projekt (z. B. Sanierung): projekte_liste, dann projekt_posten_anlegen und dokument_ablegen mit projekt_id.
 Beträge immer in Euro angeben (z. B. 1232.40). Datumsangaben im Format JJJJ-MM-TT.
 Wenn etwas nicht eindeutig ist (z. B. welches Objekt), nicht raten: den Nutzer fragen oder das Dokument im Postfach lassen und den Grund in der Zusammenfassung notieren.
 Vor dem Buchen kurz zusammenfassen, was gebucht wird.\nFür „Was steht an?“ / ein Tagesbriefing: hinweise und faelligkeiten abrufen und kurz priorisiert zusammenfassen.`;
@@ -114,6 +114,16 @@ function starten() {
   werkzeug('faelligkeiten', 'Was in den nächsten Tagen ansteht: Vorgänge, Termine, Vertragsenden, Versicherungsfristen.', { tage: z.number().int().optional() },
     ({ tage }) => text(db.faelligkeiten(tage ?? 30)), true);
 
+  werkzeug('projekte_liste', 'Alle Projekte (z. B. Sanierungen) mit Status, Objekt, Budget, berechneten Kosten und Prognose.', {}, () =>
+    text(db.projektListe().map((p) => ({ id: p.id, titel: p.titel, status: p.status, objekt: p.objekt, budget_eur: eur(p.budget_ct),
+      berechnet_eur: eur(p.rechnungen_ct), prognose_eur: eur(p.prognose_ct), fortschritt: p.fortschritt }))), true);
+
+  werkzeug('projekt_details', 'Aufgaben (Zeitplan) und Kostenposten eines Projekts.', { projekt_id: z.number().int() }, ({ projekt_id }) => {
+    const p = db.projekt(projekt_id);
+    if (!p) throw new Error('Projekt nicht gefunden');
+    return text({ ...p, posten: p.posten.map(({ datei, ...x }) => ({ ...x, betrag_eur: eur(x.betrag_ct) })) });
+  }, true);
+
   werkzeug('hinweise', 'Was das Programm gerade für wichtig hält: Rückstände, Fristen (z. B. Betriebskostenabrechnung), fehlende Unterlagen, Chancen wie mögliche Mieterhöhungen. Gut für ein Tagesbriefing.',
     {}, () => text(db.hinweise().map((h) => ({ dringlichkeit: h.stufe, bereich: h.kategorie, objekt: h.objekt, text: h.text }))), true);
 
@@ -121,7 +131,7 @@ function starten() {
   werkzeug('dokument_ablegen', 'Setzt die Angaben eines Dokuments und legt es (standardmäßig) aus dem Postfach ins Archiv ab.', {
     id: z.number().int(), typ: z.string().optional().describe(`Einer von: ${db.dokumentTypen().join(', ')}`), titel: z.string().optional(),
     objekt_id: z.number().int().nullable().optional(), einheit_id: z.number().int().nullable().optional(), person_id: z.number().int().nullable().optional(),
-    datum: z.string().optional(), faellig: z.string().optional(), betrag_eur: z.number().nullable().optional(), absender: z.string().optional(),
+    projekt_id: z.number().int().nullable().optional(), datum: z.string().optional(), faellig: z.string().optional(), betrag_eur: z.number().nullable().optional(), absender: z.string().optional(),
     rechnungsnr: z.string().optional(), iban: z.string().optional(), zusammenfassung: z.string().optional(),
     im_postfach_lassen: z.boolean().optional().describe('true, wenn noch etwas unklar ist'),
   }, (a) => {
@@ -197,6 +207,23 @@ function starten() {
     objekt_id: z.number().int().optional(), titel: z.string(), beschreibung: z.string().optional(), faellig: z.string().optional(),
     kategorie: z.string().optional(), person_id: z.number().int().optional(), einheit_id: z.number().int().optional(), prioritaet: z.number().int().min(1).max(3).optional(),
   }, (a) => text(`Vorgang angelegt, id ${db.save('vorgaenge', { ...a, status: 'offen', prioritaet: a.prioritaet ?? 2 })}.`));
+
+  werkzeug('projekt_posten_anlegen', 'Erfasst ein Angebot, einen Auftrag oder eine Rechnung zu einem Projekt, optional mit Verweis auf das Dokument.', {
+    projekt_id: z.number().int(), art: z.enum(['angebot', 'auftrag', 'rechnung', 'sonstiges']), titel: z.string(), betrag_eur: z.number(),
+    firma: z.string().optional(), datum: z.string().optional(), faellig: z.string().optional(), dokument_id: z.number().int().optional(),
+    bezahlt: z.boolean().optional(), aufgabe_id: z.number().int().optional(),
+  }, (a) => {
+    const id = db.save('projektposten', { projekt_id: a.projekt_id, art: a.art, titel: a.titel, betrag_ct: cent(a.betrag_eur), firma: a.firma, datum: a.datum,
+      faellig: a.faellig, dokument_id: a.dokument_id, aufgabe_id: a.aufgabe_id, status: a.bezahlt ? 'bezahlt' : 'offen' });
+    if (a.dokument_id) db.dokumentSpeichern({ id: a.dokument_id, projekt_id: a.projekt_id });
+    return text(`Posten ${id} im Projekt erfasst.`);
+  });
+
+  werkzeug('projekt_aufgabe_anlegen', 'Fügt dem Zeitplan eines Projekts eine Aufgabe hinzu.', {
+    projekt_id: z.number().int(), titel: z.string(), beginn: z.string(), ende: z.string(), gewerk: z.string().optional(),
+    nach_aufgabe_id: z.number().int().optional(), meilenstein: z.boolean().optional(),
+  }, (a) => text(`Aufgabe angelegt, id ${db.save('projektaufgaben', { projekt_id: a.projekt_id, titel: a.titel, beginn: a.beginn, ende: a.meilenstein ? a.beginn : a.ende,
+    gewerk: a.gewerk, nach_id: a.nach_aufgabe_id, meilenstein: a.meilenstein ? 1 : 0 })}.`));
 
   werkzeug('termin_anlegen', 'Legt einen Termin an.', {
     titel: z.string(), datum: z.string(), uhrzeit: z.string().optional(), ort: z.string().optional(), objekt_id: z.number().int().optional(),

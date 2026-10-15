@@ -5,6 +5,7 @@ const abrechnung = require('./abrechnung.cjs');
 const verwaltung = require('./verwaltung.cjs');
 const archiv = require('./archiv.cjs');
 const automatik = require('./automatik.cjs');
+const projekte = require('./projekte.cjs');
 
 const MIGRATIONS = [
   `
@@ -393,6 +394,56 @@ const MIGRATIONS = [
   -- Hints the user snoozed (bis = date) or marked as done.
   CREATE TABLE hinweis_status (schluessel TEXT PRIMARY KEY, status TEXT NOT NULL, bis TEXT, gesetzt TEXT NOT NULL DEFAULT (datetime('now')));
   `,
+  `
+  -- Projects: standalone or linked to an object (then invoices can be booked in its ledger).
+  CREATE TABLE projekte (
+    id INTEGER PRIMARY KEY,
+    titel TEXT NOT NULL,
+    beschreibung TEXT,
+    status TEXT NOT NULL DEFAULT 'planung',
+    objekt_id INTEGER REFERENCES objekte(id) ON DELETE SET NULL,
+    einheit_id INTEGER REFERENCES einheiten(id) ON DELETE SET NULL,
+    kosten_konto_id INTEGER REFERENCES konten(id) ON DELETE SET NULL,
+    budget_ct INTEGER,
+    beginn TEXT, ende TEXT,
+    notiz TEXT,
+    erstellt TEXT NOT NULL DEFAULT (date('now'))
+  );
+  CREATE TABLE projektaufgaben (
+    id INTEGER PRIMARY KEY,
+    projekt_id INTEGER NOT NULL REFERENCES projekte(id) ON DELETE CASCADE,
+    titel TEXT NOT NULL,
+    gewerk TEXT,
+    beginn TEXT NOT NULL,
+    ende TEXT NOT NULL,
+    fortschritt INTEGER NOT NULL DEFAULT 0,
+    nach_id INTEGER REFERENCES projektaufgaben(id) ON DELETE SET NULL,
+    person_id INTEGER REFERENCES personen(id) ON DELETE SET NULL,
+    meilenstein INTEGER NOT NULL DEFAULT 0,
+    sort INTEGER NOT NULL DEFAULT 0,
+    notiz TEXT
+  );
+  CREATE TABLE projektposten (
+    id INTEGER PRIMARY KEY,
+    projekt_id INTEGER NOT NULL REFERENCES projekte(id) ON DELETE CASCADE,
+    art TEXT NOT NULL CHECK (art IN ('angebot','auftrag','rechnung','sonstiges')),
+    datum TEXT,
+    firma TEXT,
+    person_id INTEGER REFERENCES personen(id) ON DELETE SET NULL,
+    titel TEXT NOT NULL,
+    betrag_ct INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'offen',
+    bezahlt_am TEXT,
+    faellig TEXT,
+    aufgabe_id INTEGER REFERENCES projektaufgaben(id) ON DELETE SET NULL,
+    dokument_id INTEGER REFERENCES dokumente(id) ON DELETE SET NULL,
+    buchung_id INTEGER REFERENCES buchungen(id) ON DELETE SET NULL,
+    notiz TEXT
+  );
+  ALTER TABLE dokumente ADD COLUMN projekt_id INTEGER REFERENCES projekte(id) ON DELETE SET NULL;
+  ALTER TABLE vorgaenge ADD COLUMN projekt_id INTEGER REFERENCES projekte(id) ON DELETE CASCADE;
+  ALTER TABLE termine ADD COLUMN projekt_id INTEGER REFERENCES projekte(id) ON DELETE CASCADE;
+  `,
 ];
 
 // Columns the renderer may write, per table. Everything else is rejected.
@@ -428,9 +479,12 @@ const TABLES = {
   vorlagen: ['titel', 'kategorie', 'betreff', 'text'],
   dokumente: ['objekt_id', 'person_id', 'einheit_id', 'titel', 'kategorie', 'datum', 'datei', 'name', 'groesse', 'notiz',
     'status', 'typ', 'betrag_ct', 'absender', 'rechnungsnr', 'iban', 'faellig', 'zusammenfassung', 'buchung_id', 'quelle'],
-  vorgaenge: ['objekt_id', 'person_id', 'einheit_id', 'titel', 'kategorie', 'status', 'prioritaet', 'faellig', 'beschreibung'],
+  vorgaenge: ['objekt_id', 'person_id', 'einheit_id', 'titel', 'kategorie', 'status', 'prioritaet', 'faellig', 'beschreibung', 'projekt_id'],
   vorgangseintraege: ['vorgang_id', 'datum', 'art', 'text'],
-  termine: ['objekt_id', 'person_id', 'vorgang_id', 'titel', 'datum', 'uhrzeit', 'dauer_min', 'ort', 'erledigt', 'notiz'],
+  termine: ['objekt_id', 'person_id', 'vorgang_id', 'titel', 'datum', 'uhrzeit', 'dauer_min', 'ort', 'erledigt', 'notiz', 'projekt_id'],
+  projekte: ['titel', 'beschreibung', 'status', 'objekt_id', 'einheit_id', 'kosten_konto_id', 'budget_ct', 'beginn', 'ende', 'notiz'],
+  projektaufgaben: ['projekt_id', 'titel', 'gewerk', 'beginn', 'ende', 'fortschritt', 'nach_id', 'person_id', 'meilenstein', 'sort', 'notiz'],
+  projektposten: ['projekt_id', 'art', 'datum', 'firma', 'person_id', 'titel', 'betrag_ct', 'status', 'bezahlt_am', 'faellig', 'aufgabe_id', 'dokument_id', 'notiz'],
 };
 
 const PERSON_NAME = `trim(coalesce(p.nachname,'') || coalesce(', ' || p.vorname,'') ||
@@ -648,9 +702,10 @@ function api(db) {
           AND NOT EXISTS (SELECT 1 FROM ${vt} v WHERE v.einheit_id = e.id AND ${aktuell('v')})) AS leer`, a, b);
     },
   };
+  const pj = projekte({ db, all, get, tx, bh });
   const au = automatik({ db, all, get, tx, PERSON_NAME, bh, ab, vw, einstellungen: basis.einstellungen });
   return {
-    ...bh, ...ab, ...vw, ...ar, ...au, ...basis,
+    ...bh, ...ab, ...vw, ...ar, ...au, ...pj, ...basis,
     // Removes the record and its index entry; the caller deletes the file.
     dokumentLoeschen: (id) => {
       const d = get('SELECT datei FROM dokumente WHERE id = ?', id);

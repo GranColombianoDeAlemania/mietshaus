@@ -10,6 +10,16 @@
   --muted: #5b6878;
   --line: #c9d5e6;
 }
+:root[data-modus='projekt'] {
+  --bg: #fbf0e6;
+  --panel: #ffffff;
+  --accent: #b5530f;
+  --accent-soft: #f6dcc5;
+  --nav: #f5e2d1;
+  --ink: #2b1d12;
+  --muted: #6e5a4a;
+  --line: #e8d2bf;
+}
 :root[data-modus='weg'] {
   --bg: #e7f4ea;
   --panel: #ffffff;
@@ -284,3 +294,14 @@ mark { background: #fde68a; color: inherit; padding: 0 1px; border-radius: 2px; 
 .tooltip { position: absolute; top: 30px; transform: translateX(-50%); background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
   padding: 6px 10px; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12); font-size: 12.5px; pointer-events: none; white-space: nowrap; }
 button.link { border: 0; background: none; color: var(--accent); padding: 0; text-decoration: underline; }
+
+/* Projects */
+.budget { position: relative; height: 10px; background: var(--accent-soft); border-radius: 5px; margin-top: 6px; }
+.budget .prognose { position: absolute; left: 0; top: 0; bottom: 0; background: #9cc0ec; border-radius: 5px; }
+.budget .ist { position: absolute; left: 0; top: 0; bottom: 0; background: #2a78d6; border-radius: 5px; }
+.budget .marke { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--ink); }
+.budget .ueber { position: absolute; right: 0; top: 12px; font-size: 11px; color: #b42318; white-space: nowrap; }
+.gantt { position: relative; }
+.gantt svg { width: 100%; height: auto; display: block; }
+.gantt .klickbar { cursor: pointer; }
+tr.klickbar { cursor: pointer; }

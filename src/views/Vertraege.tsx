@@ -38,7 +38,7 @@ const ART = {
 } as const;
 
 export function Vertraege(props: { modus: Modus; objekt: Row }) {
-  const a = ART[props.modus];
+  const a = ART[props.modus === 'weg' ? 'weg' : 'miete'];
   const [rows, reload] = useLoad<Row[]>(() => call('vertraege', a.table, props.objekt.id), [props.objekt.id, a.table]);
   const [einheiten] = useLoad<Row[]>(() => call('einheiten', props.objekt.id), [props.objekt.id]);
   const [personen, ladePersonen] = useLoad<Row[]>(() => call('personen'), []);

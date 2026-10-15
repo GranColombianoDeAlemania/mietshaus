@@ -1,4 +1,4 @@
-export type Modus = 'miete' | 'weg';
+export type Modus = 'miete' | 'weg' | 'projekt';
 export type Row = Record<string, any>;
 
 type DateiFilter = { name: string; extensions: string[] };

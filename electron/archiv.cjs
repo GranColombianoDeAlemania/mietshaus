@@ -122,7 +122,7 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME }) {
     },
 
     dokumentSpeichern: (row) => {
-      const cols = ['objekt_id', 'person_id', 'einheit_id', 'titel', 'kategorie', 'datum', 'notiz', 'status', 'typ', 'betrag_ct',
+      const cols = ['objekt_id', 'projekt_id', 'person_id', 'einheit_id', 'titel', 'kategorie', 'datum', 'notiz', 'status', 'typ', 'betrag_ct',
         'absender', 'rechnungsnr', 'iban', 'faellig', 'zusammenfassung', 'buchung_id'];
       const keys = cols.filter((c) => c in row);
       if (keys.length) db.prepare(`UPDATE dokumente SET ${keys.map((k) => `${k} = ?`).join(', ')} WHERE id = ?`)
@@ -136,7 +136,7 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME }) {
       LEFT JOIN personen p ON p.id = d.person_id WHERE d.id = ?`, id),
 
     // Archive listing with optional full-text search; matches come with a highlighted snippet.
-    dokumentListe: ({ q = '', status = null, objekt_id = null, typ = null, jahr = null, limit = 300 } = {}) => {
+    dokumentListe: ({ q = '', status = null, objekt_id = null, projekt_id = null, typ = null, jahr = null, limit = 300 } = {}) => {
       const fts = ftsAbfrage(q);
       const sql = `SELECT d.id, d.titel, d.typ, d.kategorie, d.datum, d.erfasst, d.status, d.analyse, d.name, d.datei, d.groesse, d.betrag_ct,
           d.absender, d.objekt_id, d.buchung_id, d.ocr, d.seiten, o.bezeichnung AS objekt, e.bezeichnung AS einheit, ${PERSON_NAME} AS person,
@@ -145,10 +145,10 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME }) {
           ${fts ? ", snippet(dokumente_fts, 1, '[', ']', ' … ', 12) AS treffer" : ''}
         FROM dokumente d ${fts ? 'JOIN dokumente_fts f ON f.rowid = d.id' : ''}
         LEFT JOIN objekte o ON o.id = d.objekt_id LEFT JOIN einheiten e ON e.id = d.einheit_id LEFT JOIN personen p ON p.id = d.person_id
-        WHERE 1 = 1 ${fts ? 'AND dokumente_fts MATCH ?' : ''} ${status ? 'AND d.status = ?' : ''} ${objekt_id ? 'AND d.objekt_id = ?' : ''}
+        WHERE 1 = 1 ${fts ? 'AND dokumente_fts MATCH ?' : ''} ${status ? 'AND d.status = ?' : ''} ${objekt_id ? 'AND d.objekt_id = ?' : ''} ${projekt_id ? 'AND d.projekt_id = ?' : ''}
           ${typ ? 'AND d.typ = ?' : ''} ${jahr ? "AND substr(coalesce(d.datum, d.erfasst), 1, 4) = ?" : ''}
         ORDER BY ${fts ? 'rank' : "coalesce(d.datum, d.erfasst) DESC, d.id DESC"} LIMIT ?`;
-      return all(sql, ...[fts || null, status, objekt_id, typ, jahr ? String(jahr) : null].filter((x) => x != null), limit);
+      return all(sql, ...[fts || null, status, objekt_id, projekt_id, typ, jahr ? String(jahr) : null].filter((x) => x != null), limit);
     },
 
     postfachAnzahl: () => get(`SELECT count(*) AS n FROM dokumente WHERE status = 'postfach'`).n,

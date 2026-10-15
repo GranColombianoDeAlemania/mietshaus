@@ -22,6 +22,7 @@ function DokumentFormular(props: { id: number; onFertig: () => void; postfach?: 
   const [typen] = useLoad<string[]>(() => call('dokumentTypen'), []);
   const [objekte] = useLoad<Row[]>(async () => [...await call('objekte', 'miete'), ...await call('objekte', 'weg')], []);
   const [personen] = useLoad<Row[]>(() => call('personen'), []);
+  const [projekte] = useLoad<Row[]>(() => call('projektListe'), []);
   const [f, setF] = useState<Row | null>(null);
   const [buchen, setBuchen] = useState(false);
 
@@ -37,7 +38,7 @@ function DokumentFormular(props: { id: number; onFertig: () => void; postfach?: 
   async function speichern(status?: string) {
     try {
       await call('dokumentSpeichern', {
-        id: d!.id, titel: f!.titel, typ: f!.typ, objekt_id: f!.objekt_id || null, einheit_id: f!.einheit_id || null, person_id: f!.person_id || null,
+        id: d!.id, titel: f!.titel, typ: f!.typ, objekt_id: f!.objekt_id || null, projekt_id: f!.projekt_id || null, einheit_id: f!.einheit_id || null, person_id: f!.person_id || null,
         datum: f!.datum, faellig: f!.faellig, betrag_ct: f!.betrag ? parseCent(f!.betrag) : null, absender: f!.absender, rechnungsnr: f!.rechnungsnr,
         iban: f!.iban, notiz: f!.notiz, zusammenfassung: f!.zusammenfassung, ...(status ? { status } : {}),
       });
@@ -69,6 +70,11 @@ function DokumentFormular(props: { id: number; onFertig: () => void; postfach?: 
         <label>Einheit
           <select value={f.einheit_id ?? ''} onChange={(e) => set('einheit_id', Number(e.target.value) || null)} disabled={!f.objekt_id}>
             <option value="">–</option>{einheiten?.map((e) => <option key={e.id} value={e.id}>{e.nr} – {e.bezeichnung}</option>)}
+          </select>
+        </label>
+        <label className="breit">Projekt
+          <select value={f.projekt_id ?? ''} onChange={(e) => set('projekt_id', Number(e.target.value) || null)}>
+            <option value="">– keinem Projekt –</option>{projekte?.map((p) => <option key={p.id} value={p.id}>{p.titel}</option>)}
           </select>
         </label>
         <label className="breit">Person

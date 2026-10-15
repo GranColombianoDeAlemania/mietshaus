@@ -29,7 +29,8 @@ export function Suche(props: { onDokument: (d: Row) => void; oeffne: (seite: str
 
   return (
     <div className="globalsuche">
-      <input ref={feld} placeholder="Suchen… (⌘K)" value={q} onChange={(e) => { setQ(e.target.value); setOffen(true); }} onFocus={() => setOffen(true)} />
+      <input ref={feld} placeholder="Suchen… (⌘K)" value={q} onChange={(e) => { setQ(e.target.value); setOffen(true); }} onFocus={() => setOffen(true)}
+        onBlur={() => setTimeout(() => setOffen(false), 150)} />
       {offen && r && (
         <div className="suchergebnis" onMouseDown={(e) => e.preventDefault()}>
           {leer && <div className="hinweis">Nichts gefunden.</div>}
