@@ -774,10 +774,24 @@ function protokollAktivieren(db, quelle) {
 }
 
 function api(db) {
-  const all = (sql, ...p) => db.prepare(sql).all(...p);
-  const get = (sql, ...p) => db.prepare(sql).get(...p);
+  // Prepared statements are kept and reused: the monthly charges and open items run the same queries many times.
+  const cache = new Map();
+  const stmt = (sql) => {
+    let s = cache.get(sql);
+    if (!s) {
+      if (cache.size > 800) cache.clear();
+      cache.set(sql, (s = db.prepare(sql)));
+    }
+    return s;
+  };
+  const all = (sql, ...p) => stmt(sql).all(...p);
+  const get = (sql, ...p) => stmt(sql).get(...p);
+  let tiefe = 0;
   const tx = (fn) => {
+    // A transaction started inside another one runs as part of it.
+    if (tiefe) return fn();
     db.exec('BEGIN');
+    tiefe++;
     try {
       const r = fn();
       db.exec('COMMIT');
@@ -785,6 +799,8 @@ function api(db) {
     } catch (e) {
       db.exec('ROLLBACK');
       throw e;
+    } finally {
+      tiefe--;
     }
   };
 
@@ -830,6 +846,11 @@ function api(db) {
 
   // Master data changes can create or rename accounts.
   const SYNC = new Set(['objekte', 'einheiten', 'personen', 'mietverhaeltnisse', 'eigentum']);
+  // Contract changes reach the monthly charges at once (see bh.sollAutomatisch).
+  const vertragVon = (table, id) => (table === 'mietverhaeltnisse' ? { typ: 'miete', id } : table === 'eigentum' ? { typ: 'weg', id }
+    : table === 'anpassungen' ? (({ vertrag_typ, vertrag_id }) => ({ typ: vertrag_typ, id: vertrag_id }))(get('SELECT vertrag_typ, vertrag_id FROM anpassungen WHERE id = ?', id) ?? {})
+      : null);
+  const sollNachziehen = (v) => { if (v?.typ && v.id) bh.sollAutomatisch(v.typ, v.id); };
 
   const basis = {
     einstellungen: () => Object.fromEntries(all('SELECT schluessel, wert FROM einstellungen').map((r) => [r.schluessel, r.wert])),
@@ -841,14 +862,33 @@ function api(db) {
     save: (table, row) => {
       const id = save(table, row);
       if (SYNC.has(table)) bh.syncKonten();
+      sollNachziehen(vertragVon(table, id));
       return id;
     },
     remove: (table, id) => {
+      if (table === 'anpassungen') {
+        const v = vertragVon(table, id);
+        remove(table, id);
+        sollNachziehen(v);
+        return;
+      }
       if (table === 'mietverhaeltnisse' || table === 'eigentum') {
+        // A contract whose account only carries the automatic monthly charges (e.g. one entered by mistake) can be
+        // deleted together with them; payments or other postings keep it.
         const typ = table === 'eigentum' ? 'weg' : 'miete';
-        if (get(`SELECT count(*) AS n FROM buchungen b JOIN konten k ON k.id IN (b.soll_id, b.haben_id)
-          WHERE k.vertrag_typ = ? AND k.vertrag_id = ?`, typ, id).n)
-          throw new Error('Zu diesem Vertrag gibt es Buchungen. Trage stattdessen ein Vertragsende ein.');
+        const k = bh.kontoVon(typ, id);
+        if (k) {
+          if (get(`SELECT count(*) AS n FROM buchungen WHERE (soll_id = ?1 OR haben_id = ?1) AND NOT (art = 'soll' AND monat IS NOT NULL AND soll_id = ?1)`, k.id).n)
+            throw new Error('Zu diesem Vertrag gibt es Zahlungen oder andere Buchungen. Trage stattdessen ein Vertragsende ein.');
+          if (get('SELECT (SELECT count(*) FROM mahnungen WHERE konto_id = ?1) + (SELECT count(*) FROM ratenplaene WHERE konto_id = ?1) AS n', k.id).n)
+            throw new Error('Zu diesem Vertrag gibt es Mahnungen oder Ratenpläne. Trage stattdessen ein Vertragsende ein.');
+          return tx(() => {
+            db.prepare(`DELETE FROM buchungen WHERE soll_id = ? AND art = 'soll' AND monat IS NOT NULL`).run(k.id);
+            db.prepare('DELETE FROM anpassungen WHERE vertrag_typ = ? AND vertrag_id = ?').run(typ, id);
+            remove(table, id);
+            bh.syncKonten();
+          });
+        }
       }
       if (table === 'einheiten' && get(`SELECT count(*) AS n FROM buchungen b JOIN konten k ON k.id IN (b.soll_id, b.haben_id)
           WHERE (k.vertrag_typ = 'miete' AND k.vertrag_id IN (SELECT id FROM mietverhaeltnisse WHERE einheit_id = ?1))
@@ -1013,7 +1053,18 @@ function api(db) {
     zusage: (interessentId, beginn) => {
       const r = mw.zusage(interessentId, beginn);
       bh.syncKonten();
+      sollNachziehen({ typ: 'miete', id: r.vertrag_id });
       return r;
+    },
+    kuendigungErfassen: (x) => {
+      const r = mw.kuendigungErfassen(x);
+      sollNachziehen({ typ: 'miete', id: x.vertrag_id });
+      return r;
+    },
+    anpassungenAnwenden: (typ, gueltigAb, grund, liste) => {
+      const n = ab.anpassungenAnwenden(typ, gueltigAb, grund, liste);
+      for (const a of liste) sollNachziehen({ typ, id: a.vertrag_id });
+      return n;
     },
     // Bank lines paid to a loan account are booked as instalments (interest + repayment).
     bankBuchen: (objektId, geldKontoId, zeilen, lernen) => {

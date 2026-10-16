@@ -206,6 +206,8 @@ module.exports = function akten({ db, all, get, PERSON_NAME, bh }) {
       return {
         vertrag: info, einheit: e, eigentuemer: eigentuemer ?? null, verlauf,
         op: k ? bh.offenePostenKonto(k) : null,
+        naechste: bh.naechsteFaelligkeit(typ, vertragId),
+        soll_abweichend: bh.sollAbgleich(typ, vertragId).aenderungen.filter((x) => !x.manuell).length,
         kontoauszug: k ? bh.kontoauszug(k, auszugVon, '9999-12-31') : null,
         kaution: typ === 'miete' ? get(`SELECT k.*, coalesce((SELECT sum(CASE WHEN art IN ('einzahlung','zinsen') THEN betrag_ct ELSE -betrag_ct END)
             FROM kautionsbewegungen b WHERE b.kaution_id = k.id), 0) AS bestand_ct FROM kautionen k WHERE k.vertrag_id = ?`, vertragId) ?? null : null,

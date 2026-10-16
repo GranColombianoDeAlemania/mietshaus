@@ -457,6 +457,99 @@ const wa = db.wegAbrechnung(w, '2025-01-01', '2025-12-31');
   gleich('CII Summen stimmen', [cii.zeilen.reduce((x, z) => x + z.netto_ct, 0), cii.netto_ct + cii.ust_ct], [cii.netto_ct, cii.brutto_ct]);
 }
 
+// ---------- 15. New contract, payment by hand (report of 16.10.2026: 800 € warm, 400 € paid, no arrears shown) ----------
+// The charges used to appear only with the next hourly run, so the payment counted as credit. Relative to the
+// current month so it holds whenever the test runs: the automation started last month.
+{
+  const t = api(open(':memory:'));
+  const HEUTE = new Date().toISOString().slice(0, 10);
+  const monatPlus = (m, n) => { const [y, mm] = m.split('-').map(Number); return new Date(Date.UTC(y, mm - 1 + n, 1)).toISOString().slice(0, 7); };
+  const M = HEUTE.slice(0, 7), VM = monatPlus(M, -1), VVM = monatPlus(M, -2), NM = monatPlus(M, 1);
+  const letzterTag = (m) => `${m}-${pad(tageImMonat(...m.split('-').map(Number)))}`;
+  t.setzeEinstellungen({ bundesland: 'BE', auto_soll_ab: VM });
+  const ob = t.neuesObjekt({ bezeichnung: 'Testhaus', art: 'miete', strasse: 'Teststr. 1', plz: '10115', ort: 'Berlin' });
+  const eh = [1, 2, 3].map((nr) => t.save('einheiten', { objekt_id: ob, nr, bezeichnung: `WE0${nr}`, art: 'Wohnung', wohnflaeche: 60 }));
+  const pe = ['Test', 'Zukunft', 'Irrtum'].map((n) => t.save('personen', { anrede: 'Herr', vorname: 'Max', nachname: n }));
+  const vertrag = (i, beginn, extra = {}) => t.save('mietverhaeltnisse', { einheit_id: eh[i], person_id: pe[i], beginn, kaltmiete_ct: 60000, bk_vz_ct: 12000, hk_vz_ct: 8000,
+    personen_anzahl: 1, faelligkeitstag: 0, teilmonat_beginn: 'anteilig', teilmonat_ende: 'anteilig', ust_satz: 0, ...extra });
+  const soll = (vid) => Object.fromEntries(Object.entries(t.buchungen(ob, {}).filter((b) => b.art === 'soll' && b.soll_id === t.kontoVon('miete', vid).id)
+    .reduce((m, b) => ({ ...m, [b.monat]: (m[b.monat] ?? 0) + b.betrag_ct }), {})).sort());
+  const bank = t.konten(ob).find((k) => k.nr === 1200).id;
+  const zahlung = (vid, ct) => t.buchen({ objekt_id: ob, datum: HEUTE, text: 'Zahlung', positionen: [{ soll_id: bank, haben_id: t.kontoVon('miete', vid).id, betrag_ct: ct }] });
+
+  const vt = vertrag(0, `${VM}-01`);
+  const kk = t.kontoVon('miete', vt).id;
+  gleich('Neuer Vertrag: Forderungen sofort gebucht, nicht erst beim nächsten Lauf', soll(vt), { [VM]: 80000, [M]: 80000 });
+  gleich('... fällig am 3. Werktag', [...new Set(t.buchungen(ob, {}).filter((b) => b.art === 'soll').map((b) => b.datum))].sort(), [dritterWerktagMiete(VM), dritterWerktagMiete(M)].sort());
+  gleich('Stündlicher Lauf bucht nichts doppelt', t.automatikLauf().erzeugt, 0);
+  zahlung(vt, 40000);
+  const faelligM = dritterWerktagMiete(M) <= HEUTE, verzugM = dritterWerktagMiete(M) < HEUTE;
+  gleich('800 € fällig, 400 € gezahlt: 400 € offen', t.offenePostenKonto(kk, HEUTE).offen.map((x) => [x.monat, x.offen_ct, x.status]),
+    [[VM, 40000, 'teilweise bezahlt'], ...(faelligM ? [[M, 80000, 'nicht bezahlt']] : [])]);
+  gleich('Vertragsseite: Rückstand', t.vertragAkte('miete', vt).vertrag.ueberfaellig_ct, 40000 + (verzugM ? 80000 : 0));
+  const ks = t.kontoStatus(kk, HEUTE);
+  gleich('Zahlungsformular: Stand und nächste Fälligkeit', [ks.saldo_ct, ks.guthaben_ct, ks.naechste.datum, ks.naechste.betrag_ct],
+    [40000 + (faelligM ? 80000 : 0), 0, faelligM ? dritterWerktagMiete(NM) : dritterWerktagMiete(M), 80000]);
+
+  // Corrections reach the charges at once: contract amount, rent change from this month, its removal.
+  t.save('mietverhaeltnisse', { id: vt, kaltmiete_ct: 70000 });
+  gleich('Vertrag korrigiert: Forderungen folgen', soll(vt), { [VM]: 90000, [M]: 90000 });
+  const an = t.save('anpassungen', { vertrag_typ: 'miete', vertrag_id: vt, gueltig_ab: `${M}-01`, grund: 'erhoehung', kaltmiete_ct: 75000 });
+  gleich('Mietanpassung ab diesem Monat', soll(vt), { [VM]: 90000, [M]: 95000 });
+  t.remove('anpassungen', an);
+  gleich('Mietanpassung gelöscht', soll(vt), { [VM]: 90000, [M]: 90000 });
+  // Start on the 15th of last month, by day: (T − 14)/T of each amount, due on the day of moving in.
+  t.save('mietverhaeltnisse', { id: vt, beginn: `${VM}-15` });
+  const T = tageImMonat(...VM.split('-').map(Number));
+  const anteil = (ct) => Math.round(ct * (T - 14) / T);
+  gleich('Beginn am 15.: Teilmonat tagegenau', soll(vt), { [VM]: anteil(70000) + anteil(12000) + anteil(8000), [M]: 90000 });
+  gleich('... fällig am Einzug', [...new Set(t.buchungen(ob, {}).filter((b) => b.art === 'soll' && b.monat === VM).map((b) => b.datum))], [`${VM}-15`]);
+  t.save('mietverhaeltnisse', { id: vt, teilmonat_beginn: 'voll' });
+  gleich('... voller Monat', soll(vt), { [VM]: 90000, [M]: 90000 });
+  t.save('mietverhaeltnisse', { id: vt, teilmonat_beginn: 'folgemonat' });
+  gleich('... erst ab Folgemonat', soll(vt), { [M]: 90000 });
+
+  // A start before the automation: the months before are offered, not booked by themselves.
+  t.save('mietverhaeltnisse', { id: vt, beginn: `${VVM}-01`, teilmonat_beginn: 'anteilig' });
+  gleich('Früherer Beginn: Monate davor nur angeboten', [t.sollAbgleich('miete', vt).fehlend.map((f) => [f.monat, f.betrag_ct]), soll(vt)],
+    [[[VVM, 90000]], { [VM]: 90000, [M]: 90000 }]);
+  t.sollAbgleich('miete', vt, { nachholen: true });
+  gleich('... nach Zustimmung gebucht', soll(vt), { [VVM]: 90000, [VM]: 90000, [M]: 90000 });
+  t.save('mietverhaeltnisse', { id: vt, kaltmiete_ct: 60000 });
+  gleich('Ältere Monate: Änderung wird angeboten, nicht still gebucht', [t.sollAbgleich('miete', vt).aenderungen.map((a) => [a.monat, a.alt_ct, a.neu_ct]), soll(vt)],
+    [[[VVM, 90000, 80000]], { [VVM]: 90000, [VM]: 80000, [M]: 80000 }]);
+  gleich('Sollstellung zeigt die Abweichung', t.sollstellung(ob, VVM, VVM, true).filter((z) => z.abweichend).map((z) => [z.posten, z.vorhanden_ct, z.betrag_ct]), [['Miete', 70000, 60000]]);
+  gleich('Prüfbericht meldet die Abweichung', t.pruefbericht().punkte.some((p) => p.schluessel.startsWith(`sollabw:miete:${vt}:`)), true);
+  t.setzeEinstellungen({ festgeschrieben_bis: letzterTag(VVM) });
+  t.sollAbgleich('miete', vt, { anwenden: true });
+  gleich('Festgeschriebener Monat bleibt unverändert', [t.sollAbgleich('miete', vt).aenderungen.map((a) => [a.monat, a.gesperrt]), soll(vt)[VVM]], [[[VVM, true]], 90000]);
+  t.setzeEinstellungen({ festgeschrieben_bis: null });
+  t.sollAbgleich('miete', vt, { anwenden: true });
+  gleich('... nach Aufheben der Sperre angepasst', [soll(vt)[VVM], t.sollAbgleich('miete', vt).aenderungen.length], [80000, 0]);
+
+  // New contracts start on the 1st of next month by default: a payment before that is credit, the first rent is shown.
+  const vz = vertrag(1, `${NM}-01`);
+  zahlung(vz, 40000);
+  const opz = t.offenePostenKonto(t.kontoVon('miete', vz).id, HEUTE);
+  gleich('Beginn nächster Monat: nichts fällig, Zahlung als Guthaben', [soll(vz), opz.offen.length, opz.guthaben_ct], [{}, 0, 40000]);
+  gleich('... erste Fälligkeit angezeigt', t.vertragAkte('miete', vz).naechste, { monat: NM, datum: dritterWerktagMiete(NM), betrag_ct: 80000 });
+
+  // A contract entered by mistake can be deleted while it only carries automatic charges; with a payment it stays.
+  const vi = vertrag(2, `${VM}-01`);
+  const ki = t.kontoVon('miete', vi).id;
+  t.remove('mietverhaeltnisse', vi);
+  gleich('Irrtümlicher Vertrag gelöscht samt Forderungen', [t.get('mietverhaeltnisse', vi) ?? null, t.get('konten', ki) ?? null,
+    t.buchungen(ob, {}).filter((b) => b.soll_id === ki).length], [null, null, 0]);
+  let meldung = null;
+  try { t.remove('mietverhaeltnisse', vt); } catch (e) { meldung = e.message; }
+  gleich('Vertrag mit Zahlung bleibt', /Zahlungen/.test(meldung ?? ''), true);
+
+  // Automation switched off: saving books nothing, the months are offered.
+  t.setzeEinstellungen({ auto_soll: '0' });
+  const va = vertrag(2, `${VM}-01`);
+  gleich('Automatik aus: nichts gebucht, Monate angeboten', [soll(va), t.sollAbgleich('miete', va).fehlend.map((f) => f.monat)], [{}, [VM, M]]);
+}
+
 console.log(`\nRechentest: ${ok} Prüfungen richtig, ${falsch} falsch.`);
 if (falsch) process.exitCode = 1;
 // The click test reuses the sample data.

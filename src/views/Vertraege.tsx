@@ -5,6 +5,7 @@ import { useLoad } from '../useLoad';
 import { L, useNavi } from '../navi';
 import { Leer, SortTh, sortiere, type Sortierung } from '../ui';
 import { SaldoChip, TeilmonatHinweis } from './Akten';
+import { sollNachfrage } from './Sollstellung';
 
 const FAELLIG: [number, string][] = [[0, '3. Werktag (gesetzlich, § 556b BGB)'], ...Array.from({ length: 28 }, (_, i) => [i + 1, `am ${i + 1}. des Monats`] as [number, string])];
 
@@ -156,7 +157,10 @@ export function Vertraege(props: { modus: Modus; objekt: Row }) {
           extra={(f) => <TeilmonatHinweis f={f} modus={typ} />}
           onSave={async (r) => {
             if (r.ende && r.ende < r.beginn) throw new Error('Das Ende liegt vor dem Beginn.');
-            return call('save', a.table, r);
+            const id = await call('save', a.table, r);
+            // Once the form has closed: charges that no longer fit, and months before the automatic charging.
+            setTimeout(() => sollNachfrage(typ, id, { fruehereMonate: !edit.id || edit.beginn !== r.beginn }).then(reload), 0);
+            return id;
           }}
           onDelete={() => call('remove', a.table, edit.id)}
           onClose={() => {

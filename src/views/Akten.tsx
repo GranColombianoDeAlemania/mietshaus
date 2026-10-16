@@ -16,6 +16,7 @@ import { dauerrechnung, Kuendigung, Ratenplan, RatenplanListe } from './Vertrags
 import { kontoauszugPdf } from './Konten';
 import { ROLLEN } from './WegExtras';
 import { BESCHEINIGUNGEN, musterbrief } from './Kommunikation';
+import { sollNachfrage } from './Sollstellung';
 
 const monatKurz = (m: string | null | undefined) => (m && /^\d{4}-\d{2}/.test(m) ? `${m.slice(5, 7)}/${m.slice(2, 4)}` : datum(m));
 const GRUND: Record<string, string> = {
@@ -426,8 +427,13 @@ export function VertragSeite(props: { typ: 'miete' | 'weg'; id: number }) {
                   ))}</tbody>
                   <tfoot><tr><td colSpan={2}>Rückstand{op.guthaben_ct > 0 ? ` (abzgl. Guthaben ${euro(op.guthaben_ct)})` : ''}</td><td className="num"><b>{euro(v.ueberfaellig_ct)}</b></td><td colSpan={2} /></tr></tfoot>
                 </table>
-              ) : <p className="hinweis klein">Nichts überfällig.{op?.guthaben_ct > 0 ? ` Guthaben ${euro(op.guthaben_ct)}.` : ''}</p>}
-              {nochNicht.length > 0 && <p className="klein hinweis">Noch nicht fällig: {nochNicht.map((o: Row) => `${o.text} (${datum(o.datum)})`).join(', ')}.</p>}
+              ) : <p className="hinweis klein">{v.zukuenftig ? `Der Vertrag beginnt am ${datum(v.beginn)} – bis dahin ist nichts fällig.` : 'Nichts überfällig.'}
+                {op?.guthaben_ct > 0 ? ` Guthaben ${euro(op.guthaben_ct)} – es wird mit der nächsten Forderung verrechnet.` : ''}</p>}
+              {nochNicht.length > 0 && <p className="klein hinweis">Heute fällig (noch kein Verzug): {nochNicht.map((o: Row) => `${o.text} ${euro(o.offen_ct)}`).join(', ')}.</p>}
+              {a.soll_abweichend > 0 && <p className="klein fehlertext">Die gebuchten Forderungen von {a.soll_abweichend === 1 ? 'einem Monat' : `${a.soll_abweichend} Monaten`} passen nicht zum Vertrag.{' '}
+                <button className="link" onClick={() => sollNachfrage(props.typ, v.id).then(reload)}>Forderungen prüfen</button></p>}
+              {a.naechste && <p className="klein hinweis">Nächste Fälligkeit: <b>{datum(a.naechste.datum)}</b> · {euro(a.naechste.betrag_ct)}
+                {op?.guthaben_ct > 0 ? ` (davon durch Guthaben gedeckt: ${euro(Math.min(op.guthaben_ct, a.naechste.betrag_ct))})` : ''}</p>}
               {a.ratenplaene.length > 0 && <RatenplanListe plaene={a.ratenplaene} onAenderung={reload} />}
             </Panel>
             <Panel titel="Beträge im Zeitverlauf" aktion={!weg ? <L zu={{ seite: 'anpassung', objektId: e.objekt_id }}>Mietanpassung →</L> : <L zu={{ seite: 'wipl', objektId: e.objekt_id, modus: 'weg' }}>Wirtschaftsplan →</L>}>
@@ -508,7 +514,11 @@ export function VertragSeite(props: { typ: 'miete' | 'weg'; id: number }) {
       {edit && einheiten && personen && (
         <FormDialog title={weg ? 'Eigentum bearbeiten' : 'Mietverhältnis bearbeiten'} row={v} fields={vertragFelder(weg ? 'weg' : 'miete', einheiten, personen)}
           extra={(f) => <TeilmonatHinweis f={f} modus={weg ? 'weg' : 'miete'} />}
-          onSave={(r) => call('save', weg ? 'eigentum' : 'mietverhaeltnisse', r)} onClose={() => { setEdit(false); reload(); }} />
+          onSave={async (r) => {
+            const id = await call('save', weg ? 'eigentum' : 'mietverhaeltnisse', r);
+            setTimeout(() => sollNachfrage(props.typ, id, { fruehereMonate: r.beginn !== v.beginn }).then(reload), 0);
+            return id;
+          }} onClose={() => { setEdit(false); reload(); }} />
       )}
       {kuendigung && <Kuendigung vertrag={v} einheit={e} onClose={() => { setKuendigung(false); reload(); }} />}
       {raten && v.konto_id && <Ratenplan vertrag={v} einheit={e} kontoId={v.konto_id} rueckstand={v.ueberfaellig_ct} onClose={() => { setRaten(false); reload(); }} />}

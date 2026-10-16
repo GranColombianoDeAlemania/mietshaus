@@ -7,6 +7,7 @@ import { Liste } from '../Liste';
 import { Dialog, Tabs } from '../ui';
 import { FormDialog, type Field } from '../Form';
 import { AnpassungBrief } from './Mietbriefe';
+import { sollNachfrage } from './Sollstellung';
 import { absaetze, absenderAus, alsPdf, brief, esc, tabelle, empfaengerVon } from '../dokument';
 
 const KAUTION_ARTEN: [string, string][] = [['konto', 'Kautionskonto (Sparbuch)'], ['bar', 'Barkaution'], ['buergschaft', 'Bankbürgschaft'], ['verpfaendung', 'Verpfändetes Konto']];
@@ -201,9 +202,12 @@ function Anpassungen(props: { vertrag: Row; objekt: Row; onClose: () => void }) 
             const p = await call('mieterhoehungPruefen', v.id, r.kaltmiete_ct, r.gueltig_ab);
             setPruefung(p);
           }
-          return call('save', 'anpassungen', { ...r, vertrag_typ: 'miete', vertrag_id: v.id });
+          const id = await call('save', 'anpassungen', { ...r, vertrag_typ: 'miete', vertrag_id: v.id });
+          setTimeout(() => sollNachfrage('miete', v.id), 0);
+          return id;
         }}
-        onDelete={() => call('remove', 'anpassungen', edit.id)} onClose={() => { setEdit(null); reload(); }} />}
+        onDelete={async () => { await call('remove', 'anpassungen', edit.id); setTimeout(() => sollNachfrage('miete', v.id), 0); }}
+        onClose={() => { setEdit(null); reload(); }} />}
     </Dialog>
   );
 }

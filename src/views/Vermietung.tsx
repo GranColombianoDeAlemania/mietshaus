@@ -7,6 +7,7 @@ import { Dialog } from '../ui';
 import { FormDialog, type Field } from '../Form';
 import { absenderAus, alsPdf, bericht, esc, tabelle } from '../dokument';
 import { dokUrl } from './Archiv';
+import { sollNachfrage } from './Sollstellung';
 
 const SPALTEN: [string, string][] = [['neu', 'Neu'], ['besichtigung', 'Besichtigung'], ['auskunft', 'Unterlagen da'], ['favorit', 'Favorit'], ['absage', 'Abgesagt']];
 const cent2 = (ct?: number | null) => (ct == null ? '' : (ct / 100).toFixed(2).replace('.', ','));
@@ -161,8 +162,9 @@ function EinheitVermietung(props: { einheit: Row; objekt: Row; reload: () => voi
           <button className="primary" onClick={async () => {
             try {
               await speichern();
-              await call('zusage', zusage.id, zusage.beginn);
+              const neu = await call('zusage', zusage.id, zusage.beginn);
               setZusage(null); reload(); props.reload();
+              await sollNachfrage('miete', neu.vertrag_id, { fruehereMonate: true });
               if (confirm('Mieter und Mietverhältnis sind angelegt; die übrigen Interessenten stehen auf „Abgesagt“. Jetzt zur Einzugsübergabe?')) props.oeffne('uebergabe');
             } catch (err) { fehler(err); }
           }}>Mieter anlegen</button>}>

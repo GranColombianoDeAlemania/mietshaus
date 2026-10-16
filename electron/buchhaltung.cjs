@@ -269,9 +269,115 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
   }
 
   function sollZeile({ monat, datum, konto, ertrag, v, typ, posten, betrag_ct, t }) {
-    const vorhanden = get(`SELECT id FROM buchungen WHERE art = 'soll' AND soll_id = ? AND haben_id = ? AND monat = ?`, konto.id, ertrag.id, monat);
+    const vorhanden = get(`SELECT count(*) AS n, coalesce(sum(betrag_ct), 0) AS s FROM buchungen WHERE art = 'soll' AND soll_id = ? AND haben_id = ? AND monat = ?`,
+      konto.id, ertrag.id, monat);
     return { monat, datum, konto_id: konto.id, name: v.name, einheit: v.einheit, typ, vertrag_id: v.id, einheit_id: v.einheit_id, person_id: v.person_id,
-      posten, betrag_ct, ertrag_id: ertrag.id, vorhanden: !!vorhanden, anteilig: t.anteil < 1, tage: t.tage, tage_monat: t.tage_monat };
+      posten, betrag_ct, ertrag_id: ertrag.id, vorhanden: vorhanden.n > 0, vorhanden_ct: vorhanden.s, anteilig: t.anteil < 1, tage: t.tage, tage_monat: t.tage_monat };
+  }
+
+  // Charge lines of one contract for one month; none when the contract does not run (or is not charged) that month.
+  function sollZeilenVertrag(typ, v, monat) {
+    const konto = kontoVon(typ, v.id);
+    const t = konto && teilmonat(v, monat);
+    if (!t) return [];
+    const b = betraege(typ, v.id, t.stichtag);
+    const zeilen = [];
+    let netto = 0;
+    for (const [feld, kat, label] of POSTEN[typ]) {
+      const betrag = Math.round((b[feld] ?? 0) * t.anteil);
+      if (betrag <= 0) continue;
+      const ertrag = kontoKat(konto.objekt_id, kat);
+      if (!ertrag) continue;
+      netto += betrag;
+      zeilen.push(sollZeile({ monat, datum: t.datum, konto, ertrag, v, typ, posten: label, betrag_ct: betrag, t }));
+    }
+    // Commercial lettings with VAT: one VAT charge per month on the net total.
+    const satz = typ === 'miete' ? Number(v.ust_satz) || 0 : 0;
+    if (satz > 0 && netto > 0) {
+      const ust = kontoKat(konto.objekt_id, satz === 7 ? 'ust7' : 'ust19', 'steuer');
+      if (ust) zeilen.push(sollZeile({ monat, datum: t.datum, konto, ertrag: ust, v, typ,
+        posten: `USt ${String(satz).replace('.', ',')} %`, betrag_ct: Math.round(netto * satz / 100), t }));
+    }
+    return zeilen;
+  }
+
+  const gesperrtBis = () => get(`SELECT wert FROM einstellungen WHERE schluessel = 'festgeschrieben_bis'`)?.wert ?? '0000-00-00';
+  const summe = (xs) => xs.reduce((s, x) => s + x.betrag_ct, 0);
+  function sollEinfuegen(objektId, z) {
+    const [y, m] = z.monat.split('-');
+    db.prepare(`INSERT INTO buchungen (objekt_id, datum, text, betrag_ct, soll_id, haben_id, art, monat) VALUES (?, ?, ?, ?, ?, ?, 'soll', ?)`)
+      .run(objektId, z.datum, `${z.posten} ${m}/${y}${z.anteilig ? ` (anteilig ${z.tage}/${z.tage_monat} Tage)` : ''}`, z.betrag_ct, z.konto_id, z.ertrag_id, z.monat);
+  }
+  const vertragMitNamen = (typ, id) => get(`SELECT v.*, e.bezeichnung AS einheit, e.objekt_id, ${PERSON_NAME} AS name FROM ${vertragTabelle(typ)} v
+    JOIN einheiten e ON e.id = v.einheit_id JOIN personen p ON p.id = v.person_id WHERE v.id = ?`, id);
+
+  // Compares a contract's booked monthly charges (from month `von` on) with what the contract says: amounts and their
+  // changes, start, end and part months. Returns the months whose charges differ and the months from the start up to
+  // the current month without any charge. `anwenden` rebooks the differing months, except in a locked period or where
+  // a charge was cancelled by hand; `nachholen` charges the missing months.
+  function sollAbgleich(typ, vertragId, { von = '0000-00', anwenden = false, nachholen = false } = {}) {
+    const v = vertragMitNamen(typ, vertragId);
+    const konto = v && kontoVon(typ, v.id);
+    if (!konto) return { aenderungen: [], fehlend: [] };
+    const jetzt = new Date().toISOString().slice(0, 7);
+    const sperre = gesperrtBis();
+    const gebucht = new Map();
+    for (const b of all(`SELECT b.*, EXISTS (SELECT 1 FROM buchungen x WHERE x.storno_von = b.id) AS storniert FROM buchungen b
+        WHERE b.soll_id = ? AND b.art = 'soll' AND b.monat >= ? ORDER BY b.monat, b.id`, konto.id, von)) {
+      if (!gebucht.has(b.monat)) gebucht.set(b.monat, []);
+      gebucht.get(b.monat).push(b);
+    }
+    const kennung = (xs) => xs.map((x) => `${x.haben_id ?? x.ertrag_id}|${x.betrag_ct}|${x.datum}`).sort().join(',');
+    const aenderungen = [];
+    for (const [monat, alt] of gebucht) {
+      const neu = sollZeilenVertrag(typ, v, monat);
+      if (kennung(alt) === kennung(neu)) continue;
+      aenderungen.push({ monat, alt_ct: summe(alt), neu_ct: summe(neu), alt_datum: alt[0].datum, neu_datum: neu[0]?.datum ?? null,
+        gesperrt: alt.some((b) => b.datum <= sperre) || neu.some((z) => z.datum <= sperre), manuell: alt.some((b) => b.storniert),
+        ids: alt.map((b) => b.id), zeilen: neu });
+    }
+    const start = [v.beginn.slice(0, 7), von].sort().at(-1);
+    const ende = [(v.ende || '9999-12').slice(0, 7), jetzt].sort()[0];
+    const fehlend = (start > ende ? [] : monatsliste(start, ende)).filter((m) => !gebucht.has(m))
+      .map((monat) => ({ monat, zeilen: sollZeilenVertrag(typ, v, monat) }))
+      .filter((f) => f.zeilen.length && f.zeilen[0].datum > sperre)
+      .map((f) => ({ ...f, datum: f.zeilen[0].datum, betrag_ct: summe(f.zeilen) }));
+    if (anwenden || nachholen) {
+      tx(() => {
+        if (anwenden) for (const a of aenderungen.filter((a) => !a.gesperrt && !a.manuell)) {
+          db.prepare(`DELETE FROM buchungen WHERE id IN (${a.ids.map(() => '?').join(', ')})`).run(...a.ids);
+          for (const z of a.zeilen) sollEinfuegen(v.objekt_id, z);
+        }
+        if (nachholen) for (const f of fehlend) for (const z of f.zeilen) sollEinfuegen(v.objekt_id, z);
+      });
+    }
+    const ohne = ({ ids, zeilen, ...x }) => x;
+    return { vertrag_id: v.id, typ, name: v.name, einheit: v.einheit, beginn: v.beginn, aenderungen: aenderungen.map(ohne), fehlend: fehlend.map(ohne) };
+  }
+
+  // Automatic charging: after every change of a contract or its amounts, its charges from the month automation
+  // started on are brought in line at once (missing months up to the current one are added), not only at the next
+  // hourly run. Months before that start are left to the user (see sollAbgleich).
+  function sollAutomatisch(typ, vertragId) {
+    const e = Object.fromEntries(all(`SELECT schluessel, wert FROM einstellungen WHERE schluessel IN ('auto_soll', 'auto_soll_ab')`)
+      .map((r) => [r.schluessel, r.wert]));
+    if (e.auto_soll === '0') return null;
+    const ab = e.auto_soll_ab ?? new Date().toISOString().slice(0, 7);
+    if (!e.auto_soll_ab) db.prepare(`INSERT INTO einstellungen (schluessel, wert) VALUES ('auto_soll_ab', ?) ON CONFLICT (schluessel) DO NOTHING`).run(ab);
+    return sollAbgleich(typ, vertragId, { von: ab, anwenden: true, nachholen: true });
+  }
+
+  // The next charge of a contract after the reference date (for "next due" hints).
+  function naechsteFaelligkeit(typ, vertragId, stichtag = new Date().toISOString().slice(0, 10)) {
+    const v = vertragMitNamen(typ, vertragId);
+    if (!v) return null;
+    let [y, m] = stichtag.slice(0, 7).split('-').map(Number);
+    for (let i = 0; i < 15; i++) {
+      const zeilen = sollZeilenVertrag(typ, v, `${y}-${pad(m)}`);
+      if (zeilen.length && zeilen[0].datum > stichtag) return { monat: `${y}-${pad(m)}`, datum: zeilen[0].datum, betrag_ct: summe(zeilen) };
+      if (++m > 12) { m = 1; y++; }
+    }
+    return null;
   }
 
   // Schedule and progress of an instalment plan on a date.
@@ -404,51 +510,43 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
       .filter((k) => k.anfang_ct || k.soll_ct || k.haben_ct),
 
     // Generates monthly charges for all contracts of an object; existing charges are not duplicated.
+    // A line whose booked amount differs from the contract is marked `abweichend` (see sollAbgleich).
     sollstellung: (objektId, vonMonat, bisMonat, nurVorschau = false, typen = ['miete', 'weg']) => {
       const zeilen = [];
       for (const typ of typen) {
         const vertraege = all(`SELECT v.*, e.bezeichnung AS einheit, ${PERSON_NAME} AS name FROM ${vertragTabelle(typ)} v
           JOIN einheiten e ON e.id = v.einheit_id JOIN personen p ON p.id = v.person_id WHERE e.objekt_id = ?`, objektId);
-        for (const v of vertraege) {
-          const konto = kontoVon(typ, v.id);
-          if (!konto) continue;
-          for (const monat of monatsliste(vonMonat, bisMonat)) {
-            const t = teilmonat(v, monat);
-            if (!t) continue;
-            const b = betraege(typ, v.id, t.stichtag);
-            let netto = 0;
-            for (const [feld, kat, label] of POSTEN[typ]) {
-              const betrag = Math.round((b[feld] ?? 0) * t.anteil);
-              if (betrag <= 0) continue;
-              const ertrag = kontoKat(objektId, kat);
-              if (!ertrag) continue;
-              netto += betrag;
-              zeilen.push(sollZeile({ monat, datum: t.datum, konto, ertrag, v, typ, posten: label, betrag_ct: betrag, t }));
-            }
-            // Commercial lettings with VAT: one VAT charge per month on the net total.
-            const satz = typ === 'miete' ? Number(v.ust_satz) || 0 : 0;
-            if (satz > 0 && netto > 0) {
-              const ust = kontoKat(objektId, satz === 7 ? 'ust7' : 'ust19', 'steuer');
-              if (ust) zeilen.push(sollZeile({ monat, datum: t.datum, konto, ertrag: ust, v, typ,
-                posten: `USt ${String(satz).replace('.', ',')} %`, betrag_ct: Math.round(netto * satz / 100), t }));
-            }
-          }
-        }
+        for (const v of vertraege)
+          for (const monat of monatsliste(vonMonat, bisMonat)) zeilen.push(...sollZeilenVertrag(typ, v, monat));
       }
+      for (const z of zeilen) z.abweichend = z.vorhanden && z.vorhanden_ct !== z.betrag_ct;
       // Months in a closed (locked) period are not charged automatically any more.
-      const gesperrt = get(`SELECT wert FROM einstellungen WHERE schluessel = 'festgeschrieben_bis'`)?.wert ?? '0000-00-00';
+      const gesperrt = gesperrtBis();
       for (const z of zeilen) if (z.datum <= gesperrt) z.vorhanden = true;
-      if (!nurVorschau) {
-        tx(() => {
-          const st = db.prepare(`INSERT INTO buchungen (objekt_id, datum, text, betrag_ct, soll_id, haben_id, art, monat)
-            VALUES (?, ?, ?, ?, ?, ?, 'soll', ?)`);
-          for (const z of zeilen.filter((z) => !z.vorhanden)) {
-            const [y, m] = z.monat.split('-');
-            st.run(objektId, z.datum, `${z.posten} ${m}/${y}${z.anteilig ? ` (anteilig ${z.tage}/${z.tage_monat} Tage)` : ''}`, z.betrag_ct, z.konto_id, z.ertrag_id, z.monat);
-          }
-        });
-      }
+      if (!nurVorschau) tx(() => { for (const z of zeilen.filter((z) => !z.vorhanden)) sollEinfuegen(objektId, z); });
       return zeilen;
+    },
+
+    sollAbgleich: (typ, vertragId, opt) => sollAbgleich(typ, vertragId, opt),
+    sollAutomatisch,
+    naechsteFaelligkeit,
+
+    // State of a contract account for the payment form: overdue, due today, credit and the next charge.
+    kontoStatus: (kontoId, stichtag = new Date().toISOString().slice(0, 10)) => {
+      const k = get('SELECT * FROM konten WHERE id = ?', kontoId);
+      if (!k?.vertrag_id) return null;
+      const op = offenePostenKonto(kontoId, stichtag);
+      const v = get(`SELECT beginn, ende FROM ${vertragTabelle(k.vertrag_typ)} WHERE id = ?`, k.vertrag_id);
+      const ueberfaellig = op.offen.filter((o) => o.verzug >= 1);
+      return {
+        typ: k.vertrag_typ, vertrag_id: k.vertrag_id, beginn: v?.beginn ?? null, ende: v?.ende ?? null,
+        ueberfaellig_ct: Math.max(0, ueberfaellig.reduce((s, o) => s + o.offen_ct, 0) - op.guthaben_ct),
+        offene_monate: ueberfaellig.map((o) => o.text),
+        heute_faellig_ct: op.offen.filter((o) => o.verzug < 1).reduce((s, o) => s + o.offen_ct, 0),
+        guthaben_ct: op.guthaben_ct,
+        saldo_ct: op.summe_ct,
+        naechste: naechsteFaelligkeit(k.vertrag_typ, k.vertrag_id, stichtag),
+      };
     },
 
     offenePosten: (objektId, stichtag = new Date().toISOString().slice(0, 10), typ = null) => {

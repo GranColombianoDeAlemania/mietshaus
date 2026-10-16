@@ -5,6 +5,7 @@ import { useLoad } from '../useLoad';
 import { Chip, Dialog } from '../ui';
 import { absaetze, absenderAus, alsPdfAblegen, brief, esc, tabelle, empfaengerVon } from '../dokument';
 import { L } from '../navi';
+import { sollNachfrage } from './Sollstellung';
 
 const plusMonate = (iso: string, n: number) => {
   const d = new Date(iso + 'T00:00:00Z');
@@ -55,6 +56,7 @@ export function Kuendigung(props: { vertrag: Row; einheit: Row; onClose: () => v
     try {
       const a = durch === 'aufhebung' ? 'aufhebung' : art;
       await call('kuendigungErfassen', { vertrag_id: v.id, durch, art: a, zugang, zum });
+      await sollNachfrage('miete', v.id);
       const einst = await call('einstellungen');
       const absender = absenderAus(einst);
       const p = await empfaengerVon(v);

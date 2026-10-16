@@ -124,6 +124,12 @@ module.exports = function pruefung({ all, get, PERSON_NAME, bh, aw, einstellunge
             if (fehlend.length) add('Buchhaltung', `soll:${typ}:${v.id}:${fehlend.at(-1)}`, 'warnung',
               `${v.name} (${v.einheit}): Für ${fehlend.length > 3 ? `${fehlend.length} Monate (${monatDe(fehlend[0])} bis ${monatDe(fehlend.at(-1))})` : fehlend.map(monatDe).join(', ')} fehlen die monatlichen Forderungen.`,
               { links: [{ text: v.name, ziel: { vertrag: v.id, typ } }], ziel: { seite: 'soll', objektId: o.id, modus: typ }, hilfe: 'Unter „Sollstellung“ erzeugen – sonst fehlen diese Monate in offenen Posten und Abrechnungen.' });
+            // Charges that no longer match the contract (amounts or start/end changed after they were booked).
+            const abw = bh.sollAbgleich(typ, v.id).aenderungen.filter((a) => !a.manuell);
+            if (abw.length) add('Buchhaltung', `sollabw:${typ}:${v.id}:${abw.map((a) => `${a.monat}=${a.neu_ct}`).join(',')}`, 'warnung',
+              `${v.name} (${v.einheit}): Die gebuchten Forderungen für ${abw.length > 3 ? `${abw.length} Monate` : abw.map((a) => monatDe(a.monat)).join(', ')} passen nicht zum Vertrag `
+                + `(z. B. ${monatDe(abw[0].monat)}: gebucht ${euro(abw[0].alt_ct)}, laut Vertrag ${euro(abw[0].neu_ct)}).`,
+              { links: [{ text: v.name, ziel: { vertrag: v.id, typ } }], ziel: { vertrag: v.id, typ }, hilfe: 'Auf der Vertragsseite mit „Forderungen prüfen“ neu buchen – oder Vertrag und Mietanpassungen prüfen.' });
           }
         }
       });

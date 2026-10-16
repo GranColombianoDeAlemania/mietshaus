@@ -53,6 +53,16 @@ Two modes, kept separate but linked:
 | E-Rechnung | ZUGFeRD/Factur-X (XML inside the PDF) and XRechnung (CII and UBL): exact amounts, VAT, IBAN, line items; readable view; input tax when booking | done |
 | Tests | `scripts/rechentest.cjs` builds a sample house and recomputes every figure independently; `scripts/klicktest.cjs` opens every page, clicks the buttons and checks PDFs and SEPA XML (ISO 20022 schemas) | done |
 
+### 0.6.1 – charges follow the contract
+
+| Area | Contents | Status |
+|------|----------|--------|
+| Sollstellung | Saving a contract, a rent change, a notice or an accepted applicant books the charges of the automatic range at once (not only at the next hourly run) and rebooks months that no longer match amounts, start, end or part-month rule; older months only after asking, locked or hand-cancelled months never; months before the automation are offered for a new contract or a new start date | done |
+| Anzeige | Payment form shows the tenant account (due, after this payment, next charge) and warns when a rent payment goes to an income account; contract page shows the next charge, credit and charges due today; deviations on the contract page, the Sollstellung page and in the check report | done |
+| Sonstiges | A contract carrying only automatic charges can be deleted; prepared statements are cached (lists, contract pages and check report about 3× faster); nested transactions run inside the outer one | done |
+
+Next (proposal https://claude.ai/artifact/FFcjQB583kkXcYPArk5UvP): gauges and key figures for cockpit, tenant and unit pages; self-use of a unit (own household) in rental objects with the owner's share in the service-charge statement and the rented share in Anlage V.
+
 ## Development
 
 ```

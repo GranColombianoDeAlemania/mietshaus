@@ -6,6 +6,7 @@ import { alleNamen, anrede, briefName, call, datum, euro, fehlerText, heute, par
 import { useLoad } from '../useLoad';
 import { Dialog } from '../ui';
 import { absaetze, absenderAus, alsPdfAblegen, brief, empfaengerVon, esc, tabelle } from '../dokument';
+import { sollNachfrage } from './Sollstellung';
 
 const plusTage = (iso: string, n: number) => {
   const d = new Date(iso + 'T00:00:00Z');
@@ -82,6 +83,7 @@ export function AnpassungBrief(props: { v: Row; a: Row; objekt: Row; anpassungen
     try {
       await call('save', 'anpassungen', { id: a.id, gueltig_ab: ab });
       setA({ ...a, gueltig_ab: ab });
+      void sollNachfrage('miete', v.id);
       props.onGeaendert();
     } catch (e) { setMeldung(fehlerText(e)); }
   }
@@ -89,6 +91,7 @@ export function AnpassungBrief(props: { v: Row; a: Row; objekt: Row; anpassungen
     try {
       await call('save', 'anpassungen', { id: a.id, kaltmiete_ct: ct });
       setA({ ...a, kaltmiete_ct: ct });
+      void sollNachfrage('miete', v.id);
       props.onGeaendert();
     } catch (e) { setMeldung(fehlerText(e)); }
   }

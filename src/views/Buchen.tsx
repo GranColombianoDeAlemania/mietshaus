@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { betrag, call, datum, diesesJahr, fehler, fehlerText, heute, parseCent, type Row } from '../api';
+import { betrag, call, datum, diesesJahr, euro, fehler, fehlerText, heute, parseCent, type Row } from '../api';
 import { useLoad } from '../useLoad';
 import { KontoSelect, Tabs, Zeitraum } from '../ui';
 import { useAktion } from '../aktion';
@@ -162,7 +162,8 @@ function Buchungsmaske(props: { objekt: Row; konten: Row[]; onDone: () => void; 
                   <td><KontoSelect konten={props.konten} value={p.haben_id} onChange={(id) => setP(i, { haben_id: id })} /></td>
                 </>
               ) : (
-                <td><KontoSelect konten={props.konten} klassen={gegenKlassen} value={p.gegen_id} onChange={(id) => setP(i, { gegen_id: id })} /></td>
+                <td><KontoSelect konten={props.konten} klassen={gegenKlassen} value={p.gegen_id} onChange={(id) => setP(i, { gegen_id: id })} />
+                  {art === 'einnahme' && p.gegen_id && <KontoHinweis konto={props.konten.find((k) => k.id === p.gegen_id)} betrag_ct={parseCent(p.betrag)} datum={kopf.datum} />}</td>
               )}
               <td><input value={p.text} onChange={(e) => setP(i, { text: e.target.value })} /></td>
               {art === 'ausgabe' && vst19 && (
@@ -189,3 +190,31 @@ function Buchungsmaske(props: { objekt: Row; konten: Row[]; onDone: () => void; 
     </div>
   );
 }
+
+// Rent and house money are charged to the contract account by the monthly charges; a payment booked straight to
+// the income account would count twice and leave the tenant in arrears.
+const ERTRAG_AUS_SOLL = ['miete', 'sonst', 'bk', 'hk', 'hausgeld', 'ruecklage'];
+
+// Shows the selected account's state when a payment is entered: what is due, what remains after this payment.
+function KontoHinweis(props: { konto: Row | undefined; betrag_ct: number; datum: string }) {
+  const k = props.konto;
+  const [s] = useLoad<Row | null>(() => (k?.klasse === 'person' ? call('kontoStatus', k.id, props.datum || heute()) : Promise.resolve(null)), [k?.id, props.datum]);
+  if (k?.klasse === 'einnahme' && ERTRAG_AUS_SOLL.includes(k.kategorie))
+    return <p className="klein fehlertext">Mieter- und Eigentümerzahlungen bitte auf das Personenkonto buchen: Die {k.kategorie === 'hausgeld' || k.kategorie === 'ruecklage' ? 'Hausgeldforderung' : 'Miete'} ist
+      über die Sollstellung schon als Ertrag gebucht. Hier gebucht, zählt sie doppelt und beim Mieter bleibt ein Rückstand.</p>;
+  if (!s) return null;
+  const nachher = s.saldo_ct - props.betrag_ct;
+  const naechste = s.naechste ? `nächste Fälligkeit ${datum(s.naechste.datum)}: ${euro(s.naechste.betrag_ct)}` : '';
+  return (
+    <p className="klein hinweis">
+      {s.beginn > (props.datum || heute()) ? `Vertrag beginnt am ${datum(s.beginn)} – noch nichts fällig. `
+        : s.saldo_ct > 0 ? `Fällig und offen: ${euro(s.saldo_ct)}${s.offene_monate.length ? ` (${s.offene_monate.join(', ')})` : ''}. `
+          : s.guthaben_ct > 0 ? `Nichts offen, Guthaben ${euro(s.guthaben_ct)}. ` : 'Nichts offen. '}
+      {props.betrag_ct > 0 && (nachher > 0 ? <>Nach dieser Zahlung bleiben <b className="negativ">{euro(nachher)}</b> offen. </>
+        : nachher < 0 ? <>Nach dieser Zahlung: Guthaben <b>{euro(-nachher)}</b>{s.naechste ? ', wird mit der nächsten Forderung verrechnet' : ''}. </>
+          : <>Nach dieser Zahlung ist das Konto ausgeglichen. </>)}
+      {naechste && <>{naechste.charAt(0).toUpperCase() + naechste.slice(1)}.</>}
+    </p>
+  );
+}
+

@@ -8,6 +8,7 @@ import { Dialog } from '../ui';
 import { absenderAus, alsPdfAblegen, bericht, brief, esc, tabelle, absaetze, alsPdf, empfaengerVon } from '../dokument';
 import { dokUrl } from './Archiv';
 import { ZAEHLER_ARTEN } from './Zaehler';
+import { sollNachfrage } from './Sollstellung';
 
 const ZUSTAENDE: [string, string][] = [['gut', 'in Ordnung'], ['gebraucht', 'normale Abnutzung'], ['maengel', 'Mängel']];
 
@@ -234,6 +235,7 @@ function Mieterwechsel(props: { vertragId: number; objekt: Row; onClose: () => v
     const ende = w!.ende_neu ?? (w!.kuendigung_durch === 'mieter' ? await call('mieterKuendigungsende', w!.kuendigung_eingang) : v.ende);
     if (!ende) return alert('Bitte das Vertragsende angeben.');
     await call('save', 'mietverhaeltnisse', { id: v.id, ende });
+    await sollNachfrage('miete', v.id);
     await call('mieterwechselSpeichern', props.vertragId, { ...w, schritte: { ...w!.schritte, kuendigung: heute() } });
     reload();
   }

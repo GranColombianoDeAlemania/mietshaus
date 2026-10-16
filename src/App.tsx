@@ -33,6 +33,7 @@ import { ProjektCockpit, ProjektDokumente, ProjektKosten, ProjektListe, ProjektZ
 import { Pruefbericht } from './views/Pruefbericht';
 import { Suche, type Befehl } from './Suche';
 import { Vorschaukarte } from './Vorschaukarte';
+import { FrageHost } from './frage';
 import { kontextmenue, zielZuordnung } from './kontext';
 import { aktionSetzen } from './aktion';
 import { anzeige } from './anzeige';
@@ -487,6 +488,7 @@ export default function App() {
         {ziehen && <div className="dropzone">Dateien loslassen – sie landen im Postfach. Auf eine Person, Einheit oder Buchung ziehen, um sie dort abzulegen.</div>}
         <Vorschaukarte />
         {dokOffen && <DokumentDialog id={dokOffen.id} datei={dokOffen.datei} onClose={() => setDokOffen(null)} />}
+        <FrageHost />
       </div>
     </NaviContext.Provider>
   );
