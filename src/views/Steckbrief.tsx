@@ -9,6 +9,7 @@ import { dokUrl } from './Archiv';
 import { Galerie } from '../Galerie';
 import { L, useNavi } from '../navi';
 import { ROLLEN } from './WegExtras';
+import { Hausansicht } from './Kennzahlen';
 
 export function ObjektKacheln(props: { modus: Modus; oeffne: (seite: string, id?: number) => void }) {
   const [liste] = useLoad<Row[]>(() => call('objektKacheln', props.modus), [props.modus]);
@@ -26,8 +27,10 @@ export function ObjektKacheln(props: { modus: Modus; oeffne: (seite: string, id?
             <div className="ampeln">
               {o.rueckstand_ct > 0 ? <span className="ampel rot">Rückstand {euro(o.rueckstand_ct)}</span> : <span className="ampel gruen">keine Rückstände</span>}
               {o.leer > 0 && <span className="ampel orange">{o.leer} {props.modus === 'weg' ? 'ohne Eigentümer' : 'leer'}</span>}
+              {o.selbst > 0 && props.modus !== 'weg' && <span className="ampel">{o.selbst} selbst genutzt</span>}
               {o.vorgaenge > 0 && <span className="ampel">{o.vorgaenge} offene Vorgänge</span>}
             </div>
+            <Hausansicht etagen={o.haus} mini weg={props.modus === 'weg'} />
           </div>
         </div>
       ))}
@@ -46,6 +49,7 @@ export function Steckbrief(props: { objekt: Row; oeffne: (seite: string, id?: nu
   const navi = useNavi();
   const [s, reload] = useLoad<Row>(() => call('objektSteckbrief', props.objekt.id), [props.objekt.id]);
   const [einheiten] = useLoad<Row[]>(() => call('einheiten', props.objekt.id), [props.objekt.id]);
+  const [haus] = useLoad<Row[]>(() => call('hausansicht', props.objekt.id, props.modus === 'weg' ? 'weg' : 'miete'), [props.objekt.id, props.modus]);
   const [bilder] = useLoad<Row[]>(() => call('galerie', { objekt_id: props.objekt.id, nur_bilder: true }), [props.objekt.id]);
   const [waehlen, setWaehlen] = useState(false);
   if (!s) return null;
@@ -75,17 +79,9 @@ export function Steckbrief(props: { objekt: Row; oeffne: (seite: string, id?: nu
         {s.geld.filter((g: Row, i: number) => i === 0 || g.saldo_ct !== 0).map((g: Row) => <button key={g.id} className="kachel klickbar" onClick={() => navi.zu({ konto: g.id })}><div className="wert">{euro(g.saldo_ct)}</div><div className="label">{g.bezeichnung}</div></button>)}
       </div>
       <div className="panel">
-        <div className="panelkopf"><h3>Einheiten</h3><L zu={{ seite: 'einheiten', objektId: o.id }}>Alle Einheiten →</L></div>
-        <div className="einheitenraster">
-          {einheiten?.map((e) => (
-            <div key={e.id} className="einheitkarte klickbar" data-ziel={`einheit:${e.id}`} onClick={() => navi.zu({ einheit: e.id })}>
-              <div className="kopf"><L zu={{ einheit: e.id }}>{e.bezeichnung}</L><span className="klein hinweis">{e.art}{e.wohnflaeche ? ` · ${zahl(e.wohnflaeche)} m²` : ''}</span></div>
-              {miete && <div className="zeile"><span className="klein hinweis">Mieter</span>{e.mieter ? <L zu={{ person: e.mieter_id }}>{e.mieter}</L> : <i className="hinweis">{e.selbstgenutzt ? 'selbst genutzt' : 'leer'}</i>}</div>}
-              {weg && <div className="zeile"><span className="klein hinweis">Eigentum</span>{e.eigentuemer ? <L zu={{ person: e.eigentuemer_id }}>{e.eigentuemer}</L> : <i className="hinweis">–</i>}</div>}
-            </div>
-          ))}
-          {einheiten && !einheiten.length && <Leer text="Noch keine Einheiten." aktion={<button onClick={() => navi.zu({ seite: 'einheiten', objektId: o.id })}>Einheiten anlegen</button>} />}
-        </div>
+        <div className="panelkopf"><h3>Hausansicht</h3><L zu={{ seite: 'einheiten', objektId: o.id }}>Alle Einheiten →</L></div>
+        {haus && haus.length > 0 && <Hausansicht etagen={haus} weg={props.modus === 'weg'} />}
+        {einheiten && !einheiten.length && <Leer text="Noch keine Einheiten." aktion={<button onClick={() => navi.zu({ seite: 'einheiten', objektId: o.id })}>Einheiten anlegen</button>} />}
       </div>
       <div className="raster2">
         <div className="spalte">

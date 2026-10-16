@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { betrag, call, datum, diesesJahr, euro, fehler, fehlerText, heute, parseCent, type Row } from '../api';
 import { useLoad } from '../useLoad';
-import { KontoSelect, Tabs, Zeitraum } from '../ui';
+import { Dialog, KontoSelect, Tabs, Zeitraum } from '../ui';
 import { useAktion } from '../aktion';
 import { L } from '../navi';
 
@@ -26,7 +26,9 @@ export function Buchen(props: { objekt: Row }) {
     return s;
   });
   const [rows, reload] = useLoad<Row[]>(() => call('buchungen', props.objekt.id, { von, bis, suche }), [props.objekt.id, von, bis, suche]);
+  const [einheiten] = useLoad<Row[]>(() => call('einheiten', props.objekt.id), [props.objekt.id]);
   const [offen, setOffen] = useState(false);
+  const [zuordnen, setZuordnen] = useState<Row | null>(null);
   useAktion('neue-buchung', () => setOffen(true));
 
   return (
@@ -43,7 +45,7 @@ export function Buchen(props: { objekt: Row }) {
         <span className="hinweis klein">{rows?.length ?? 0} Buchungen</span>
       </div>
       {offen && konten && (
-        <Buchungsmaske objekt={props.objekt} konten={konten} onDone={() => { reload(); ladeKonten(); }} onClose={() => setOffen(false)} />
+        <Buchungsmaske objekt={props.objekt} konten={konten} einheiten={einheiten ?? []} onDone={() => { reload(); ladeKonten(); }} onClose={() => setOffen(false)} />
       )}
       <table>
         <thead><tr><th>Datum</th><th>Beleg</th><th>Text</th><th>Soll</th><th>Haben</th><th className="num">Betrag</th><th /></tr></thead>
@@ -53,11 +55,15 @@ export function Buchen(props: { objekt: Row }) {
               <td>{datum(b.datum)}</td>
               <td>{b.dok_id ? <L zu={{ dokument: b.dok_id, datei: b.dok_datei }} title="Beleg öffnen">{b.beleg || 'Beleg'}</L> : b.beleg}</td>
               <td>{b.text} {b.art === 'soll' && <span className="tag">Soll</span>}{b.art === 'bank' && <span className="tag">Bank</span>}
-                {b.storniert ? <span className="tag fehlertext">storniert</span> : null}{b.festgeschrieben ? <span className="tag" title="festgeschriebener Zeitraum">🔒</span> : null}</td>
+                {b.storniert ? <span className="tag fehlertext">storniert</span> : null}{b.festgeschrieben ? <span className="tag" title="festgeschriebener Zeitraum">🔒</span> : null}
+                {b.einheit_bez ? <span className="tag" title={b.einheit_id ? 'Kosten dieser Einheit' : 'Einheit aus Beleg oder Projekt'}>{b.einheit_bez}</span> : null}</td>
               <td className="klein"><L zu={b.soll_vid ? { vertrag: b.soll_vid, typ: b.soll_vtyp } : { konto: b.soll_id }}>{b.soll_nr} {b.soll_bez}</L></td>
               <td className="klein"><L zu={b.haben_vid ? { vertrag: b.haben_vid, typ: b.haben_vtyp } : { konto: b.haben_id }}>{b.haben_nr} {b.haben_bez}</L></td>
               <td className="num">{betrag(b.betrag_ct)}</td>
               <td className="aktionen">
+                {(b.soll_klasse === 'kosten' || b.haben_klasse === 'kosten') && !b.festgeschrieben && (
+                  <button title="Die Kosten einer Einheit zuordnen: zählen dann voll für eine vermietete Einheit und nicht für die selbst genutzte" onClick={() => setZuordnen(b)}>Einheit</button>
+                )}
                 {!b.storniert && b.art !== 'storno' && (
                   <button title="Gegenbuchung mit heutigem Datum – die ursprüngliche Buchung bleibt sichtbar" onClick={async () => {
                     if (!confirm('Buchung stornieren (Gegenbuchung mit heutigem Datum)?')) return;
@@ -79,19 +85,42 @@ export function Buchen(props: { objekt: Row }) {
           ))}
         </tbody>
       </table>
+      {zuordnen && <EinheitZuordnen buchung={zuordnen} einheiten={einheiten ?? []} onClose={() => { setZuordnen(null); reload(); }} />}
     </section>
   );
 }
 
+// Assigns a posting (with its split group) to a unit, or removes the assignment.
+function EinheitZuordnen(props: { buchung: Row; einheiten: Row[]; onClose: () => void }) {
+  const b = props.buchung;
+  const [wahl, setWahl] = useState<number | ''>(b.einheit_id ?? '');
+  const [meldung, setMeldung] = useState('');
+  return (
+    <Dialog titel="Kosten einer Einheit zuordnen" onClose={props.onClose} aktionen={
+      <button className="primary" onClick={async () => { try { await call('buchungEinheitSetzen', b.id, wahl || null); props.onClose(); } catch (e) { setMeldung(fehlerText(e)); } }}>Übernehmen</button>}>
+      <p>{datum(b.datum)} · {b.text} · {euro(b.betrag_ct)}{b.gruppe ? ' (ganze Splitbuchung)' : ''}</p>
+      <label className="block">Betrifft Einheit
+        <select value={wahl} onChange={(e) => setWahl(e.target.value ? Number(e.target.value) : '')}>
+          <option value="">– das ganze Haus –</option>
+          {props.einheiten.map((e) => <option key={e.id} value={e.id}>{e.bezeichnung}</option>)}
+        </select>
+      </label>
+      <p className="klein hinweis">Kosten einer vermieteten Einheit (Renovierung, Reparatur) zählen für Steuer und Rendite voll, Kosten der selbst genutzten Wohnung nicht.
+        Kosten des ganzen Hauses werden nach Fläche aufgeteilt. Die Einheit erscheint auch im Ertrag und beim Mieterwechsel der Einheit.</p>
+      {meldung && <p className="fehler">{meldung}</p>}
+    </Dialog>
+  );
+}
+
 // Entry form for receipts, expenses (both with optional split) and free double-entry postings.
-function Buchungsmaske(props: { objekt: Row; konten: Row[]; onDone: () => void; onClose: () => void }) {
+function Buchungsmaske(props: { objekt: Row; konten: Row[]; einheiten: Row[]; onDone: () => void; onClose: () => void }) {
   const geldStandard = props.konten.find((k) => k.klasse === 'geld')?.id ?? '';
   // A page like the contract page can pre-fill the form ("Zahlung buchen").
   const [vorlage] = useState<Row | null>(() => {
     try { const v = JSON.parse(sessionStorage.getItem('buchungVorlage') ?? 'null'); sessionStorage.removeItem('buchungVorlage'); return v; } catch { return null; }
   });
   const [art, setArt] = useState<Art>(vorlage?.art ?? 'einnahme');
-  const [kopf, setKopf] = useState({ datum: heute(), beleg: '', text: vorlage?.text ?? '', geld_id: geldStandard as number | '' });
+  const [kopf, setKopf] = useState({ datum: heute(), beleg: '', text: vorlage?.text ?? '', geld_id: geldStandard as number | '', einheit_id: '' as number | '' });
   const [pos, setPos] = useState<Pos[]>([{ ...leerePos(), gegen_id: vorlage?.gegen_id ?? '' }]);
   const [meldung, setMeldung] = useState('');
 
@@ -117,10 +146,10 @@ function Buchungsmaske(props: { objekt: Row; konten: Row[]; onDone: () => void; 
           ...(vst ? [{ soll_id: konto!.id, haben_id: kopf.geld_id, betrag_ct: vst, text: `Vorsteuer ${p.ust} %${p.text ? ` – ${p.text}` : ''}` }] : []),
         ];
       });
-      await call('buchen', { objekt_id: props.objekt.id, datum: kopf.datum, beleg: kopf.beleg, text: kopf.text, positionen });
+      await call('buchen', { objekt_id: props.objekt.id, datum: kopf.datum, beleg: kopf.beleg, text: kopf.text, einheit_id: art === 'einnahme' ? null : kopf.einheit_id || null, positionen });
       setMeldung(`Gebucht: ${betrag(summe)} €`);
       setPos([leerePos()]);
-      setKopf({ ...kopf, beleg: kopf.beleg && /\d+$/.test(kopf.beleg) ? kopf.beleg.replace(/\d+$/, (n) => String(Number(n) + 1).padStart(n.length, '0')) : '', text: '' });
+      setKopf({ ...kopf, beleg: kopf.beleg && /\d+$/.test(kopf.beleg) ? kopf.beleg.replace(/\d+$/, (n) => String(Number(n) + 1).padStart(n.length, '0')) : '', text: '', einheit_id: '' });
       props.onDone();
     } catch (e) {
       setMeldung(fehlerText(e));
@@ -143,6 +172,14 @@ function Buchungsmaske(props: { objekt: Row; konten: Row[]; onDone: () => void; 
         {art !== 'frei' && (
           <label className="breit">{art === 'einnahme' ? 'Eingang auf Konto' : 'Bezahlt von Konto'}
             <KontoSelect konten={props.konten} klassen={['geld']} value={kopf.geld_id} onChange={(id) => setKopf({ ...kopf, geld_id: id })} />
+          </label>
+        )}
+        {art !== 'einnahme' && props.einheiten.length > 0 && (
+          <label className="breit" title="Kosten einer vermieteten Einheit zählen für Steuer und Rendite voll, Kosten der selbst genutzten Wohnung nicht; ohne Angabe gelten sie für das ganze Haus">Betrifft Einheit (optional)
+            <select value={kopf.einheit_id} onChange={(e) => setKopf({ ...kopf, einheit_id: e.target.value ? Number(e.target.value) : '' })}>
+              <option value="">– das ganze Haus –</option>
+              {props.einheiten.map((e) => <option key={e.id} value={e.id}>{e.bezeichnung}</option>)}
+            </select>
           </label>
         )}
       </div>

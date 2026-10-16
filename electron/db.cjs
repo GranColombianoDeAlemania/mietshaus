@@ -1,6 +1,7 @@
 // Local SQLite database: schema migrations and a small whitelisted CRUD layer.
 const { DatabaseSync } = require('node:sqlite');
 const buchhaltung = require('./buchhaltung.cjs');
+const { selbstSql } = buchhaltung;
 const abrechnung = require('./abrechnung.cjs');
 const verwaltung = require('./verwaltung.cjs');
 const archiv = require('./archiv.cjs');
@@ -11,6 +12,7 @@ const akten = require('./akten.cjs');
 const darlehen = require('./darlehen.cjs');
 const mieterwechsel = require('./mieterwechsel.cjs');
 const pruefung = require('./pruefung.cjs');
+const kennzahlen = require('./kennzahlen.cjs');
 
 const MIGRATIONS = [
   `
@@ -673,13 +675,39 @@ const MIGRATIONS = [
   -- Cap for rent increases under § 558 BGB in percent: 20, or 15 where a state ordinance applies.
   ALTER TABLE objekte ADD COLUMN kappungsgrenze INTEGER;
   `,
+  `
+  -- Units the landlord lives in: periods with the size of the household. Such a unit is not vacant; in the
+  -- service-charge statement it bears its own share, and for income tax only the rented part counts.
+  CREATE TABLE selbstnutzung (
+    id INTEGER PRIMARY KEY,
+    einheit_id INTEGER NOT NULL REFERENCES einheiten(id) ON DELETE CASCADE,
+    beginn TEXT NOT NULL,
+    ende TEXT,
+    personen REAL NOT NULL DEFAULT 1,
+    notiz TEXT
+  );
+  CREATE INDEX selbstnutzung_einheit ON selbstnutzung (einheit_id);
+  -- Costs that concern one unit (repairs, renovation): kept fully for a rented unit, not at all for the own one.
+  ALTER TABLE buchungen ADD COLUMN einheit_id INTEGER REFERENCES einheiten(id) ON DELETE SET NULL;
+  -- Local comparative rent and rent index range per m² (cents), per object and optionally per unit.
+  ALTER TABLE objekte ADD COLUMN vergleichsmiete_ct INTEGER;
+  ALTER TABLE objekte ADD COLUMN mietspiegel_von_ct INTEGER;
+  ALTER TABLE objekte ADD COLUMN mietspiegel_bis_ct INTEGER;
+  ALTER TABLE einheiten ADD COLUMN vergleichsmiete_ct INTEGER;
+  ALTER TABLE einheiten ADD COLUMN mietspiegel_von_ct INTEGER;
+  ALTER TABLE einheiten ADD COLUMN mietspiegel_bis_ct INTEGER;
+  -- Deductible share of loan interest in percent when it differs from the rented share of the area.
+  ALTER TABLE steuerangaben ADD COLUMN zins_anteil REAL;
+  `,
 ];
 
 // Columns the renderer may write, per table. Everything else is rejected.
 const TABLES = {
   objekte: ['bezeichnung', 'art', 'strasse', 'plz', 'ort', 'baujahr', 'wj_beginn', 'iban', 'bic', 'bank',
-    'ruecklage_iban', 'sepa_glaeubiger_id', 'hausmeister', 'notiz', 'kaufpreis_ct', 'kaufnebenkosten_ct', 'kaufdatum', 'gebaeudeanteil', 'afa_satz', 'titelbild_id', 'vorsteuer_quote', 'kappungsgrenze'],
-  einheiten: ['objekt_id', 'nr', 'bezeichnung', 'art', 'lage', 'wohnflaeche', 'zimmer', 'mea', 'notiz'],
+    'ruecklage_iban', 'sepa_glaeubiger_id', 'hausmeister', 'notiz', 'kaufpreis_ct', 'kaufnebenkosten_ct', 'kaufdatum', 'gebaeudeanteil', 'afa_satz', 'titelbild_id', 'vorsteuer_quote', 'kappungsgrenze',
+    'vergleichsmiete_ct', 'mietspiegel_von_ct', 'mietspiegel_bis_ct'],
+  einheiten: ['objekt_id', 'nr', 'bezeichnung', 'art', 'lage', 'wohnflaeche', 'zimmer', 'mea', 'notiz', 'vergleichsmiete_ct', 'mietspiegel_von_ct', 'mietspiegel_bis_ct'],
+  selbstnutzung: ['einheit_id', 'beginn', 'ende', 'personen', 'notiz'],
   personen: ['anrede', 'titel', 'vorname', 'nachname', 'firma', 'strasse', 'plz', 'ort', 'land', 'telefon',
     'mobil', 'email', 'iban', 'bic', 'kontoinhaber', 'geburtsdatum', 'notiz'],
   mietverhaeltnisse: ['einheit_id', 'person_id', 'person2_id', 'beginn', 'ende', 'kaltmiete_ct', 'bk_vz_ct',
@@ -754,7 +782,7 @@ function open(file, quelle = 'app') {
 // Tables whose changes are logged, and columns left out of the log (large or derived).
 const PROTOKOLLIERT = ['interessenten', 'uebergaben', 'objekte', 'einheiten', 'personen', 'mietverhaeltnisse', 'eigentum', 'konten', 'buchungen', 'anpassungen',
   'kautionen', 'kautionsbewegungen', 'dokumente', 'darlehen', 'beschluesse', 'projekte', 'projektposten', 'zaehlerstaende', 'mahnungen', 'abrechnungen',
-  'ratenplaene', 'erhaltungsverteilung'];
+  'ratenplaene', 'erhaltungsverteilung', 'selbstnutzung'];
 const NICHT_PROTOKOLLIEREN = new Set(['text', 'daten', 'erfasst', 'unterschrift_mieter', 'unterschrift_vermieter', 'erechnung']);
 
 // Temporary triggers belong to this connection only, so each process records its own source (app or Claude).
@@ -929,7 +957,8 @@ function api(db) {
           WHERE g.einheit_id = e.id AND ${aktuell('g')} ORDER BY g.beginn DESC LIMIT 1) AS eigentuemer,
         (SELECT g.person_id FROM eigentum g WHERE g.einheit_id = e.id AND ${aktuell('g')} ORDER BY g.beginn DESC LIMIT 1) AS eigentuemer_id,
         (SELECT g.id FROM eigentum g WHERE g.einheit_id = e.id AND ${aktuell('g')} ORDER BY g.beginn DESC LIMIT 1) AS eigentum_id,
-        (SELECT max(g.selbstnutzer) FROM eigentum g WHERE g.einheit_id = e.id AND ${aktuell('g')}) AS selbstgenutzt
+        CASE WHEN ${selbstSql('e', "date('now')")} OR coalesce((SELECT max(g.selbstnutzer) FROM eigentum g WHERE g.einheit_id = e.id AND ${aktuell('g')}), 0) = 1
+          THEN 1 ELSE 0 END AS selbstgenutzt
       FROM einheiten e WHERE e.objekt_id = ? ORDER BY e.nr`, objektId),
 
     personen: () => all(`SELECT p.*, ${PERSON_NAME} AS name,
@@ -1021,7 +1050,7 @@ function api(db) {
           WHERE o.art IN (?1, ?2) AND ${aktuell('v')}) AS vertraege,
         0 AS soll_monat_ct,
         (SELECT count(*) FROM einheiten e JOIN objekte o ON o.id = e.objekt_id WHERE o.art IN (?1, ?2)
-          AND NOT EXISTS (SELECT 1 FROM ${vt} v WHERE v.einheit_id = e.id AND ${aktuell('v')})) AS leer`, a, b);
+          AND NOT EXISTS (SELECT 1 FROM ${vt} v WHERE v.einheit_id = e.id AND ${aktuell('v')}) AND NOT ${selbstSql('e', "date('now')")}) AS leer`, a, b);
       // Monthly amount due from the amounts in force today, including rent and advance payment adjustments.
       const heute = new Date().toISOString().slice(0, 10);
       const typ = modus === 'weg' ? 'weg' : 'miete';
@@ -1034,14 +1063,17 @@ function api(db) {
     },
   };
   const pj = projekte({ db, all, get, tx, bh });
-  const aw = auswertung({ db, all, get, tx, bh });
+  const aw = auswertung({ db, all, get, tx, bh, ab });
   const ak = akten({ db, all, get, PERSON_NAME, bh });
   const dl = darlehen({ db, all, get, tx, bh });
   const mw = mieterwechsel({ db, all, get, tx, PERSON_NAME });
-  const au = automatik({ db, all, get, tx, PERSON_NAME, bh, ab, vw, einstellungen: basis.einstellungen });
+  const kz = kennzahlen({ db, all, get, PERSON_NAME, bh, aw, ab, vw, dl });
+  const au = automatik({ db, all, get, tx, PERSON_NAME, bh, ab, vw, kz, einstellungen: basis.einstellungen });
   const pr = pruefung({ all, get, PERSON_NAME, bh, aw, einstellungen: basis.einstellungen });
   return {
-    ...bh, ...ab, ...vw, ...ar, ...au, ...pj, ...aw, ...ak, ...dl, ...mw, ...pr, ...basis,
+    ...bh, ...ab, ...vw, ...ar, ...au, ...pj, ...aw, ...ak, ...dl, ...mw, ...pr, ...kz, ...basis,
+    // Object tiles carry a small house view (units by floor and their state).
+    objektKacheln: (modus) => ak.objektKacheln(modus).map((o) => ({ ...o, haus: kz.hausansicht(o.id, modus === 'weg' ? 'weg' : 'miete') })),
     // Cockpit hints plus one pointing to the data check when it found errors.
     hinweise: (opt) => {
       const h = au.hinweise(opt);

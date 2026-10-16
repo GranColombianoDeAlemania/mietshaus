@@ -90,7 +90,8 @@ function starten() {
       .map((o) => ({ id: o.id, bezeichnung: o.bezeichnung, art: o.art, anschrift: [o.strasse, o.plz, o.ort].filter(Boolean).join(' '), einheiten: o.anzahl_einheiten }))), true);
 
   werkzeug('objekt_details', 'Einheiten, Mieter, Eigentümer und Umlageschlüssel eines Objekts.', { objekt_id: z.number().int() }, ({ objekt_id }) => text({
-    einheiten: db.einheiten(objekt_id).map((e) => ({ id: e.id, nr: e.nr, bezeichnung: e.bezeichnung, art: e.art, lage: e.lage, flaeche: e.wohnflaeche, mea: e.mea, mieter: e.mieter, eigentuemer: e.eigentuemer })),
+    einheiten: db.einheiten(objekt_id).map((e) => ({ id: e.id, nr: e.nr, bezeichnung: e.bezeichnung, art: e.art, lage: e.lage, flaeche: e.wohnflaeche, mea: e.mea, mieter: e.mieter, eigentuemer: e.eigentuemer,
+      selbst_genutzt: !!e.selbstgenutzt })),
     mietverhaeltnisse: db.vertraege('mietverhaeltnisse', objekt_id).map((v) => ({ id: v.id, einheit: v.einheit, einheit_id: v.einheit_id, name: v.name, person_id: v.person_id, beginn: v.beginn, ende: v.ende, aktuell: !!v.aktuell, kaltmiete_eur: eur(v.kaltmiete_ct), bk_vz_eur: eur(v.bk_vz_ct), hk_vz_eur: eur(v.hk_vz_ct) })),
     eigentum: db.vertraege('eigentum', objekt_id).map((v) => ({ id: v.id, einheit: v.einheit, einheit_id: v.einheit_id, name: v.name, person_id: v.person_id, beginn: v.beginn, ende: v.ende, aktuell: !!v.aktuell, hausgeld_eur: eur(v.hausgeld_ct) })),
     umlageschluessel: db.schluessel(objekt_id).map((k) => ({ id: k.id, bezeichnung: k.bezeichnung, typ: k.typ })),
@@ -148,6 +149,7 @@ function starten() {
     dokument_id: z.number().int(), kosten_konto_id: z.number().int(), geld_konto_id: z.number().int().optional(),
     datum: z.string().optional().describe('Zahlungsdatum, Standard: Rechnungsdatum'), betrag_eur: z.number().optional(), text: z.string().optional(),
     vorsteuer_abziehen: z.boolean().optional().describe('Bei Objekten mit umsatzsteuerpflichtiger Vermietung: Umsatzsteuer der E-Rechnung als Vorsteuer buchen (Standard: ja, wenn bekannt)'),
+    einheit_id: z.number().int().optional().describe('Wenn die Kosten nur eine Einheit betreffen (z. B. Renovierung einer Wohnung); Standard: Einheit des Dokuments'),
   }, (a) => {
     const d = db.dokument(a.dokument_id);
     if (!d) throw new Error('Dokument nicht gefunden');
@@ -163,6 +165,7 @@ function starten() {
     const abziehbar = vst && d.ust_ct && (a.vorsteuer_abziehen ?? true) && betrag === d.betrag_ct ? Math.round(d.ust_ct * quote / 100) : 0;
     const pos = [{ konto: a.kosten_konto_id, ct: betrag - abziehbar }, ...(abziehbar ? [{ konto: vst.id, ct: abziehbar }] : [])];
     const id = db.buchen({ objekt_id: d.objekt_id, datum: a.datum ?? d.datum, beleg: d.rechnungsnr, text: (a.text ?? [d.absender, d.titel].filter(Boolean).join(' – ')).slice(0, 120),
+      einheit_id: a.einheit_id ?? d.einheit_id ?? null,
       positionen: pos.map((p) => (gutschrift ? { soll_id: geld, haben_id: p.konto, betrag_ct: p.ct } : { soll_id: p.konto, haben_id: geld, betrag_ct: p.ct })) });
     db.dokumentSpeichern({ id: d.id, buchung_id: id, status: 'abgelegt' });
     return text(`Gebucht (Buchung ${id})${abziehbar ? `, davon ${(abziehbar / 100).toFixed(2)} € Vorsteuer` : ''}, Beleg verknüpft.`);
@@ -170,9 +173,10 @@ function starten() {
 
   werkzeug('buchen', 'Freie Buchung mit einer oder mehreren Positionen (Soll an Haben).', {
     objekt_id: z.number().int(), datum: z.string(), text: z.string(), beleg: z.string().optional(), dokument_id: z.number().int().optional(),
+    einheit_id: z.number().int().optional().describe('Einheit, die die Kosten betreffen (sonst das ganze Haus)'),
     positionen: z.array(z.object({ soll_konto_id: z.number().int(), haben_konto_id: z.number().int(), betrag_eur: z.number(), text: z.string().optional() })),
   }, (a) => {
-    const id = db.buchen({ objekt_id: a.objekt_id, datum: a.datum, text: a.text, beleg: a.beleg,
+    const id = db.buchen({ objekt_id: a.objekt_id, datum: a.datum, text: a.text, beleg: a.beleg, einheit_id: a.einheit_id ?? null,
       positionen: a.positionen.map((p) => ({ soll_id: p.soll_konto_id, haben_id: p.haben_konto_id, betrag_ct: cent(p.betrag_eur), text: p.text })) });
     if (a.dokument_id) db.dokumentSpeichern({ id: a.dokument_id, buchung_id: id });
     return text(`Gebucht (Buchung ${id}).`);

@@ -61,7 +61,22 @@ Two modes, kept separate but linked:
 | Anzeige | Payment form shows the tenant account (due, after this payment, next charge) and warns when a rent payment goes to an income account; contract page shows the next charge, credit and charges due today; deviations on the contract page, the Sollstellung page and in the check report | done |
 | Sonstiges | A contract carrying only automatic charges can be deleted; prepared statements are cached (lists, contract pages and check report about 3× faster); nested transactions run inside the outer one | done |
 
-Next (proposal https://claude.ai/artifact/FFcjQB583kkXcYPArk5UvP): gauges and key figures for cockpit, tenant and unit pages; self-use of a unit (own household) in rental objects with the owner's share in the service-charge statement and the rented share in Anlage V.
+## Version 0.7 – key figures and self-use
+
+Built from the pick S2 K1–K7 K9 M1–M5 M7 E1–E5 N1–N5 Z1 (proposal https://claude.ai/artifact/FFcjQB583kkXcYPArk5UvP), with small gauges and one
+size for all key figure tiles. Not picked: S1/S3, K8 yield gauge per object, K10 cockpit layout, M6 advance payment coverage, N6 own account for
+self-use, N7 change assistant, Z2 explanation on every figure.
+
+| Area | Contents | Status |
+|------|----------|--------|
+| Cockpit | Rent received this month as a ring (paid share of this month's charges, oldest first; who still owes), let area-days of 12 months without self-use and the cold rent lost to vacancy, arrears by age with § 543 flag, 90-day bank balance forecast (rents at each tenant's paid share and delay, loan instalments, insurance, last year's recurring costs; lowest point), year-to-date against last year, rent increase radar (§ 558 up to the comparative rent within cap and waiting periods, index, next step; „Vorbereiten“ fills in the adjustment), deadlines of 90 days, costs of the year by type; consumption jumps of ± 40 % as hints | done |
+| Mieter | Payment score 0–100 with its formula, 24-month payment calendar by year, account history, tenancy facts with next steps (§ 558 date and amount, longer notice period), rent per m² against house average and rent index, deposit ring; payment behaviour also on the contract page | done |
+| Einheit | Occupancy timeline with vacancy and its lost rent, cold rent charged/paid and the unit's own costs per year, consumption per m² against the house and last year, cost of the last change of tenant, rent per m² | done |
+| Haus | House view by floor (let, arrears, notice, self-used, vacant) on the fact sheet and small on the cockpit tiles | done |
+| Selbstnutzung | Periods with household size per unit; not vacant anywhere; service-charge statement with the landlord's own share (real household size under per-person keys); Anlage V only for the rented part (area and day; costs booked for a rented unit fully, for the own flat not at all; interest by area or own share), 15 % rule for the rented part; yield of the rented part or as if let; what the own flat costs per month; check report finds overlaps with tenancies | done |
+| Buchungen | Costs can name the unit they concern (also afterwards and through Claude); receipts and projects of a unit count as well | done |
+| Listen | Mini rings in the tenant list (payment score) and the unit list (occupancy), rent per m² coloured against the rent index | done |
+| Tests | Calculation test section 16: every new figure recomputed on its own (FIFO payments, area-days, person-days, forecast events) | done |
 
 ## Development
 

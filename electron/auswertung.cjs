@@ -11,7 +11,69 @@ const WK_GRUPPEN = [
   ['sonstige', 'Sonstige Werbungskosten (z. B. Bankgebühren)', () => true],
 ];
 
-module.exports = function auswertung({ db, all, get, tx, bh }) {
+const { tageZwischen, einheitVonSql } = require('./buchhaltung.cjs');
+const maxD = (a, b) => (a > b ? a : b);
+const minD = (a, b) => (a < b ? a : b);
+
+module.exports = function auswertung({ db, all, get, tx, bh, ab }) {
+  // ---------- self-use: which part of the house is rented ----------
+  const selbstPerioden = (objektId) => all(`SELECT s.*, e.bezeichnung, e.wohnflaeche FROM selbstnutzung s JOIN einheiten e ON e.id = s.einheit_id
+    WHERE e.objekt_id = ? ORDER BY s.beginn`, objektId);
+  // Days of [von, bis] a unit was used by the landlord (overlapping periods count once).
+  function selbstTage(perioden, einheitId, von, bis) {
+    const iv = perioden.filter((p) => p.einheit_id === einheitId).map((p) => [maxD(p.beginn, von), minD(p.ende || '9999-12-31', bis)]).filter(([a, b]) => a <= b)
+      .sort((x, y) => (x[0] < y[0] ? -1 : 1));
+    let tage = 0, ende = null;
+    for (const [a, b] of iv) {
+      const start = ende && a <= ende ? nachTag(ende) : a;
+      if (start <= b) tage += tageZwischen(start, b) + 1;
+      if (!ende || b > ende) ende = b;
+    }
+    return tage;
+  }
+  const selbstAm = (perioden, einheitId, datum) => perioden.some((p) => p.einheit_id === einheitId && p.beginn <= datum && (!p.ende || p.ende >= datum));
+
+  // Rented share of the building by area and day. Self-used area-days are taken out; vacant flats count as rented,
+  // since they are meant to be let. Without self-use the share is 1.
+  function vermietAnteil(objektId, von, bis, perioden = selbstPerioden(objektId)) {
+    const einheiten = all('SELECT id, bezeichnung, wohnflaeche FROM einheiten WHERE objekt_id = ? ORDER BY nr', objektId);
+    const T = tageZwischen(von, bis) + 1;
+    const gesamt = einheiten.reduce((s, e) => s + (e.wohnflaeche ?? 0), 0);
+    let selbstFlaechenTage = 0;
+    const selbst = [];
+    for (const e of einheiten) {
+      const t = selbstTage(perioden, e.id, von, bis);
+      if (!t) continue;
+      selbstFlaechenTage += (e.wohnflaeche ?? 0) * t;
+      selbst.push({ einheit_id: e.id, bezeichnung: e.bezeichnung, flaeche: e.wohnflaeche ?? 0, tage: t });
+    }
+    const anteil = gesamt > 0 ? 1 - selbstFlaechenTage / (gesamt * T) : 1;
+    return { anteil, flaeche_gesamt: gesamt, flaeche_vermietet: Math.round(gesamt * anteil * 100) / 100, tage: T, selbst };
+  }
+
+  // Cost accounts of a period with the part that belongs to the rented part of the house: costs booked for a unit
+  // count fully when the unit was let (or vacant) on the posting date and not at all when the landlord lived there;
+  // all other costs count with the rented share (interest with its own factor).
+  function kostenAufgeteilt(objektId, von, bis, anteil, zinsFaktor = anteil, perioden = selbstPerioden(objektId)) {
+    const konten = new Map();
+    for (const r of all(`SELECT k.*, CASE WHEN k.id = b.soll_id THEN b.betrag_ct ELSE -b.betrag_ct END AS ct, b.datum AS b_datum, ${einheitVonSql('b')} AS eid
+        FROM buchungen b JOIN konten k ON k.id IN (b.soll_id, b.haben_id)
+        WHERE k.objekt_id = ? AND k.klasse = 'kosten' AND k.aus_ruecklage = 0 AND b.datum BETWEEN ? AND ? ORDER BY k.nr, b.id`, objektId, von, bis)) {
+      let k = konten.get(r.id);
+      if (!k) {
+        const { ct, b_datum, eid, ...konto } = r;
+        konten.set(r.id, (k = { ...konto, betrag_ct: 0, gemeinsam_ct: 0, vermietet_ct: 0, selbst_ct: 0 }));
+      }
+      k.betrag_ct += r.ct;
+      if (!r.eid) k.gemeinsam_ct += r.ct;
+      else if (selbstAm(perioden, r.eid, r.b_datum)) k.selbst_ct += r.ct;
+      else k.vermietet_ct += r.ct;
+    }
+    return [...konten.values()].filter((k) => k.betrag_ct).map((k) => ({
+      ...k, absetzbar_ct: Math.round(k.gemeinsam_ct * (k.kategorie === 'zinsen' ? zinsFaktor : anteil)) + k.vermietet_ct,
+    }));
+  }
+
   // Cash received in a period on a tenant account, split by income type in first-in-first-out order:
   // payments settle the oldest charges first. Credit notes (e.g. a statement credit) count negatively.
   function zufluss(kontoId, von, bis) {
@@ -63,23 +125,31 @@ module.exports = function auswertung({ db, all, get, tx, bh }) {
     const von = `${jahr}-01-01`, bis = `${jahr}-12-31`;
     const ein = einnahmen(objektId, von, bis);
     const manuell = get('SELECT * FROM steuerangaben WHERE objekt_id = ? AND jahr = ?', objektId, jahr) ?? {};
-    const gruppen = Object.fromEntries(WK_GRUPPEN.map(([g, l]) => [g, { label: l, ct: 0, konten: [] }]));
-    for (const k of kosten(objektId, von, bis)) {
+    // Self-use: only the rented part may be deducted (by area and day; interest optionally with its own share).
+    const perioden = selbstPerioden(objektId);
+    const va = vermietAnteil(objektId, von, bis, perioden);
+    const zinsFaktor = manuell.zins_anteil != null ? manuell.zins_anteil / 100 : va.anteil;
+    const geteilt = va.selbst.length > 0;
+    const gruppen = Object.fromEntries(WK_GRUPPEN.map(([g, l]) => [g, { label: l, ct: 0, absetzbar_ct: 0, einzeln: false, konten: [] }]));
+    for (const k of kostenAufgeteilt(objektId, von, bis, va.anteil, zinsFaktor, perioden)) {
       const [g] = WK_GRUPPEN.find(([, , f]) => f(k));
       gruppen[g].ct += k.betrag_ct;
-      gruppen[g].konten.push({ nr: k.nr, bezeichnung: k.bezeichnung, ct: k.betrag_ct });
+      gruppen[g].absetzbar_ct += k.absetzbar_ct;
+      if (k.vermietet_ct || k.selbst_ct) gruppen[g].einzeln = true;
+      gruppen[g].konten.push({ nr: k.nr, bezeichnung: k.bezeichnung, ct: k.betrag_ct, absetzbar_ct: k.absetzbar_ct });
     }
-    if (manuell.ruecklage_hausgeld_ct) gruppen.hausgeld.ct -= manuell.ruecklage_hausgeld_ct;
+    const korrektur = (g, ct, text) => {
+      gruppen[g].ct += ct;
+      gruppen[g].absetzbar_ct += Math.round(ct * va.anteil);
+      if (text) gruppen[g].konten.push({ nr: '', bezeichnung: text, ct, absetzbar_ct: Math.round(ct * va.anteil) });
+    };
+    if (manuell.ruecklage_hausgeld_ct) korrektur('hausgeld', -manuell.ruecklage_hausgeld_ct, null);
     // Larger maintenance spread over 2–5 years (§ 82b EStDV): taken out of its year, a share counted in each year.
     for (const r of all('SELECT * FROM erhaltungsverteilung WHERE objekt_id = ? AND jahr <= ? AND jahr + jahre > ?', objektId, jahr, jahr)) {
-      if (r.jahr === jahr) {
-        gruppen.erhaltung.ct -= r.betrag_ct;
-        gruppen.erhaltung.konten.push({ nr: '', bezeichnung: `abzüglich zu verteilender Aufwand (§ 82b EStDV)${r.text ? `: ${r.text}` : ''}`, ct: -r.betrag_ct });
-      }
+      if (r.jahr === jahr) korrektur('erhaltung', -r.betrag_ct, `abzüglich zu verteilender Aufwand (§ 82b EStDV)${r.text ? `: ${r.text}` : ''}`);
       const teil = Math.floor(r.betrag_ct / r.jahre);
       const anteil = jahr === r.jahr + r.jahre - 1 ? r.betrag_ct - teil * (r.jahre - 1) : teil;
-      gruppen.erhaltung.ct += anteil;
-      gruppen.erhaltung.konten.push({ nr: '', bezeichnung: `Verteilung aus ${r.jahr} (${jahr - r.jahr + 1}/${r.jahre})${r.text ? `: ${r.text}` : ''}`, ct: anteil });
+      korrektur('erhaltung', anteil, `Verteilung aus ${r.jahr} (${jahr - r.jahr + 1}/${r.jahre})${r.text ? `: ${r.text}` : ''}`);
     }
     // VAT for commercial lettings: input tax paid and VAT paid to / refunded by the tax office.
     const steuer = (kategorien, richtung) => get(`SELECT coalesce(sum(CASE WHEN b.${richtung === 'soll' ? 'soll_id' : 'haben_id'} = k.id THEN b.betrag_ct ELSE -b.betrag_ct END), 0) AS s
@@ -94,20 +164,28 @@ module.exports = function auswertung({ db, all, get, tx, bh }) {
       ['Vereinnahmte Umsatzsteuer', (ein.ust19 ?? 0) + (ein.ust7 ?? 0)],
       ['Vom Finanzamt erstattete Umsatzsteuer', fa < 0 ? -fa : 0],
     ].filter(([l, ct]) => ct || !/Umsatzsteuer/.test(l));
-    const werbungskosten = [
-      ['Absetzung für Abnutzung (AfA) Gebäude', afa(o, jahr)],
-      ['Schuldzinsen', manuell.schuldzinsen_ct ?? 0],
-      ['Geldbeschaffungskosten', manuell.geldbeschaffung_ct ?? 0],
-      ...WK_GRUPPEN.map(([g]) => [gruppen[g].label, gruppen[g].ct]),
-      ['Gezahlte Vorsteuerbeträge', vorsteuer],
-      ['An das Finanzamt gezahlte Umsatzsteuer', fa > 0 ? fa : 0],
-      ['Fahrtkosten', manuell.fahrtkosten_ct ?? 0],
-      ['Weitere Werbungskosten (manuell)', manuell.sonstige_ct ?? 0],
-    ].filter(([, ct]) => ct);
+    // [label, total, deductible, rule]; the rule is only shown when part of the house is self-used.
+    const flaeche = 'nach Fläche';
+    const zinsRegel = manuell.zins_anteil != null ? `eigener Satz ${String(manuell.zins_anteil).replace('.', ',')} %` : 'nach Fläche, änderbar';
+    const afaGesamt = afa(o, jahr);
+    const aufteilung = [
+      ['Absetzung für Abnutzung (AfA) Gebäude', afaGesamt, Math.round(afaGesamt * va.anteil), flaeche],
+      ['Schuldzinsen', manuell.schuldzinsen_ct ?? 0, Math.round((manuell.schuldzinsen_ct ?? 0) * zinsFaktor), zinsRegel],
+      ['Geldbeschaffungskosten', manuell.geldbeschaffung_ct ?? 0, Math.round((manuell.geldbeschaffung_ct ?? 0) * zinsFaktor), zinsRegel],
+      ...WK_GRUPPEN.map(([g]) => [gruppen[g].label, gruppen[g].ct, gruppen[g].absetzbar_ct,
+        g === 'schuldzinsen' ? zinsRegel : gruppen[g].einzeln ? 'nach Fläche; Kosten einer Einheit: vermietet voll, eigene nicht' : flaeche]),
+      ['Gezahlte Vorsteuerbeträge', vorsteuer, vorsteuer, 'voll'],
+      ['An das Finanzamt gezahlte Umsatzsteuer', fa > 0 ? fa : 0, fa > 0 ? fa : 0, 'voll'],
+      ['Fahrtkosten', manuell.fahrtkosten_ct ?? 0, manuell.fahrtkosten_ct ?? 0, 'wie eingetragen'],
+      ['Weitere Werbungskosten (manuell)', manuell.sonstige_ct ?? 0, manuell.sonstige_ct ?? 0, 'wie eingetragen'],
+    ].filter(([, ct, ab]) => ct || ab);
+    const werbungskosten = aufteilung.map(([l, , ab]) => [l, ab]).filter(([, ct]) => ct);
     const summeE = einnahmenZeilen.reduce((s, [, c]) => s + c, 0);
     const summeW = werbungskosten.reduce((s, [, c]) => s + c, 0);
     return {
       objekt: o, jahr, einnahmen: einnahmenZeilen, werbungskosten, gruppen, manuell,
+      selbstnutzung: geteilt ? { anteil: va.anteil, flaeche_gesamt: va.flaeche_gesamt, flaeche_vermietet: va.flaeche_vermietet, einheiten: va.selbst,
+        zins_faktor: zinsFaktor, zeilen: aufteilung, summe_gesamt_ct: aufteilung.reduce((s, z) => s + z[1], 0) } : null,
       summe_einnahmen_ct: summeE, summe_werbungskosten_ct: summeW, ergebnis_ct: summeE - summeW,
       // Kaution receipts are not income; they are listed only so they are not forgotten.
       kautionen_ct: ein.kaution ?? 0,
@@ -115,11 +193,37 @@ module.exports = function auswertung({ db, all, get, tx, bh }) {
     };
   }
 
+  // Comparative rent per m² and month for a unit (cents): the unit's own value, the object's, or the average
+  // cold rent per m² of the house's current tenancies of the same kind.
+  function vergleichsmieteQm(einheitId, stichtag = new Date().toISOString().slice(0, 10)) {
+    const e = get(`SELECT e.*, o.vergleichsmiete_ct AS o_vgl, o.mietspiegel_von_ct AS o_von, o.mietspiegel_bis_ct AS o_bis FROM einheiten e
+      JOIN objekte o ON o.id = e.objekt_id WHERE e.id = ?`, einheitId);
+    if (!e) return null;
+    const wohnung = (e.art ?? 'Wohnung') === 'Wohnung';
+    const von = e.mietspiegel_von_ct || (wohnung ? e.o_von : null) || null, bis = e.mietspiegel_bis_ct || (wohnung ? e.o_bis : null) || null;
+    const haus = hausDurchschnittQm(e.objekt_id, e.art, stichtag);
+    if (e.vergleichsmiete_ct) return { ct: e.vergleichsmiete_ct, quelle: 'einheit', von, bis, haus_ct: haus };
+    if (e.o_vgl && wohnung) return { ct: e.o_vgl, quelle: 'objekt', von, bis, haus_ct: haus };
+    if (von && bis) return { ct: Math.round((von + bis) / 2), quelle: 'spanne', von, bis, haus_ct: haus };
+    return { ct: haus, quelle: haus ? 'haus' : null, von, bis, haus_ct: haus };
+  }
+  // Average cold rent per m² (cents) of the current tenancies of one kind of unit in a house.
+  function hausDurchschnittQm(objektId, art = 'Wohnung', stichtag = new Date().toISOString().slice(0, 10)) {
+    let kalt = 0, qm = 0;
+    for (const m of all(`SELECT m.id, e.wohnflaeche FROM mietverhaeltnisse m JOIN einheiten e ON e.id = m.einheit_id WHERE e.objekt_id = ?1
+        AND coalesce(e.art, 'Wohnung') = ?2 AND e.wohnflaeche > 0 AND m.beginn <= ?3 AND (m.ende IS NULL OR m.ende = '' OR m.ende >= ?3)`, objektId, art ?? 'Wohnung', stichtag)) {
+      kalt += bh.betraege('miete', m.id, stichtag).kaltmiete_ct ?? 0;
+      qm += m.wohnflaeche;
+    }
+    return qm ? Math.round(kalt / qm) : null;
+  }
+
   function rendite(objektId, jahre = 5) {
     const o = get('SELECT * FROM objekte WHERE id = ?', objektId);
     const flaeche = get('SELECT coalesce(sum(wohnflaeche), 0) AS f FROM einheiten WHERE objekt_id = ?', objektId).f;
     const invest = (o.kaufpreis_ct ?? 0) + (o.kaufnebenkosten_ct ?? 0);
     const jetzt = new Date().getFullYear();
+    const perioden = selbstPerioden(objektId);
     const zeilen = [];
     for (let j = jetzt - jahre + 1; j <= jetzt; j++) {
       const von = `${j}-01-01`, bis = `${j}-12-31`;
@@ -134,15 +238,39 @@ module.exports = function auswertung({ db, all, get, tx, bh }) {
       // Net operating result before financing and depreciation.
       const netto = ist + umlagen - nichtUml - uml;
       if (!soll && !ist && !ks.length) continue;
+      // Self-use: the yield of the rented part (its share of price and costs), or as if the own flat were let at the
+      // comparative rent with its operating costs paid by a tenant.
+      let selbst = null;
+      const va = vermietAnteil(objektId, von, bis, perioden);
+      if (va.selbst.length) {
+        const zuordenbar = kostenAufgeteilt(objektId, von, bis, va.anteil, va.anteil, perioden).reduce((s, k) => s + k.absetzbar_ct, 0);
+        const nettoTeil = ist + umlagen - zuordenbar;
+        const fiktiv = va.selbst.reduce((s, x) => {
+          const qm = vergleichsmieteQm(x.einheit_id)?.ct ?? 0;
+          return s + Math.round(qm * x.flaeche * 12 * x.tage / va.tage);
+        }, 0);
+        const eigenanteil = ab ? ab.nkAbrechnung(objektId, von, bis).eigenanteil_ct : 0;
+        const nettoFiktiv = netto + fiktiv + eigenanteil;
+        selbst = {
+          anteil: va.anteil, flaeche_vermietet: va.flaeche_vermietet, einheiten: va.selbst, kosten_ct: zuordenbar,
+          netto_ct: nettoTeil, invest_ct: Math.round(invest * va.anteil),
+          brutto_rendite: o.kaufpreis_ct ? soll / (o.kaufpreis_ct * va.anteil) * 100 : null,
+          netto_rendite: invest ? nettoTeil / (invest * va.anteil) * 100 : null,
+          fiktiv_kaltmiete_ct: fiktiv, eigenanteil_ct: eigenanteil, fiktiv_netto_ct: nettoFiktiv,
+          fiktiv_brutto_rendite: o.kaufpreis_ct ? (soll + fiktiv) / o.kaufpreis_ct * 100 : null,
+          fiktiv_netto_rendite: invest ? nettoFiktiv / invest * 100 : null,
+        };
+      }
       zeilen.push({
         jahr: j, soll_kaltmiete_ct: soll, ist_kaltmiete_ct: ist, umlagen_ct: umlagen, umlagefaehig_ct: uml, nicht_umlagefaehig_ct: nichtUml,
         netto_ct: netto, ausfall_ct: Math.max(0, soll - ist),
         brutto_rendite: invest && o.kaufpreis_ct ? soll / o.kaufpreis_ct * 100 : null,
         netto_rendite: invest ? netto / invest * 100 : null,
         miete_qm: flaeche ? soll / 12 / flaeche : null, kosten_qm: flaeche ? (uml + nichtUml) / 12 / flaeche : null,
+        selbst,
       });
     }
-    return { objekt: o, flaeche, invest_ct: invest, zeilen };
+    return { objekt: o, flaeche, invest_ct: invest, zeilen, selbstnutzung: perioden.length > 0 };
   }
 
   // 15 % rule (§ 6 Abs. 1 Nr. 1a EStG): repairs and modernisation within three years after purchase that exceed 15 %
@@ -152,24 +280,36 @@ module.exports = function auswertung({ db, all, get, tx, bh }) {
     return all(`SELECT * FROM objekte WHERE kaufdatum IS NOT NULL AND kaufpreis_ct > 0 AND (?1 IS NULL OR id = ?1)`, objektId).map((o) => {
       const [y, m, d] = o.kaufdatum.split('-').map(Number);
       const frist = new Date(Date.UTC(y + 3, m - 1, d)).toISOString().slice(0, 10);
-      const gebaeude = Math.round((o.kaufpreis_ct + (o.kaufnebenkosten_ct ?? 0)) * (o.gebaeudeanteil ?? 100) / 100);
+      // With self-use the rented part is a building part of its own: the limit and the costs count for it only.
+      const perioden = selbstPerioden(o.id);
+      const va = vermietAnteil(o.id, o.kaufdatum, frist, perioden);
+      const gebaeudeGanz = Math.round((o.kaufpreis_ct + (o.kaufnebenkosten_ct ?? 0)) * (o.gebaeudeanteil ?? 100) / 100);
+      const gebaeude = Math.round(gebaeudeGanz * va.anteil);
       const grenze = Math.round(gebaeude * 0.15);
       // § 6 Abs. 1 Nr. 1a EStG counts the expenses without VAT. Per booking, the maintenance amount plus input tax booked
       // with it is the invoice total; an e-invoice linked to the booking gives the exact net amount, otherwise 19 % VAT is taken out.
       const gruppen = new Map();
-      for (const b of all(`SELECT coalesce(b.gruppe, b.id) AS g, CASE WHEN k.id = b.soll_id THEN b.betrag_ct ELSE -b.betrag_ct END AS ct
+      const faktor = new Map();
+      for (const b of all(`SELECT coalesce(b.gruppe, b.id) AS g, CASE WHEN k.id = b.soll_id THEN b.betrag_ct ELSE -b.betrag_ct END AS ct, b.datum, ${einheitVonSql('b')} AS eid
           FROM buchungen b JOIN konten k ON k.id IN (b.soll_id, b.haben_id)
-          WHERE k.objekt_id = ? AND k.kategorie = 'instandhaltung' AND b.datum BETWEEN ? AND ?`, o.id, o.kaufdatum, frist)) gruppen.set(b.g, (gruppen.get(b.g) ?? 0) + b.ct);
+          WHERE k.objekt_id = ? AND k.kategorie = 'instandhaltung' AND b.datum BETWEEN ? AND ?`, o.id, o.kaufdatum, frist)) {
+        gruppen.set(b.g, (gruppen.get(b.g) ?? 0) + b.ct);
+        faktor.set(b.g, !b.eid ? va.anteil : selbstAm(perioden, b.eid, b.datum) ? 0 : 1);
+      }
       let brutto = 0, netto = 0;
       for (const [g, ct] of gruppen) {
         const vst = get(`SELECT coalesce(sum(b.betrag_ct), 0) AS s FROM buchungen b JOIN konten k ON k.id = b.soll_id
           WHERE coalesce(b.gruppe, b.id) = ? AND k.klasse = 'steuer' AND k.kategorie IN ('vorsteuer19', 'vorsteuer7')`, g).s;
         const dok = get('SELECT netto_ct, betrag_ct FROM dokumente WHERE buchung_id = ? AND netto_ct IS NOT NULL ORDER BY id LIMIT 1', g);
         const summe = ct + (ct > 0 ? vst : -vst);
-        brutto += summe;
-        netto += dok && Math.abs(dok.betrag_ct - Math.abs(summe)) <= 1 ? Math.sign(summe) * dok.netto_ct : Math.round(summe / 1.19);
+        const nettoG = dok && Math.abs(dok.betrag_ct - Math.abs(summe)) <= 1 ? Math.sign(summe) * dok.netto_ct : Math.round(summe / 1.19);
+        // Self-use: costs of the own flat do not count, those of the whole house with the rented share.
+        const f = faktor.get(g);
+        brutto += Math.round(summe * f);
+        netto += Math.round(nettoG * f);
       }
       return { objekt_id: o.id, objekt: o.bezeichnung, kaufdatum: o.kaufdatum, frist, laeuft: t <= frist, gebaeude_ct: gebaeude, grenze_ct: grenze,
+        vermietet_anteil: va.selbst.length ? va.anteil : null, gebaeude_ganz_ct: gebaeudeGanz,
         summe_brutto_ct: brutto, summe_netto_ct: netto, anteil: grenze ? netto / grenze : 0, rest_ct: Math.max(0, grenze - netto) };
     }).filter((w) => w.laeuft || w.frist >= `${Number(t.slice(0, 4)) - 1}-01-01`);
   }
@@ -236,6 +376,13 @@ module.exports = function auswertung({ db, all, get, tx, bh }) {
   return {
     anlageV,
     rendite,
+    vermietAnteil: (objektId, von, bis) => vermietAnteil(objektId, von, bis),
+    kostenAufgeteilt: (objektId, von, bis, anteil, zinsFaktor) => kostenAufgeteilt(objektId, von, bis, anteil, zinsFaktor),
+    vergleichsmieteQm,
+    hausDurchschnittQm,
+    einnahmen,
+    zufluss,
+    afa,
     anschaffungsnah,
     ustUebersicht,
     steuerpaketDaten,
@@ -243,11 +390,12 @@ module.exports = function auswertung({ db, all, get, tx, bh }) {
     // Maintenance costs of a year that could be spread: the larger postings on maintenance accounts.
     erhaltungKandidaten: (objektId, jahr) => all(`SELECT b.id, b.datum, b.text, b.betrag_ct, k.bezeichnung AS konto FROM buchungen b JOIN konten k ON k.id = b.soll_id
       WHERE k.objekt_id = ? AND k.kategorie = 'instandhaltung' AND k.aus_ruecklage = 0 AND substr(b.datum, 1, 4) = ? ORDER BY b.betrag_ct DESC LIMIT 30`, objektId, String(jahr)),
-    steuerangabenSetzen: (objektId, jahr, w) => db.prepare(`INSERT INTO steuerangaben (objekt_id, jahr, schuldzinsen_ct, geldbeschaffung_ct, fahrtkosten_ct, sonstige_ct, ruecklage_hausgeld_ct, notiz)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (objekt_id, jahr) DO UPDATE SET schuldzinsen_ct = excluded.schuldzinsen_ct,
+    steuerangabenSetzen: (objektId, jahr, w) => db.prepare(`INSERT INTO steuerangaben (objekt_id, jahr, schuldzinsen_ct, geldbeschaffung_ct, fahrtkosten_ct, sonstige_ct, ruecklage_hausgeld_ct, notiz, zins_anteil)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (objekt_id, jahr) DO UPDATE SET schuldzinsen_ct = excluded.schuldzinsen_ct,
       geldbeschaffung_ct = excluded.geldbeschaffung_ct, fahrtkosten_ct = excluded.fahrtkosten_ct, sonstige_ct = excluded.sonstige_ct,
-      ruecklage_hausgeld_ct = excluded.ruecklage_hausgeld_ct, notiz = excluded.notiz`)
-      .run(objektId, jahr, w.schuldzinsen_ct ?? null, w.geldbeschaffung_ct ?? null, w.fahrtkosten_ct ?? null, w.sonstige_ct ?? null, w.ruecklage_hausgeld_ct ?? null, w.notiz ?? null),
+      ruecklage_hausgeld_ct = excluded.ruecklage_hausgeld_ct, notiz = excluded.notiz, zins_anteil = excluded.zins_anteil`)
+      .run(objektId, jahr, w.schuldzinsen_ct ?? null, w.geldbeschaffung_ct ?? null, w.fahrtkosten_ct ?? null, w.sonstige_ct ?? null, w.ruecklage_hausgeld_ct ?? null, w.notiz ?? null,
+        w.zins_anteil ?? null),
 
     // External owners' statement (condo let to a tenant, WEG managed elsewhere): the allocable cost shares from that
     // statement are moved out of the paid house money onto the matching cost accounts, so the tenant's
@@ -265,6 +413,12 @@ module.exports = function auswertung({ db, all, get, tx, bh }) {
     }),
   };
 };
+
+function nachTag(iso) {
+  const d = new Date(iso + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
 
 function vorTag(iso) {
   const d = new Date(iso + 'T00:00:00Z');

@@ -550,6 +550,289 @@ const wa = db.wegAbrechnung(w, '2025-01-01', '2025-12-31');
   gleich('Automatik aus: nichts gebucht, Monate angeboten', [soll(va), t.sollAbgleich('miete', va).fehlend.map((f) => f.monat)], [{}, [VM, M]]);
 }
 
+// ---------- 16. Key figures and self-use (pick of 16.10.2026: K1–K7, K9, M1–M5, M7, E1–E5, N1–N5, Z1) ----------
+// A small house: EG (60 m², Anna), 1. OG (80 m², Bernd until 31.05.2025, vacant June/July, Carla from 01.08.2025),
+// DG (100 m², the landlord's own flat since 01.06.2024, 2 persons) and a parking space (Paul). Every figure is recomputed
+// here on its own: payments in first-in-first-out order, shares by area and day, keys by person-days.
+{
+  const S = '2026-10-16';
+  const k = api(open(':memory:'));
+  k.setzeEinstellungen({ bundesland: 'BE', verwalter_name: 'Test', auto_soll: '0' });
+  const ko = k.neuesObjekt({ bezeichnung: 'Testhaus Selbstnutzung', art: 'miete', strasse: 'Teststr. 1', plz: '10115', ort: 'Berlin',
+    kaufpreis_ct: 60000000, kaufnebenkosten_ct: 4800000, kaufdatum: '2024-03-01', gebaeudeanteil: 80, afa_satz: 2,
+    vergleichsmiete_ct: 1200, mietspiegel_von_ct: 1000, mietspiegel_bis_ct: 1400 });
+  const FL = { A: 60, B: 80, C: 100, P: 0 };
+  const KE = {};
+  [['A', 'EG', 'Wohnung'], ['B', '1. OG', 'Wohnung'], ['C', 'DG', 'Wohnung'], ['P', 'Stellplatz', 'Stellplatz']]
+    .forEach(([x, b, art], i) => { KE[x] = k.save('einheiten', { objekt_id: ko, nr: i + 1, bezeichnung: b, art, wohnflaeche: FL[x] }); });
+  const kp = (n) => k.save('personen', { vorname: 'Test', nachname: n });
+  const KV = {
+    anna: { einheit: 'A', person_id: kp('Anna'), beginn: '2022-01-01', kaltmiete_ct: 60000, bk_vz_ct: 12000, hk_vz_ct: 8000, personen_anzahl: 2, faelligkeitstag: 0, kaution_ct: 180000 },
+    bernd: { einheit: 'B', person_id: kp('Bernd'), beginn: '2020-06-01', ende: '2025-05-31', kaltmiete_ct: 80000, bk_vz_ct: 15000, hk_vz_ct: 10000, personen_anzahl: 1, faelligkeitstag: 0 },
+    carla: { einheit: 'B', person_id: kp('Carla'), beginn: '2025-08-01', kaltmiete_ct: 96000, bk_vz_ct: 16000, hk_vz_ct: 11000, personen_anzahl: 3, faelligkeitstag: 0 },
+    paul: { einheit: 'P', person_id: kp('Paul'), beginn: '2023-01-01', kaltmiete_ct: 5000, bk_vz_ct: 0, hk_vz_ct: 0, personen_anzahl: 0, faelligkeitstag: 1 },
+  };
+  for (const v of Object.values(KV)) {
+    const { einheit, ...row } = v;
+    v.id = k.save('mietverhaeltnisse', { ...row, einheit_id: KE[einheit], teilmonat_beginn: 'anteilig', teilmonat_ende: 'anteilig', ust_satz: 0 });
+  }
+  const selbstId = k.save('selbstnutzung', { einheit_id: KE.C, beginn: '2024-06-01', personen: 2 });
+  k.sollstellung(ko, '2025-01', '2026-10');
+  const kkt = Object.fromEntries(k.konten(ko).map((x) => [x.nr, x.id]));
+  const kbank = kkt[1200];
+  const kKonto = (x) => k.kontoVon('miete', KV[x].id).id;
+  const KZAHL = {};
+  const kzahle = (x, datum, ct, text = `Zahlung ${x}`) => {
+    (KZAHL[x] ??= []).push({ datum, ct });
+    return k.buchen({ objekt_id: ko, datum, text, art: 'bank', positionen: [{ soll_id: kbank, haben_id: kKonto(x), betrag_ct: ct }] });
+  };
+  const faellig = (x, m) => (KV[x].faelligkeitstag === 0 ? dritterWerktagMiete(m) : `${m}-${pad(KV[x].faelligkeitstag)}`);
+  const summeMonat = (x) => KV[x].kaltmiete_ct + KV[x].bk_vz_ct + KV[x].hk_vz_ct;
+  for (const m of monate('2025-01', '2026-10')) {
+    // Anna: March 2026 five days late, September 2026 missed. Carla: September and October 2026 missed.
+    if (m === '2026-03') kzahle('anna', plusTage(faellig('anna', m), 5), summeMonat('anna'));
+    else if (m !== '2026-09') kzahle('anna', faellig('anna', m), summeMonat('anna'));
+    if (m <= '2025-05') kzahle('bernd', faellig('bernd', m), summeMonat('bernd'));
+    if (m >= '2025-08' && m <= '2026-08') kzahle('carla', faellig('carla', m), summeMonat('carla'));
+    kzahle('paul', faellig('paul', m), 5000);
+  }
+  const KOST = [];
+  const kkosten = (nr, datum, ct, text, einheit_id = null) => {
+    KOST.push({ nr, datum, ct });
+    return k.buchen({ objekt_id: ko, datum, text, einheit_id, positionen: [{ soll_id: kkt[nr], haben_id: kbank, betrag_ct: ct }] });
+  };
+  for (const d of ['2025-02-15', '2025-05-15', '2025-08-15', '2025-11-15', '2026-02-15', '2026-05-15', '2026-08-15']) kkosten(40100, d, 30000, 'Grundsteuer');
+  kkosten(40200, '2025-12-10', 240000, 'Wasser');
+  kkosten(41300, '2025-01-20', 120000, 'Gebäudeversicherung');
+  kkosten(41400, '2025-12-31', 96000, 'Hauswart');
+  kkosten(45000, '2025-12-31', 60000, 'Verwaltung');
+  kkosten(45100, '2025-07-15', 300000, 'Renovierung 1. OG', KE.B);
+  kkosten(45100, '2025-09-01', 200000, 'Bad DG', KE.C);
+  const dach = kkosten(45100, '2025-10-01', 150000, 'Dachreparatur');
+  k.steuerangabenSetzen(ko, 2025, { schuldzinsen_ct: 900000 });
+  k.darlehenSpeichern({ objekt_id: ko, bank: 'Testbank', betrag_ct: 20000000, auszahlung: '2024-04-01', zinssatz: 3, tilgung_satz: 2, erste_rate: '2024-04-30', zinsbindung_bis: '2034-04-30' });
+  k.save('versicherungen', { objekt_id: ko, art: 'Gebäudeversicherung', gesellschaft: 'Test-Versicherung', beitrag_ct: 125000, faellig: '2026-01-10', kuendbar_bis: '2026-11-30' });
+  const kau = k.kautionAnlegen(KV.anna.id);
+  k.save('kautionen', { id: kau, art: 'konto', zinssatz: 0.5, bank: 'Testbank' });
+  k.save('kautionsbewegungen', { kaution_id: kau, datum: '2022-01-01', art: 'einzahlung', betrag_ct: 180000 });
+  k.save('kautionsbewegungen', { kaution_id: kau, datum: '2025-12-31', art: 'zinsen', betrag_ct: 450 });
+  const KZ = {};
+  for (const x of ['A', 'B', 'C']) KZ[x] = k.save('zaehler', { objekt_id: ko, einheit_id: KE[x], art: 'kaltwasser', nummer: `KW-${x}`, einheit: 'm³', faktor: 1 });
+  k.ablesung('2023-12-31', { [KZ.A]: 100, [KZ.B]: 200, [KZ.C]: 50 });
+  k.ablesung('2024-12-31', { [KZ.A]: 160, [KZ.B]: 280, [KZ.C]: 90 });
+  k.ablesung('2025-12-31', { [KZ.A]: 250, [KZ.B]: 350, [KZ.C]: 140 });
+
+  // ----- N1: the own flat is neither vacant nor up for letting -----
+  gleich('N1 Einheit selbst genutzt, nicht leer', [k.einheiten(ko).find((e) => e.id === KE.C).selbstgenutzt, k.objektKacheln('miete').find((x) => x.id === ko).leer,
+    k.objektKacheln('miete').find((x) => x.id === ko).selbst, k.vermietung(ko).map((e) => e.id), k.einheitAkte(KE.C).leertage], [1, 0, 1, [], 0]);
+  gleich('N1 kein Leerstand-Hinweis für die eigene Wohnung', k.hinweise().filter((h) => h.schluessel.startsWith(`leer:${ko}:`)).length, 0);
+  const vUeber = k.save('mietverhaeltnisse', { einheit_id: KE.C, person_id: KV.paul.person_id, beginn: '2026-11-01', kaltmiete_ct: 100000, personen_anzahl: 1, faelligkeitstag: 0 });
+  gleich('N1 Prüfbericht: Mietvertrag überschneidet die Selbstnutzung', k.pruefbericht().punkte.filter((p) => p.schluessel === `selbstmiete:${selbstId}:${vUeber}`).map((p) => p.stufe), ['fehler']);
+  k.remove('mietverhaeltnisse', vUeber);
+  gleich('N1 ohne Überschneidung keine Meldung', k.pruefbericht().punkte.filter((p) => /^selbst/.test(p.schluessel)).length, 0);
+
+  // ----- N2: service charges 2025 with the landlord's own share -----
+  const SEG = [
+    { e: 'A', v: KV.anna.id, von: '2025-01-01', bis: '2025-12-31', personen: 2 },
+    { e: 'B', v: KV.bernd.id, von: '2025-01-01', bis: '2025-05-31', personen: 1 },
+    { e: 'B', v: 'leer', von: '2025-06-01', bis: '2025-07-31', personen: 1 },
+    { e: 'B', v: KV.carla.id, von: '2025-08-01', bis: '2025-12-31', personen: 3 },
+    { e: 'C', v: 'selbst', von: '2025-01-01', bis: '2025-12-31', personen: 2 },
+    { e: 'P', v: KV.paul.id, von: '2025-01-01', bis: '2025-12-31', personen: 0 },
+  ];
+  const UMLAGE25 = [[120000, 'flaeche'], [240000, 'personen'], [120000, 'flaeche'], [96000, 'flaeche']];
+  const wertSeg = (x, key) => (key === 'flaeche' ? FL[x.e] : x.personen) * tageInkl(x.von, x.bis) / 365;
+  const gesamtKey = (key) => (key === 'flaeche' ? 240 : SEG.reduce((y, x) => y + wertSeg(x, 'personen'), 0));
+  const anteilSeg = (x) => UMLAGE25.reduce((y, [ct, key]) => y + Math.round(ct * wertSeg(x, key) / gesamtKey(key)), 0);
+  const nk25 = k.nkAbrechnung(ko, '2025-01-01', '2025-12-31');
+  gleich('N2 Abschnitte: Mieter, Leerstand, Selbstnutzung', nk25.ergebnisse.map((e) => [e.segment.einheit.id, e.segment.vertrag?.id ?? (e.segment.selbst ? 'selbst' : 'leer'), e.segment.von, e.segment.bis]),
+    SEG.map((x) => [KE[x.e], x.v, x.von, x.bis]));
+  gleich('N2 Kosten je Abschnitt (eigene Wohnung mit 2 Personen)', nk25.ergebnisse.map((e) => e.kosten_ct), SEG.map(anteilSeg));
+  gleich('N2 Eigenanteil getrennt vom Leerstand', [nk25.eigenanteil_ct, nk25.leerstand_ct], [anteilSeg(SEG[4]), anteilSeg(SEG[2])]);
+  gleich('N2 Prüfung nennt den Eigenanteil', k.nkPruefung(ko, '2025-01-01', '2025-12-31').punkte.some((p) => p.text.includes(`entfallen ${new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(anteilSeg(SEG[4]) / 100)} (Eigenanteil)`)), true);
+
+  // ----- N4: what the own flat costs per month (operating costs 2025, interest by area, maintenance 2023–2025) -----
+  const n4 = k.selbstKosten(KE.C, S);
+  gleich('N4 Kosten der eigenen Wohnung', n4.posten.map((x) => x.ct), [Math.round(anteilSeg(SEG[4]) / 12), Math.round(900000 * 100 / 240 / 12), Math.round((200000 + 150000 * 100 / 240) / 36)]);
+  gleich('N4 vermietet brächte sie', [n4.fiktiv_ct, n4.qm_ct, n4.quelle, n4.monat_ct], [120000, 1200, 'objekt', n4.posten.reduce((x, p) => x + p.ct, 0)]);
+  gleich('N4 nur für selbst genutzte Einheiten', k.selbstKosten(KE.A, S), null);
+
+  // ----- N3: Anlage V 2025 only for the rented part (140 of 240 m² all year = 7/12) -----
+  const A7 = 7 / 12;
+  const afaGanz = Math.round((60000000 + 4800000) * 80 / 100 * 2 / 100);
+  const av = k.anlageV(ko, 2025);
+  gleich('N3 vermieteter Anteil nach Fläche und Tagen', [Math.round(av.selbstnutzung.anteil * 1e9), av.selbstnutzung.flaeche_vermietet], [Math.round(A7 * 1e9), 140]);
+  gleich('N3 gesamt und absetzbar je Zeile', av.selbstnutzung.zeilen.map(([l, g, a]) => [l.split(' ')[0], g, a]), [
+    ['Absetzung', afaGanz, Math.round(afaGanz * A7)],
+    ['Schuldzinsen', 900000, Math.round(900000 * A7)],
+    ['Erhaltungsaufwendungen', 650000, 300000 + Math.round(150000 * A7)],
+    ['Grundsteuer,', 576000, [120000, 240000, 120000, 96000].reduce((x, ct) => x + Math.round(ct * A7), 0)],
+    ['Verwaltungskosten', 60000, Math.round(60000 * A7)],
+  ]);
+  gleich('N3 Summe Werbungskosten', av.summe_werbungskosten_ct, Math.round(afaGanz * A7) + Math.round(900000 * A7) + 300000 + Math.round(150000 * A7) + 576000 * 7 / 12 + Math.round(60000 * A7));
+  gleich('N3 Jahr ohne Selbstnutzung bleibt ungeteilt', k.anlageV(ko, 2023).selbstnutzung, null);
+  const erhaltung = () => k.anlageV(ko, 2025).werbungskosten.find(([l]) => l.startsWith('Erhaltung'))[1];
+  k.buchungEinheitSetzen(dach, KE.C);
+  const dachEigen = erhaltung();
+  k.buchungEinheitSetzen(dach, KE.A);
+  const dachVermietet = erhaltung();
+  k.buchungEinheitSetzen(dach, null);
+  gleich('N3 Dach der eigenen / einer vermieteten Einheit zugeordnet', [dachEigen, dachVermietet, erhaltung()], [300000, 450000, 300000 + Math.round(150000 * A7)]);
+  // 15 % rule for the rented part: area-days from purchase (01.03.2024) to 01.03.2027, self-use from 01.06.2024.
+  const a15 = 1 - 100 * tageInkl('2024-06-01', '2027-03-01') / (240 * tageInkl('2024-03-01', '2027-03-01'));
+  const geb15 = Math.round(Math.round((60000000 + 4800000) * 80 / 100) * a15);
+  const w15 = k.anschaffungsnah(ko)[0];
+  gleich('15 % anteilig: Gebäudeteil und Grenze', [w15.gebaeude_ct, w15.grenze_ct], [geb15, Math.round(geb15 * 0.15)]);
+  gleich('15 % anteilig: Kosten (vermietet voll, eigene nicht, Haus anteilig)', [w15.summe_netto_ct, w15.summe_brutto_ct],
+    [Math.round(300000 / 1.19) + Math.round(Math.round(150000 / 1.19) * a15), 300000 + Math.round(150000 * a15)]);
+
+  // ----- N5: yield of the rented part, or as if the own flat were let at the comparative rent -----
+  const r25 = k.rendite(ko, 2).zeilen.find((z) => z.jahr === 2025);
+  const kostenTeil = 300000 + Math.round(150000 * A7) + [120000, 240000, 120000, 96000].reduce((x, ct) => x + Math.round(ct * A7), 0) + Math.round(60000 * A7);
+  gleich('N5 Kaltmiete und Umlagen 2025 (alles pünktlich bezahlt)', [r25.ist_kaltmiete_ct, r25.umlagen_ct],
+    [12 * 60000 + 5 * 80000 + 5 * 96000 + 12 * 5000, 12 * 20000 + 5 * 25000 + 5 * 27000]);
+  gleich('N5 vermieteter Teil: Kosten, Überschuss, Kaufpreisanteil', [r25.selbst.kosten_ct, r25.selbst.netto_ct, r25.selbst.invest_ct],
+    [kostenTeil, r25.ist_kaltmiete_ct + r25.umlagen_ct - kostenTeil, Math.round(64800000 * A7)]);
+  gleich('N5 Rendite vermieteter Teil', r25.selbst.netto_rendite.toFixed(9), (r25.selbst.netto_ct / (64800000 * A7) * 100).toFixed(9));
+  gleich('N5 als ob vermietet', [r25.selbst.fiktiv_kaltmiete_ct, r25.selbst.eigenanteil_ct, r25.selbst.fiktiv_netto_ct, r25.selbst.fiktiv_netto_rendite.toFixed(9)],
+    [1440000, anteilSeg(SEG[4]), r25.netto_ct + 1440000 + anteilSeg(SEG[4]), ((r25.netto_ct + 1440000 + anteilSeg(SEG[4])) / 64800000 * 100).toFixed(9)]);
+  k.steuerangabenSetzen(ko, 2025, { schuldzinsen_ct: 900000, zins_anteil: 90 });
+  gleich('N3 eigener Zinsanteil 90 %', k.anlageV(ko, 2025).werbungskosten.find(([l]) => l === 'Schuldzinsen')[1], 810000);
+  gleich('N4 Zinsen mit eigenem Satz: 10 % trägt die eigene Wohnung', k.selbstKosten(KE.C, S).posten[1].ct, Math.round(900000 * 0.1 / 12));
+
+  // ----- M1–M3: payment behaviour, calendar and account history, recomputed in first-in-first-out order -----
+  function erwartet(x, stichtag, anzahl = 24) {
+    const lasten = monate('2025-01', '2026-10').filter((m) => `${m}-31` >= KV[x].beginn && (!KV[x].ende || `${m}-01` <= KV[x].ende))
+      .map((m) => ({ monat: m, datum: faellig(x, m), ct: summeMonat(x) })).filter((l) => l.datum <= stichtag);
+    const zahlungen = (KZAHL[x] ?? []).filter((z) => z.datum <= stichtag).sort((a, b) => a.datum.localeCompare(b.datum));
+    let schwelle = 0;
+    const gesamt = zahlungen.reduce((y, z) => y + z.ct, 0);
+    for (const l of lasten) {
+      l.von = schwelle; schwelle += l.ct;
+      let lauf = 0;
+      l.am = gesamt >= schwelle ? zahlungen.find((z) => (lauf += z.ct) >= schwelle).datum : null;
+      l.bezahlt = Math.max(0, Math.min(l.ct, gesamt - l.von));
+    }
+    const [y, m] = stichtag.split('-').map(Number);
+    const liste = Array.from({ length: anzahl }, (_, i) => {
+      const d = new Date(Date.UTC(y, m - anzahl + i, 1)).toISOString().slice(0, 7);
+      const l = lasten.find((q) => q.monat === d);
+      if (!l) return [d, 'keine', 0];
+      if (!l.am) return [d, l.datum === stichtag ? 'kuenftig' : 'offen', l.datum === stichtag ? 0 : tageInkl(l.datum, stichtag) - 1];
+      return l.am <= l.datum ? [d, 'puenktlich', 0] : [d, 'verspaetet', tageInkl(l.datum, l.am) - 1];
+    });
+    const due = liste.filter(([, st]) => ['puenktlich', 'verspaetet', 'offen'].includes(st));
+    const punkte = due.reduce((s2, [, st, t]) => s2 + (st === 'puenktlich' ? 100 : st === 'verspaetet' ? Math.max(0, 100 - 4 * t) : 0), 0);
+    const offen = due.filter(([, st]) => st === 'offen').length;
+    const score = due.length ? Math.max(0, Math.min(100, Math.round(punkte / due.length - 15 * offen))) : null;
+    return { liste, score, label: score >= 85 ? 'zuverlässig' : score >= 70 ? 'meist pünktlich' : score >= 60 ? 'unregelmäßig' : 'kritisch', lasten };
+  }
+  for (const x of ['anna', 'carla', 'paul']) {
+    const z = k.zahlungsverhalten('miete', KV[x].id, { stichtag: S });
+    const e = erwartet(x, S);
+    gleich(`M2 Zahlungskalender ${x}`, z.monate.map((q) => [q.monat, q.status, q.tage ?? 0]), e.liste);
+    gleich(`M1 Zahlungsverhalten ${x}`, [z.score, z.label], [e.score, e.label]);
+  }
+  gleich('M1 von Hand: Anna 19 pünktlich, März 5 Tage, September 32 Tage, Oktober offen', (() => {
+    const z = k.zahlungsverhalten('miete', KV.anna.id, { stichtag: S });
+    return [z.faellig, z.puenktlich, z.verspaetet, z.offen, z.score, z.monate.find((q) => q.monat === '2026-09').tage];
+  })(), [22, 19, 2, 1, Math.round((19 * 100 + 80) / 22 - 15), 32]);
+  const verlauf = k.kontoverlauf('miete', KV.anna.id, { stichtag: S });
+  gleich('M3 Kontoverlauf Anna (Monatsende und heute)', [verlauf.length, verlauf.slice(0, -2).every((p) => p.ct === 0), verlauf.slice(-2)],
+    [24, true, [{ datum: '2026-09-30', ct: 80000 }, { datum: S, ct: 80000 }]]);
+
+  // ----- M4, M5, M7 -----
+  const mk = k.mieterKennzahlen(KV.anna.id, S);
+  gleich('M4 Mietverhältnis in Zahlen', [mk.fakten.jahre, mk.fakten.monate, mk.fakten.gezahlt_ct, mk.fakten.kalt_aenderung, mk.fakten.frist_monate],
+    [4, 9, KZAHL.anna.reduce((x, z) => x + z.ct, 0), 0, 3]);
+  // § 558: unchanged since 01.01.2022, receipt in three days → effect 01.01.2027; 12,00 €/m² × 60 m² = 720 €, cap 20 % of 600 € = 720 €.
+  gleich('M4 nächste Schritte', mk.fakten.schritte.map((x) => [x.datum, x.art, x.plus_ct ?? null]), [['2027-01-01', '558', 12000], ['2027-01-01', 'frist', null]]);
+  gleich('M5 Miete je m² im Vergleich', [mk.vergleich.qm_ct, mk.vergleich.haus_ct, mk.vergleich.von_ct, mk.vergleich.bis_ct, mk.vergleich.mittel_ct],
+    [1000, Math.round((60000 + 96000) / 140), 1000, 1400, 1200]);
+  gleich('M7 Kaution', [mk.kaution.vereinbart_ct, mk.kaution.bestand_ct, mk.kaution.raten, mk.kaution.zinsen_vorjahr_ct, mk.kaution.quote], [180000, 180450, 1, 450, 1]);
+
+  // ----- E1–E4 for the 1st floor (Bernd → 61 days vacant → Carla) -----
+  const ek = k.einheitKennzahlen(KE.B, S);
+  const leer61 = Math.round(80000 * 12 * 61 / 365);
+  gleich('E1 Belegung seit 2020', ek.belegung.segmente.map((x) => [x.art, x.von, x.bis, x.tage, x.entgangen_ct ?? null]), [
+    ['miete', '2020-06-01', '2025-05-31', tageInkl('2020-06-01', '2025-05-31'), null], ['leer', '2025-06-01', '2025-07-31', 61, leer61],
+    ['miete', '2025-08-01', S, tageInkl('2025-08-01', S), null]]);
+  gleich('E1 Quote und Wechsel', [ek.belegung.quote.toFixed(9), ek.belegung.wechsel, ek.belegung.leer_jahr],
+    [(1 - 61 / tageInkl('2020-06-01', S)).toFixed(9), 1, 0]);
+  gleich('E2 Ertrag je Jahr (Soll, gezahlt, Kosten der Einheit)', ek.ertrag.map((x) => [x.jahr, x.soll_ct, x.ist_ct, x.kosten_ct]),
+    [[2025, 5 * 80000 + 5 * 96000, 5 * 80000 + 5 * 96000, 300000], [2026, 10 * 96000, 8 * 96000, 0]]);
+  gleich('E4 Mieterwechsel', [ek.wechsel.posten.map((x) => [x.label, x.ct]), ek.wechsel.summe_ct, ek.wechsel.schnitt_jahre.toFixed(9)],
+    [[['Leerstand 61 Tage', leer61], ['Renovierung und Reparaturen', 300000]], leer61 + 300000,
+      ((tageInkl('2020-06-01', '2025-05-31') + tageInkl('2025-08-01', S)) / 2 / 365.25).toFixed(9)]);
+  const e3 = k.einheitKennzahlen(KE.A, S).verbrauch;
+  gleich('E3 Kaltwasser je m² gegen Haus und Vorjahr', e3.map((x) => [x.art, x.jahr, x.wert, x.vorjahr, x.qm, x.haus_qm, x.aenderung]),
+    [['kaltwasser', 2025, 90, 60, 1.5, 210 / 240, 50]]);
+  gleich('E3 großer Sprung wird gemeldet (nur EG: +50 %)', k.verbrauchSpruenge(S).map((x) => [x.einheit_id, x.art, x.aenderung]), [[KE.A, 'kaltwasser', 50]]);
+  gleich('E3 Hinweis im Cockpit', k.hinweise().some((h) => h.schluessel === `verbrauch:${KE.A}:kaltwasser:2025`), true);
+
+  // ----- E5: house view by floor -----
+  gleich('E5 Hausansicht', k.hausansicht(ko, 'miete', S).map((f) => [f.name, f.einheiten.map((x) => [x.id, x.status, x.betrag_ct ?? 0])]), [
+    ['DG', [[KE.C, 'selbst', 0]]], ['1. OG', [[KE.B, 'rueckstand', 246000]]], ['EG', [[KE.A, 'rueckstand', 80000]]], ['Außen', [[KE.P, 'vermietet', 0]]]]);
+
+  // ----- Cockpit -----
+  const c = k.cockpitKennzahlen('miete', S);
+  gleich('K1 Mieteingang Oktober (älteste Monate zuerst bezahlt)', [c.eingang.soll_ct, c.eingang.ist_ct, c.eingang.offen.map((x) => [x.vertrag_id, x.offen_ct, x.faellig])],
+    [80000 + 123000 + 5000, 5000, [[KV.carla.id, 123000, faellig('carla', '2026-10')], [KV.anna.id, 80000, faellig('anna', '2026-10')]]]);
+  gleich('K3 Rückstände nach Alter', [c.rueckstaende.stufen.map((x) => x.ct), c.rueckstaende.summe_ct], [[80000 + 123000, 123000, 0, 0], 326000]);
+  gleich('K3 § 543: zwei Monatsmieten offen', c.rueckstaende.p543.map((x) => [x.vertrag_id, x.ct, x.monatsmieten, x.folge]), [[KV.carla.id, 246000, 2, true]]);
+  const c2 = k.cockpitKennzahlen('miete', '2026-06-30');
+  gleich('K2 Vermietung 12 Monate (Fläche × Tage, eigene Wohnung zählt nicht)', [c2.vermietung.quote.toFixed(9), c2.vermietung.leerstand_ct, c2.vermietung.vermietet, c2.vermietung.selbst, c2.vermietung.leer],
+    [((60 * 365 + 80 * 334) / (60 * 365 + 80 * 365)).toFixed(9), Math.round(80000 * 12 * 31 / 365), 3, 1, 0]);
+  // K4: expected rent at the share and delay of the last 12 months, loan instalments, insurance, last year's recurring costs.
+  const quote = (x) => { const e = erwartet(x, S, 12); const due = e.lasten.filter((l) => l.datum >= '2025-11-01'); return due.reduce((y, l) => y + l.bezahlt, 0) / due.reduce((y, l) => y + l.ct, 0); };
+  const verzug = (x) => { const e = erwartet(x, S, 12).liste.filter(([, st]) => st === 'puenktlich' || st === 'verspaetet'); return Math.round(e.reduce((y, [, st, t]) => y + (st === 'verspaetet' ? t : 0), 0) / e.length); };
+  const EIN = [];
+  for (const x of ['anna', 'carla', 'paul']) for (const m of ['2026-11', '2026-12', '2027-01']) {
+    const d = plusTage(faellig(x, m), verzug(x));
+    if (d <= '2027-01-14') EIN.push([d, Math.round(summeMonat(x) * quote(x))]);
+  }
+  const AUS = [['2026-10-30', -83333], ['2026-11-30', -83333], ['2026-12-30', -83333], ['2027-01-10', -125000], ['2026-11-15', -30000], ['2026-12-10', -240000], ['2026-12-31', -96000], ['2026-12-31', -60000]];
+  const EREIG = [...EIN, ...AUS].sort((a, b) => a[0].localeCompare(b[0]) || a[1] - b[1]);
+  gleich('K4 erwartete Ein- und Ausgänge', c.vorschau.ereignisse.map((x) => [x.datum, x.ct]), EREIG);
+  const start = Object.values(KZAHL).flat().reduce((x, z) => x + z.ct, 0) - KOST.reduce((x, z) => x + z.ct, 0);
+  let lauf = start, tief = { datum: S, ct: start };
+  for (let n = 1; n <= 90; n++) {
+    const d = plusTage(S, n);
+    lauf += EREIG.filter(([dd]) => dd === d).reduce((x, [, ct]) => x + ct, 0);
+    if (lauf < tief.ct) tief = { datum: d, ct: lauf };
+  }
+  gleich('K4 Start, Ende, tiefster Punkt', [c.vorschau.start_ct, c.vorschau.ende_ct, c.vorschau.tief.datum, c.vorschau.tief.ct], [start, lauf, tief.datum, tief.ct]);
+  const summeZ = (von, bis) => Object.values(KZAHL).flat().filter((z) => z.datum >= von && z.datum <= bis).reduce((x, z) => x + z.ct, 0);
+  const summeK = (von, bis) => KOST.filter((z) => z.datum >= von && z.datum <= bis).reduce((x, z) => x + z.ct, 0);
+  gleich('K5 Jahresvergleich', c.vergleich.zeilen.map((x) => [x.ct, x.vorjahr_ct]), [
+    [summeZ('2026-01-01', S), summeZ('2025-01-01', '2025-10-16')], [summeK('2026-01-01', S), summeK('2025-01-01', '2025-10-16')],
+    [summeZ('2026-01-01', S) - summeK('2026-01-01', S), summeZ('2025-01-01', '2025-10-16') - summeK('2025-01-01', '2025-10-16')],
+    [summeZ('2026-01-01', S) - summeK('2026-01-01', S), summeZ('2025-01-01', '2025-10-16') - summeK('2025-01-01', '2025-10-16')]]);
+  gleich('K6 Mieterhöhungs-Radar (EG § 558 +120 € ab 01.01.2027; 1. OG schon bei der Vergleichsmiete)',
+    [c.radar.summe_ct, c.radar.eintraege.map((x) => [x.vertrag_id, x.art, x.ab, x.plus_ct, x.neu_ct])], [12000, [[KV.anna.id, '558', '2027-01-01', 12000, 72000]]]);
+  gleich('K7 Fristen der nächsten 90 Tage', c.fristen.map((x) => [x.datum, x.text.split(' (')[0], !!x.wichtig]), [
+    ['2026-11-15', 'Grundsteuer', false], ['2026-11-30', 'Gebäudeversicherung', false], ['2026-12-31', 'Betriebskostenabrechnung 2025 muss beim Mieter sein', true],
+    ['2026-12-31', 'Kautionszinsen gutschreiben', false], ['2027-01-10', 'Gebäudeversicherung', false]]);
+  gleich('K9 Kosten 2026 nach Art', [c.kosten.gruppen.map((x) => [x.label, x.ct]), c.kosten.summe_ct, c.kosten.umlagefaehig_anteil], [[['Grundsteuer', 90000]], 90000, 1]);
+
+  // ----- Z1: small gauges in the lists -----
+  const lk = k.listenKennzahlen(ko, S);
+  gleich('Z1 Mieterliste: Zahlungsverhalten und €/m²', ['anna', 'carla', 'paul'].map((x) => [lk.vertraege[KV[x].id].score, lk.vertraege[KV[x].id].qm_ct]),
+    [[erwartet('anna', S).score, 1000], [erwartet('carla', S).score, 1200], [100, null]]);
+  gleich('Z1 Einheitenliste: Belegung 12 Monate', ['A', 'B', 'C', 'P'].map((x) => [lk.einheiten[KE[x]].belegung, lk.einheiten[KE[x]].selbst]), [[1, false], [1, false], [1, true], [1, false]]);
+
+  // ----- Returned direct debit and a cancelled payment (after the cockpit figures) -----
+  const juni = faellig('paul', '2026-06');
+  k.buchen({ objekt_id: ko, datum: '2026-06-08', text: 'Rücklastschrift Paul', art: 'bank', positionen: [{ soll_id: kKonto('paul'), haben_id: kbank, betrag_ct: 5000 }] });
+  KZAHL.paul.push({ datum: '2026-06-08', ct: -5000 });
+  kzahle('paul', '2026-06-20', 5000);
+  const irrtum = kzahle('paul', '2026-07-10', 5000, 'Zahlung irrtümlich');
+  k.buchungStornieren(irrtum, '2026-07-12');
+  const zp = k.zahlungsverhalten('miete', KV.paul.id, { stichtag: S });
+  gleich('M1 Rücklastschrift öffnet den Juni wieder, Storno zählt nicht', [zp.monate.find((q) => q.monat === '2026-06').status, zp.monate.find((q) => q.monat === '2026-06').tage, zp.ruecklastschriften, zp.score],
+    ['verspaetet', tageInkl(juni, '2026-06-20') - 1, 1, Math.round((21 * 100 + Math.max(0, 100 - 4 * (tageInkl(juni, '2026-06-20') - 1))) / 22 - 10)]);
+}
+
 console.log(`\nRechentest: ${ok} Prüfungen richtig, ${falsch} falsch.`);
 if (falsch) process.exitCode = 1;
 // The click test reuses the sample data.

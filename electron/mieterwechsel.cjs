@@ -154,6 +154,7 @@ module.exports = function mieterwechsel({ db, all, get, tx, PERSON_NAME }) {
         FROM einheiten e WHERE e.objekt_id = ?1
           AND NOT EXISTS (SELECT 1 FROM mietverhaeltnisse m WHERE m.einheit_id = e.id AND m.beginn <= ?3 AND (m.ende IS NULL OR m.ende = '' OR m.ende > ?3))
           AND NOT EXISTS (SELECT 1 FROM eigentum g WHERE g.einheit_id = e.id AND g.selbstnutzer = 1 AND (g.ende IS NULL OR g.ende = '' OR g.ende >= ?2))
+          AND NOT EXISTS (SELECT 1 FROM selbstnutzung s WHERE s.einheit_id = e.id AND s.beginn <= ?3 AND (s.ende IS NULL OR s.ende = '' OR s.ende > ?3))
         ORDER BY e.nr`, objektId, t, in4)
         .map((e) => ({ ...e, angebot: get('SELECT * FROM angebote WHERE einheit_id = ?', e.id) ?? null }));
     },

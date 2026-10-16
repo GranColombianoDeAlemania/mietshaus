@@ -6,19 +6,21 @@ import { useLoad } from '../useLoad';
 import { ObjektKacheln } from './Steckbrief';
 import { L, mitLinks, useNavi } from '../navi';
 import { Jahreswechsel, jahreswechselZeit } from './Jahreswechsel';
+import { CockpitKpis, CockpitRadar, CockpitVorschau } from './Kennzahlen';
+import { Kennzahl } from '../zeiger';
 
 const STUFE: Record<string, [string, string]> = { rot: ['●', 'Jetzt handeln'], orange: ['●', 'Bald / prüfen'], gelb: ['●', 'Chance / Hinweis'] };
 
 export function Uebersicht(props: { modus: Modus; objekte: Row[]; oeffne: (seite: string, objektId?: number) => void }) {
   const [hinweise, reload] = useLoad<Row[]>(() => call('hinweise'), []);
   const [k] = useLoad<Row>(() => call('kennzahlen', props.modus), [props.modus]);
-  const [d] = useLoad<Row>(() => call('uebersicht', props.modus), [props.modus]);
+  const [c] = useLoad<Row>(() => call('cockpitKennzahlen', props.modus), [props.modus]);
   const [f] = useLoad<Row>(() => call('faelligkeiten', 7), []);
   const [vorgaenge] = useLoad<Row[]>(() => call('vorgaengeListe', null, true), []);
   const [start, ladeStart] = useLoad<Row>(() => call('ersteSchritte'), []);
   const navi = useNavi();
   const weg = props.modus === 'weg';
-  if (!hinweise || !k || !d || !f) return null;
+  if (!hinweise || !k || !c || !f) return null;
 
   // Hints of objects that belong to the other mode stay out of this cockpit.
   const sichtbar = new Set(props.objekte.map((o) => o.id));
@@ -27,7 +29,7 @@ export function Uebersicht(props: { modus: Modus; objekte: Row[]; oeffne: (seite
   const chancen = meine.filter((h) => h.stufe === 'gelb');
   const rot = handeln.filter((h) => h.stufe === 'rot').length;
   const offeneVorgaenge = (vorgaenge ?? []).filter((v) => v.faellig && v.faellig <= new Date(Date.now() + 7 * 864e5).toISOString().slice(0, 10));
-  const eingangQuote = k.soll_ct ? Math.min(100, Math.round((k.ist_ct / k.soll_ct) * 100)) : 0;
+  const verlauf = <Kennzahl titel="Ein- und Auszahlungen der letzten 12 Monate" breite={weg ? 7 : 12}><Zahlungsverlauf verlauf={k.verlauf} /></Kennzahl>;
 
   return (
     <section className="cockpit">
@@ -57,19 +59,7 @@ export function Uebersicht(props: { modus: Modus; objekte: Row[]; oeffne: (seite
 
       {jahreswechselZeit() && (!start || start.fertig || start.ausgeblendet) && <Jahreswechsel kompakt />}
 
-      <ObjektKacheln modus={props.modus} oeffne={props.oeffne} />
-      <div className="kacheln">
-        {k.soll_ct > 0 && (
-          <div className="kachel">
-            <div className="wert">{euro(k.ist_ct)}</div>
-            <div className="label">{weg ? 'Hausgeld' : 'Mieten'}-Eingang {k.monat.slice(5)}/{k.monat.slice(0, 4)} von {euro(k.soll_ct)} Soll</div>
-            <div className="balken" title={`${eingangQuote} %`}><span style={{ width: `${eingangQuote}%` }} /></div>
-          </div>
-        )}
-        <div className="kachel"><div className="wert">{euro(k.geld_ct)}</div><div className="label">Kontostände gesamt</div></div>
-        <div className="kachel"><div className="wert">{euro(d.soll_monat_ct)}</div><div className="label">{weg ? 'Hausgeld-Soll' : 'Mieten-Soll'} pro Monat</div></div>
-        {!weg && <div className="kachel"><div className="wert">{k.einheiten ? Math.round(((k.einheiten - k.vermietet) / k.einheiten) * 100) : 0} %</div><div className="label">Leerstand ({Math.max(0, k.einheiten - k.vermietet)} von {k.einheiten} Einheiten)</div></div>}
-      </div>
+      <CockpitKpis c={c} weg={weg} />
 
       <div className="cockpit-raster">
         <div className="panel">
@@ -107,11 +97,10 @@ export function Uebersicht(props: { modus: Modus; objekte: Row[]; oeffne: (seite
         </div>
       </div>
 
-      <div className="panel">
-        <div className="panelkopf"><h3>Ein- und Auszahlungen der letzten 12 Monate</h3></div>
-        <Zahlungsverlauf verlauf={k.verlauf} />
-      </div>
-
+      <CockpitVorschau c={c} />
+      <CockpitRadar c={c}>{weg ? verlauf : null}</CockpitRadar>
+      <ObjektKacheln modus={props.modus} oeffne={props.oeffne} />
+      {!weg && <div className="kz-raster">{verlauf}</div>}
     </section>
   );
 }
@@ -149,7 +138,7 @@ function Zahlungsverlauf(props: { verlauf: Row[] }) {
   const basis = 10 ** Math.floor(Math.log10(roh));
   const schritt = [1, 2, 2.5, 5, 10].map((f) => f * basis).find((x) => x >= roh)!;
   const oben = schritt * 4;
-  const B = 760, H = 220, L = 56, U = 26, T = 10;
+  const B = 1000, H = 170, L = 64, U = 24, T = 10;
   const breite = (B - L) / v.length;
   const balken = Math.min(10, (breite - 14) / 2);
   const y = (ct: number) => T + (H - T - U) * (1 - ct / oben);

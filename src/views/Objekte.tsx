@@ -25,6 +25,9 @@ const FELDER: Field[] = [
   { key: 'vorsteuer_quote', label: 'Abziehbare Vorsteuer in % (nur bei Gewerbe mit Umsatzsteuer)', type: 'number' },
   { key: 'kappungsgrenze', label: 'Kappungsgrenze für Mieterhöhungen (§ 558 BGB)', type: 'select', section: 'Mietrecht',
     options: [['20', '20 % in drei Jahren (Regelfall)'], ['15', '15 % – Gemeinde mit Kappungsgrenzen-Verordnung']] },
+  { key: 'vergleichsmiete_ct', label: 'Ortsübliche Vergleichsmiete je m² (Mietspiegel, Mittelwert)', type: 'money', wide: true },
+  { key: 'mietspiegel_von_ct', label: 'Mietspiegel-Spanne von je m²', type: 'money' },
+  { key: 'mietspiegel_bis_ct', label: 'Mietspiegel-Spanne bis je m²', type: 'money' },
   { key: 'notiz', label: 'Notiz', type: 'textarea', section: 'Sonstiges' },
 ];
 

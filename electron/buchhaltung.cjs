@@ -85,6 +85,15 @@ const monatsliste = (von, bis) => {
 };
 const tageZwischen = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 86400000);
 
+// SQL condition: the unit `e` is used by the landlord himself on date `d` (a column, parameter or literal).
+const selbstSql = (e, d) => `EXISTS (SELECT 1 FROM selbstnutzung sn WHERE sn.einheit_id = ${e}.id AND sn.beginn <= ${d}
+  AND (sn.ende IS NULL OR sn.ende = '' OR sn.ende >= ${d}))`;
+// SQL expression: the unit a posting `b` concerns – set on the posting, or taken from its receipt or its project.
+const einheitVonSql = (b) => `coalesce(${b}.einheit_id,
+  (SELECT d.einheit_id FROM dokumente d WHERE d.buchung_id IN (${b}.id, coalesce(${b}.gruppe, -1)) AND d.einheit_id IS NOT NULL ORDER BY d.id LIMIT 1),
+  (SELECT pj.einheit_id FROM projektposten pp JOIN projekte pj ON pj.id = pp.projekt_id WHERE pp.buchung_id IN (${b}.id, coalesce(${b}.gruppe, -1))
+    AND pj.einheit_id IS NOT NULL LIMIT 1))`;
+
 module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_NAME }) {
   const vertragTabelle = (typ) => (typ === 'weg' ? 'eigentum' : 'mietverhaeltnisse');
   // State for public holidays (affects working-day due dates); empty = nationwide holidays only.
@@ -175,7 +184,8 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
   }
 
   // ohneTx: for callers that already run inside a transaction.
-  function buchen({ objekt_id, datum, beleg, text, art = 'manuell', monat = null, import_ref = null, positionen }, ohneTx = false) {
+  // einheit_id: the unit the costs concern (also per position).
+  function buchen({ objekt_id, datum, beleg, text, art = 'manuell', monat = null, import_ref = null, einheit_id = null, positionen }, ohneTx = false) {
     if (!datum) throw new Error('Bitte ein Buchungsdatum angeben.');
     const pos = positionen.filter((p) => p.betrag_ct);
     if (!pos.length) throw new Error('Bitte einen Betrag angeben.');
@@ -186,12 +196,12 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
       if (p.betrag_ct < 0) [p.soll_id, p.haben_id, p.betrag_ct] = [p.haben_id, p.soll_id, -p.betrag_ct];
     }
     return (ohneTx ? (f) => f() : tx)(() => {
-      const st = db.prepare(`INSERT INTO buchungen (objekt_id, datum, beleg, text, betrag_ct, soll_id, haben_id, art, monat, gruppe, import_ref)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
+      const st = db.prepare(`INSERT INTO buchungen (objekt_id, datum, beleg, text, betrag_ct, soll_id, haben_id, art, monat, gruppe, import_ref, einheit_id)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`);
       let gruppe = null;
       const ids = pos.map((p, i) => {
         const id = Number(st.run(objekt_id, datum, beleg || null, p.text || text || null, p.betrag_ct, p.soll_id, p.haben_id,
-          art, p.monat ?? monat, gruppe, i === 0 ? import_ref : null).lastInsertRowid);
+          art, p.monat ?? monat, gruppe, i === 0 ? import_ref : null, p.einheit_id || einheit_id || null).lastInsertRowid);
         if (i === 0 && pos.length > 1) {
           gruppe = id;
           db.prepare('UPDATE buchungen SET gruppe = ? WHERE id = ?').run(id, id);
@@ -207,6 +217,7 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
       (SELECT d.id FROM dokumente d WHERE d.buchung_id IN (b.id, coalesce(b.gruppe, -1)) ORDER BY d.id LIMIT 1) AS dok_id,
       (SELECT d.datei FROM dokumente d WHERE d.buchung_id IN (b.id, coalesce(b.gruppe, -1)) ORDER BY d.id LIMIT 1) AS dok_datei,
       EXISTS (SELECT 1 FROM buchungen x WHERE x.storno_von = b.id) AS storniert,
+      ${einheitVonSql('b')} AS einheit_eff, (SELECT x.bezeichnung FROM einheiten x WHERE x.id = ${einheitVonSql('b')}) AS einheit_bez,
       b.datum <= coalesce((SELECT wert FROM einstellungen WHERE schluessel = 'festgeschrieben_bis'), '0000-00-00') AS festgeschrieben
     FROM buchungen b JOIN konten s ON s.id = b.soll_id JOIN konten h ON h.id = b.haben_id`;
 
@@ -480,6 +491,15 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
       return gruppe.length;
     }),
 
+    // Assigns a posting (with its whole split group) to a unit, or removes the assignment (einheitId null).
+    buchungEinheitSetzen: (id, einheitId) => tx(() => {
+      const b = get('SELECT id, gruppe, objekt_id FROM buchungen WHERE id = ?', id);
+      if (!b) throw new Error('Buchung nicht gefunden');
+      if (einheitId && !get('SELECT 1 FROM einheiten WHERE id = ? AND objekt_id = ?', einheitId, b.objekt_id)) throw new Error('Die Einheit gehört nicht zu diesem Objekt.');
+      if (b.gruppe) db.prepare('UPDATE buchungen SET einheit_id = ? WHERE gruppe = ?').run(einheitId || null, b.gruppe);
+      else db.prepare('UPDATE buchungen SET einheit_id = ? WHERE id = ?').run(einheitId || null, id);
+    }),
+
     buchungLoeschen: (id) => tx(() => {
       const b = get('SELECT gruppe FROM buchungen WHERE id = ?', id);
       if (b?.gruppe) db.prepare('DELETE FROM buchungen WHERE gruppe = ?').run(b.gruppe);
@@ -712,3 +732,5 @@ module.exports.USTKONTEN = USTKONTEN;
 module.exports.tageImMonat = tageImMonat;
 module.exports.tageZwischen = tageZwischen;
 module.exports.monatsliste = monatsliste;
+module.exports.selbstSql = selbstSql;
+module.exports.einheitVonSql = einheitVonSql;

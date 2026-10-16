@@ -1,6 +1,6 @@
 // Automation and checks: runs routine work by itself (monthly charges) and reports what needs a decision
 // or is missing. Each hint has a stable key so it can be snoozed or marked as done.
-const { tageZwischen } = require('./buchhaltung.cjs');
+const { tageZwischen, selbstSql } = require('./buchhaltung.cjs');
 
 const heute = () => new Date().toISOString().slice(0, 10);
 const plusTage = (iso, n) => new Date(Date.parse(iso) + n * 864e5).toISOString().slice(0, 10);
@@ -12,7 +12,7 @@ const plusMonate = (iso, n) => {
 const euro = (ct) => new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format((ct ?? 0) / 100);
 const datumDe = (iso) => (iso ? iso.split('-').reverse().join('.') : '');
 
-module.exports = function automatik({ db, all, get, tx, PERSON_NAME, bh, ab, vw, einstellungen }) {
+module.exports = function automatik({ db, all, get, tx, PERSON_NAME, bh, ab, vw, kz, einstellungen }) {
   const einst = () => einstellungen();
 
   // Monthly charges up to the current month for all objects. Starts with the month automation was switched on,
@@ -188,7 +188,8 @@ module.exports = function automatik({ db, all, get, tx, PERSON_NAME, bh, ab, vw,
           }
         }
         const leer = all(`SELECT e.id, e.bezeichnung FROM einheiten e WHERE e.objekt_id = ?1 AND NOT EXISTS (SELECT 1 FROM mietverhaeltnisse m WHERE m.einheit_id = e.id
-          AND m.beginn <= ?2 AND (m.ende IS NULL OR m.ende = '' OR m.ende >= ?2)) AND NOT EXISTS (SELECT 1 FROM eigentum g WHERE g.einheit_id = e.id AND g.selbstnutzer = 1)`, o.id, t);
+          AND m.beginn <= ?2 AND (m.ende IS NULL OR m.ende = '' OR m.ende >= ?2)) AND NOT EXISTS (SELECT 1 FROM eigentum g WHERE g.einheit_id = e.id AND g.selbstnutzer = 1)
+          AND NOT ${selbstSql('e', '?2')}`, o.id, t);
         if (leer.length) add({ modus: 'miete', schluessel: `leer:${o.id}:${t.slice(0, 7)}`, stufe: 'gelb', kategorie: 'Miete', ...ziel('vermietung'),
           text: `Leerstand: ${leer.map((x) => x.bezeichnung).join(', ')}.`, links: leer.map((x) => ({ text: x.bezeichnung, ziel: { einheit: x.id } })) });
       }
@@ -209,6 +210,14 @@ module.exports = function automatik({ db, all, get, tx, PERSON_NAME, bh, ab, vw,
         add({ schluessel: `vers:${v.id}:${v.kuendbar_bis}`, stufe: 'orange', kategorie: 'Verträge', ...ziel('versicherungen'),
           text: `${v.art} (${v.gesellschaft ?? ''}) bis ${datumDe(v.kuendbar_bis)} kündbar – Konditionen prüfen.` });
       }
+    }
+
+    // Consumption jumps against the year before: a leak, a faulty meter or a change of tenant?
+    const zahl = (x) => x.toLocaleString('de-DE', { maximumFractionDigits: x < 100 ? 1 : 0 });
+    for (const x of kz?.verbrauchSpruenge() ?? []) {
+      add({ modus: x.objekt_art === 'weg' ? 'weg' : 'miete', schluessel: `verbrauch:${x.einheit_id}:${x.art}:${x.jahr}`, stufe: 'gelb', kategorie: 'Verbrauch',
+        objekt_id: x.objekt_id, objekt: x.objekt, ziel: 'zaehler', links: [{ text: x.einheit_name, ziel: { einheit: x.einheit_id } }],
+        text: `${x.label} ${x.einheit_name}: ${x.jahr} ${x.aenderung > 0 ? '+' : '−'}${Math.round(Math.abs(x.aenderung))} % gegenüber ${x.jahr - 1} (${zahl(x.vorjahr)} → ${zahl(x.wert)} ${x.einheit}) – Leck, defekter Zähler oder Mieterwechsel?` });
     }
 
     // Snoozed or done hints are hidden unless all are requested.

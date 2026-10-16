@@ -14,20 +14,40 @@ module.exports = function abrechnung({ db, all, get, tx, PERSON_NAME, bh }) {
   const vertragTabelle = (typ) => (typ === 'weg' ? 'eigentum' : 'mietverhaeltnisse');
 
   // Splits each unit's use over the period into contract segments; gaps become vacancy segments (vertrag = null).
-  function abschnitte(objektId, typ, von, bis) {
+  // For tenancies a gap in which the landlord lives in the unit himself is a self-use segment (selbst = { personen }):
+  // it takes part in every key like a tenancy, and its share is borne by the landlord.
+  // annahme: { einheit_id, personen } treats that unit as self-used for the whole period (what the own flat would cost).
+  function abschnitte(objektId, typ, von, bis, annahme = null) {
     const einheiten = all('SELECT * FROM einheiten WHERE objekt_id = ? ORDER BY nr', objektId);
     const out = [];
     for (const e of einheiten) {
+      if (annahme && annahme.einheit_id === e.id) {
+        out.push({ einheit: e, vertrag: null, selbst: { id: null, personen: Number(annahme.personen) || 0 }, von, bis, tage: tage(von, bis) });
+        continue;
+      }
+      const selbst = typ === 'miete' ? all(`SELECT * FROM selbstnutzung WHERE einheit_id = ? AND beginn <= ? AND (ende IS NULL OR ende = '' OR ende >= ?)
+        ORDER BY beginn`, e.id, bis, von) : [];
+      const luecke = (a, b) => {
+        let c = a;
+        for (const sn of selbst) {
+          const sa = max(sn.beginn, c), sb = min(sn.ende || '9999-12-31', b);
+          if (sa > sb) continue;
+          if (sa > c) out.push({ einheit: e, vertrag: null, von: c, bis: vorTag(sa), tage: tage(c, vorTag(sa)) });
+          out.push({ einheit: e, vertrag: null, selbst: { id: sn.id, personen: sn.personen ?? 0 }, von: sa, bis: sb, tage: tage(sa, sb) });
+          c = nachTag(sb);
+        }
+        if (c <= b) out.push({ einheit: e, vertrag: null, von: c, bis: b, tage: tage(c, b) });
+      };
       const vs = all(`SELECT v.*, ${PERSON_NAME} AS name FROM ${vertragTabelle(typ)} v JOIN personen p ON p.id = v.person_id
         WHERE v.einheit_id = ? AND v.beginn <= ? AND (v.ende IS NULL OR v.ende = '' OR v.ende >= ?) ORDER BY v.beginn`, e.id, bis, von);
       let cursor = von;
       for (const v of vs) {
         const a = max(v.beginn, von), b = min(v.ende || '9999-12-31', bis);
-        if (a > cursor) out.push({ einheit: e, vertrag: null, von: cursor, bis: vorTag(a), tage: tage(cursor, vorTag(a)) });
+        if (a > cursor) luecke(cursor, vorTag(a));
         out.push({ einheit: e, vertrag: v, von: a, bis: b, tage: tage(a, b) });
         cursor = nachTag(b);
       }
-      if (cursor <= bis) out.push({ einheit: e, vertrag: null, von: cursor, bis, tage: tage(cursor, bis) });
+      if (cursor <= bis) luecke(cursor, bis);
     }
     return out;
   }
@@ -48,7 +68,8 @@ module.exports = function abrechnung({ db, all, get, tx, PERSON_NAME, bh }) {
       if (k.typ === 'personen') {
         // Person-days: each tenancy's people weighted by its days in the period.
         const leer = (e) => (!e.art || e.art === 'Wohnung' ? leerPersonen : 0);
-        wert = (s) => (s.vertrag ? s.vertrag.personen_anzahl ?? 0 : leer(s.einheit)) * s.tage / periodeTage;
+        // The own household counts with its real size.
+        wert = (s) => (s.vertrag ? s.vertrag.personen_anzahl ?? 0 : s.selbst ? s.selbst.personen ?? 0 : leer(s.einheit)) * s.tage / periodeTage;
         gesamt = segmente.reduce((sum, s) => sum + wert(s), 0);
       } else if (k.typ === 'zaehler') {
         const zaehler = all(`SELECT * FROM zaehler WHERE objekt_id = ? AND art = ? AND einheit_id IS NOT NULL`, objektId, k.zaehler_art);
@@ -85,7 +106,7 @@ module.exports = function abrechnung({ db, all, get, tx, PERSON_NAME, bh }) {
   // ---------- Service-charge statement (tenants) ----------
   function nkAbrechnung(objektId, von, bis, opt = {}) {
     const o = { heizung: 'intern', verbrauchsanteil: 70, co2_kg: 0, co2_kosten_ct: 0, extern: {}, ausnahmen: [], leerstand_personen: 1, ...opt };
-    const segmente = abschnitte(objektId, 'miete', von, bis);
+    const segmente = abschnitte(objektId, 'miete', von, bis, o.annahme_selbst ?? null);
     const rechner = schluesselRechner(objektId, von, bis, Number(o.leerstand_personen) || 0);
     const konten = kostenImZeitraum(objektId, von, bis, 'AND k.umlagefaehig = 1');
     const flaecheKey = get(`SELECT id FROM umlageschluessel WHERE objekt_id = ? AND typ = 'flaeche' ORDER BY id LIMIT 1`, objektId)?.id;
@@ -166,7 +187,7 @@ module.exports = function abrechnung({ db, all, get, tx, PERSON_NAME, bh }) {
       const ustSatz = s.vertrag ? Number(s.vertrag.ust_satz) || 0 : 0;
       const ergebnis = kosten - bkVz - hkVz;
       return {
-        segment: { von: s.von, bis: s.bis, tage: s.tage, einheit: s.einheit, vertrag: s.vertrag, konto_id: konto?.id ?? null },
+        segment: { von: s.von, bis: s.bis, tage: s.tage, einheit: s.einheit, vertrag: s.vertrag, konto_id: konto?.id ?? null, selbst: s.selbst ?? null },
         anteile: a, kosten_ct: kosten, heiz_ct: heiz, bk_ct: kosten - heiz, bk_vz_ct: bkVz, hk_vz_ct: hkVz,
         ergebnis_ct: ergebnis, ust_satz: ustSatz, ust_ct: ustSatz ? Math.round(ergebnis * ustSatz / 100) : 0, p35a,
         neu_bk_vz_ct: Math.ceil((kosten - heiz) / Math.max(1, monate) / 100) * 100,
@@ -176,7 +197,8 @@ module.exports = function abrechnung({ db, all, get, tx, PERSON_NAME, bh }) {
 
     return { typ: 'nk', objekt_id: objektId, von, bis, optionen: o, posten, ergebnisse, heizung, co2,
       summe_ct: posten.reduce((s, p) => s + p.gesamt_ct, 0),
-      leerstand_ct: ergebnisse.filter((e) => !e.segment.vertrag).reduce((s, e) => s + e.kosten_ct, 0) };
+      leerstand_ct: ergebnisse.filter((e) => !e.segment.vertrag && !e.segment.selbst).reduce((s, e) => s + e.kosten_ct, 0),
+      eigenanteil_ct: ergebnisse.filter((e) => e.segment.selbst).reduce((s, e) => s + e.kosten_ct, 0) };
   }
 
   // ---------- Checks before a service-charge statement goes out ----------
@@ -258,6 +280,7 @@ module.exports = function abrechnung({ db, all, get, tx, PERSON_NAME, bh }) {
       'Bei Heizöl, Erdgas, Flüssiggas oder fossiler Fernwärme trägt der Vermieter je nach Ausstoß einen Teil der CO₂-Kosten (CO2KostAufG). Fehlt die Angabe, darf der Mieter seinen Heizkostenanteil um 3 % kürzen. CO₂-Menge und -Kosten stehen auf der Brennstoff- bzw. Fernwärmerechnung.');
     // Vacancy, § 35a.
     if (a.leerstand_ct) add('info', `Auf Leerstand entfallen ${euro(a.leerstand_ct)}; diese Kosten trägt der Vermieter.`);
+    if (a.eigenanteil_ct) add('info', `Auf die selbst genutzte Wohnung entfallen ${euro(a.eigenanteil_ct)} (Eigenanteil). Sie nimmt an allen Schlüsseln teil, nach Personen mit deiner Haushaltsgröße; den Anteil trägst du, kein Mieter zahlt dafür.`);
     const p35 = a.ergebnisse.reduce((s, e) => s + (e.p35a?.dienstleistung ?? 0) + (e.p35a?.handwerker ?? 0), 0);
     if (p35) add('info', `Die Anteile für haushaltsnahe Dienstleistungen und Handwerkerleistungen (${euro(p35)}) werden je Mieter ausgewiesen.`, '§ 35a EStG – Mieter können sie in der Steuererklärung geltend machen.');
     // Parking spaces, garages and cellars bear only what their lease assigns to them; a per-unit key counts them like flats.

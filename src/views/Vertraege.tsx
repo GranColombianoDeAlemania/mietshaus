@@ -6,6 +6,7 @@ import { L, useNavi } from '../navi';
 import { Leer, SortTh, sortiere, type Sortierung } from '../ui';
 import { SaldoChip, TeilmonatHinweis } from './Akten';
 import { sollNachfrage } from './Sollstellung';
+import { QmMini, ZahlungMini } from './Kennzahlen';
 
 const FAELLIG: [number, string][] = [[0, '3. Werktag (gesetzlich, § 556b BGB)'], ...Array.from({ length: 28 }, (_, i) => [i + 1, `am ${i + 1}. des Monats`] as [number, string])];
 
@@ -80,6 +81,8 @@ export function Vertraege(props: { modus: Modus; objekt: Row }) {
   const [rows, reload] = useLoad<Row[]>(() => call('vertraege', a.table, props.objekt.id), [props.objekt.id, a.table]);
   const [einheiten] = useLoad<Row[]>(() => call('einheiten', props.objekt.id), [props.objekt.id]);
   const [personen, ladePersonen] = useLoad<Row[]>(() => call('personen'), []);
+  // Small gauges per tenancy: payment behaviour and cold rent per m².
+  const [kz, ladeKz] = useLoad<Row | null>(() => (typ === 'miete' ? call('listenKennzahlen', props.objekt.id) : Promise.resolve(null)), [props.objekt.id, typ]);
   const [edit, setEdit] = useState<Row | null>(null);
   const [nurAktuell, setNurAktuell] = useState(true);
   const [sort, setSort] = useState<Sortierung>(null);
@@ -118,6 +121,8 @@ export function Vertraege(props: { modus: Modus; objekt: Row }) {
                 <><th className="num">Hausgeld</th><th className="num">Rücklage</th></>
               )}
               <SortTh k="monatlich" s={sort} set={setSort} className="num">Monatlich</SortTh>
+              {typ === 'miete' && <th title="Zahlungsverhalten der letzten 24 Monate (0–100)">Zahlung</th>}
+              {typ === 'miete' && <th className="num" title="Kaltmiete je m² und Monat; gelb unter, rot über der Spanne des Mietspiegels">€/m²</th>}
               <SortTh k="saldo" s={sort} set={setSort}>Konto</SortTh>
             </tr>
           </thead>
@@ -136,6 +141,8 @@ export function Vertraege(props: { modus: Modus; objekt: Row }) {
                 )}
                 <td className="num"><b>{euro(a.summe(v))}</b>
                   {v.ust_satz > 0 ? <div className="klein hinweis">inkl. {zahl(v.ust_satz)} % USt</div> : v.angepasst ? <div className="klein hinweis" title="Durch Mietanpassung, Wirtschaftsplan oder neue Vorauszahlungen geändert">angepasst</div> : null}</td>
+                {typ === 'miete' && <td>{v.aktuell || v.zukuenftig ? <ZahlungMini x={kz?.vertraege[v.id]} /> : null}</td>}
+                {typ === 'miete' && <td className="num">{v.aktuell || v.zukuenftig ? <QmMini x={kz?.vertraege[v.id]} /> : null}</td>}
                 <td>{v.aktuell || v.ueberfaellig_ct ? <SaldoChip v={v} /> : null}</td>
               </tr>
             ))}
@@ -143,7 +150,7 @@ export function Vertraege(props: { modus: Modus; objekt: Row }) {
           <tfoot>
             <tr>
               <td colSpan={typ === 'miete' ? 7 : 6}>Summe Soll pro Monat (aktuelle Verträge)</td>
-              <td className="num"><b>{euro(gesamt)}</b></td><td />
+              <td className="num"><b>{euro(gesamt)}</b></td>{typ === 'miete' && <><td /><td /></>}<td />
             </tr>
           </tfoot>
         </table>
@@ -167,6 +174,7 @@ export function Vertraege(props: { modus: Modus; objekt: Row }) {
             setEdit(null);
             reload();
             ladePersonen();
+            ladeKz();
           }}
         />
       )}

@@ -1,10 +1,13 @@
 // Yield per object, Anlage V figures for the tax return, and cost shares from an external WEG statement.
 import { useEffect, useState } from 'react';
-import { betrag, call, datum, diesesJahr, euro, fehler, parseCent, zahl, type Row } from '../api';
+import { betrag, call, datum, diesesJahr, euro, fehler, parseCent, parseZahl, zahl, type Row } from '../api';
 import { useLoad } from '../useLoad';
 import { KontoSelect, Leer, Tabs } from '../ui';
 import { alsPdf, bericht, dokument, esc, tabelle } from '../dokument';
 import { L, useNavi } from '../navi';
+import { euro0, Kennzahl, prozent as prozentKz, Ring, RingZeile, type Zonen } from '../zeiger';
+
+const ZONEN_RENDITE: Zonen = [[2.499, 'rot'], [3.499, 'gelb'], [100, 'gruen']];
 
 export function Auswertungen(props: { objekt: Row }) {
   const [tab, setTab] = useState<'rendite' | 'anlagev' | 'steuer' | 'ust' | 'weg'>('rendite');
@@ -24,37 +27,88 @@ const prozent = (x: number | null) => (x == null ? '–' : `${zahl(+x.toFixed(2)
 
 function Rendite(props: { objekt: Row }) {
   const [r] = useLoad<Row>(() => call('rendite', props.objekt.id, 6), [props.objekt.id]);
+  // With self-use: the yield of the rented part, or as if the own flat were let at the comparative rent.
+  const [sicht, setSicht] = useState<'teil' | 'fiktiv'>('teil');
   if (!r) return null;
   const z = r.zeilen.filter((x: Row) => x.soll_kaltmiete_ct || x.ist_kaltmiete_ct);
   const letzte = z.at(-2) ?? z.at(-1);
+  const wert = (x: Row) => !x.selbst ? { netto_ct: x.netto_ct, brutto: x.brutto_rendite, netto: x.netto_rendite }
+    : sicht === 'teil' ? { netto_ct: x.selbst.netto_ct, brutto: x.selbst.brutto_rendite, netto: x.selbst.netto_rendite }
+      : { netto_ct: x.selbst.fiktiv_netto_ct, brutto: x.selbst.fiktiv_brutto_rendite, netto: x.selbst.fiktiv_netto_rendite };
+  const w = letzte ? wert(letzte) : null;
+  const sl = letzte?.selbst;
+  const erklaerung = !sl ? 'Überschuss / Kaufpreis inkl. Nebenkosten'
+    : sicht === 'teil' ? `auf ${prozent(sl.anteil * 100)} des Kaufpreises (vermieteter Teil, nach Fläche und Tagen)`
+      : `mit Vergleichsmiete für ${sl.einheiten.map((e: Row) => e.bezeichnung).join(', ')} (${euro0(sl.fiktiv_kaltmiete_ct)} im Jahr), Betriebskosten zahlt der Mieter`;
   return (
     <>
       {!r.invest_ct && <p className="fehler">Für Renditewerte bitte unter Objekte → Bearbeiten den Kaufpreis (und ggf. Nebenkosten) eintragen.</p>}
-      {letzte && (
-        <div className="kacheln">
-          <div className="kachel"><div className="wert">{prozent(letzte.brutto_rendite)}</div><div className="label">Bruttomietrendite {letzte.jahr} (Jahreskaltmiete / Kaufpreis)</div></div>
-          <div className="kachel"><div className="wert">{prozent(letzte.netto_rendite)}</div><div className="label">Nettorendite {letzte.jahr} (Überschuss / Kaufpreis inkl. Nebenkosten)</div></div>
-          <div className="kachel"><div className="wert">{letzte.miete_qm != null ? `${betrag(letzte.miete_qm)} €` : '–'}</div><div className="label">Kaltmiete je m² und Monat</div></div>
-          <div className="kachel"><div className="wert">{euro(letzte.ausfall_ct)}</div><div className="label">Mietausfall {letzte.jahr} (Soll – Ist)</div></div>
+      {r.selbstnutzung && (
+        <div className="toolbar">
+          <span className="hinweis klein">Ein Teil des Hauses ist selbst genutzt. Rendite rechnen für</span>
+          <Tabs tabs={[['teil', 'den vermieteten Teil'], ['fiktiv', 'als ob alles vermietet']]} value={sicht} onChange={setSicht} />
+        </div>
+      )}
+      {letzte && w && (
+        <div className="kz-raster">
+          <Kennzahl titel={`Nettorendite ${letzte.jahr}`} breite={4}>
+            <RingZeile ring={<Ring wert={w.netto} max={8} zonen={ZONEN_RENDITE} text={w.netto == null ? '–' : prozentKz(w.netto, 1)} />}
+              wert={<>{euro0(w.netto_ct)}<small>Überschuss</small></>}><div className="kz-text">{erklaerung}</div></RingZeile>
+          </Kennzahl>
+          <Kennzahl titel={`Bruttomietrendite ${letzte.jahr}`} breite={3}><div className="kz-wert">{prozent(w.brutto)}</div>
+            <div className="kz-text">Jahreskaltmiete{sl && sicht === 'fiktiv' ? ' mit Vergleichsmiete' : ''} / Kaufpreis{sl && sicht === 'teil' ? ' des vermieteten Teils' : ''}</div></Kennzahl>
+          <Kennzahl titel="Kaltmiete je m² und Monat" breite={3}><div className="kz-wert">{letzte.miete_qm != null ? `${betrag(letzte.miete_qm)} €` : '–'}</div>
+            <div className="kz-text">{sl ? `über alle Flächen; vermietet: ${betrag(letzte.soll_kaltmiete_ct / 12 / Math.max(1, sl.flaeche_vermietet))} €` : 'über alle Flächen des Hauses'}</div></Kennzahl>
+          <Kennzahl titel={`Mietausfall ${letzte.jahr}`} breite={2}><div className="kz-wert">{euro0(letzte.ausfall_ct)}</div><div className="kz-text">Soll – Ist</div></Kennzahl>
         </div>
       )}
       <table>
         <thead><tr><th>Jahr</th><th className="num">Kaltmiete Soll</th><th className="num">Kaltmiete Ist</th><th className="num">Umlagen erhalten</th>
-          <th className="num">Umlagefähige Kosten</th><th className="num">Nicht umlagefähig</th><th className="num">Überschuss</th><th className="num">Brutto</th><th className="num">Netto</th><th className="num">Kosten/m²·Monat</th></tr></thead>
+          <th className="num">Umlagefähige Kosten</th><th className="num">Nicht umlagefähig</th><th className="num">Überschuss</th>
+          <th className="num">Brutto</th><th className="num">Netto</th><th className="num">Kosten/m²·Monat</th></tr></thead>
         <tbody>
-          {z.map((x: Row) => (
-            <tr key={x.jahr}>
-              <td>{x.jahr}{x.jahr === diesesJahr() ? ' (lfd.)' : ''}</td><td className="num">{euro(x.soll_kaltmiete_ct)}</td><td className="num">{euro(x.ist_kaltmiete_ct)}</td>
-              <td className="num">{euro(x.umlagen_ct)}</td><td className="num">{euro(x.umlagefaehig_ct)}</td><td className="num">{euro(x.nicht_umlagefaehig_ct)}</td>
-              <td className="num"><b>{euro(x.netto_ct)}</b></td><td className="num">{prozent(x.brutto_rendite)}</td><td className="num">{prozent(x.netto_rendite)}</td>
-              <td className="num">{x.kosten_qm != null ? `${betrag(x.kosten_qm)} €` : ''}</td>
-            </tr>
-          ))}
+          {z.map((x: Row) => {
+            const y = wert(x);
+            return (
+              <tr key={x.jahr}>
+                <td>{x.jahr}{x.jahr === diesesJahr() ? ' (lfd.)' : ''}</td><td className="num">{euro(x.soll_kaltmiete_ct)}</td><td className="num">{euro(x.ist_kaltmiete_ct)}</td>
+                <td className="num">{euro(x.umlagen_ct)}</td><td className="num">{euro(x.umlagefaehig_ct)}</td><td className="num">{euro(x.nicht_umlagefaehig_ct)}</td>
+                <td className="num"><b>{euro(y.netto_ct)}</b></td><td className="num">{prozent(y.brutto)}</td><td className="num">{prozent(y.netto)}</td>
+                <td className="num">{x.kosten_qm != null ? `${betrag(x.kosten_qm)} €` : ''}</td>
+              </tr>
+            );
+          })}
           {!z.length && <tr><td colSpan={10} className="hinweis">Noch keine Mieteinnahmen gebucht.</td></tr>}
         </tbody>
       </table>
-      <p className="hinweis klein">Überschuss = erhaltene Kaltmiete und Umlagen minus alle Kosten, vor Finanzierung und Abschreibung. Ist-Werte nach Zahlungseingang (ältere Forderungen werden zuerst getilgt).</p>
+      <p className="hinweis klein">Überschuss = erhaltene Kaltmiete und Umlagen minus alle Kosten, vor Finanzierung und Abschreibung. Ist-Werte nach Zahlungseingang (ältere Forderungen werden zuerst getilgt).
+        {r.selbstnutzung && ' Vermieteter Teil: Kosten des ganzen Hauses nach Fläche und Tagen, Kosten einer vermieteten Einheit voll, der eigenen Wohnung gar nicht; Kaufpreis anteilig. Als ob vermietet: plus Vergleichsmiete der eigenen Wohnung und ihr Betriebskostenanteil.'}</p>
     </>
+  );
+}
+
+// Short names for the Anlage V lines in the split table.
+const kurzname = (l: string) => (l.startsWith('Grundsteuer, Straßenreinigung') ? 'Betriebskosten (Grundsteuer, Wasser, Versicherung u. a.)' : l.split(' (')[0]);
+
+// Split of the deductible costs when part of the house is self-used.
+function Aufteilung(props: { s: Row }) {
+  const s = props.s;
+  return (
+    <div className="panel">
+      <div className="panelkopf"><h3>Aufteilung wegen Selbstnutzung</h3>
+        <span className="klein hinweis">{s.einheiten.map((e: Row) => `${e.bezeichnung} (${zahl(e.flaeche)} m², ${e.tage} Tage)`).join(', ')}</span></div>
+      <div className="kz-zeile"><span><b>{prozent(s.anteil * 100)} vermietet</b> <span className="klein hinweis">{zahl(Math.round(s.flaeche_vermietet * 100) / 100)} von {zahl(s.flaeche_gesamt)} m², tagegenau</span></span>
+        <span className="klein hinweis">{prozent((1 - s.anteil) * 100)} selbst genutzt</span></div>
+      <div className="anteil-balken" aria-hidden="true"><span style={{ width: `${s.anteil * 100}%` }} /><span style={{ width: `${(1 - s.anteil) * 100}%` }} /></div>
+      <table className="kompakt">
+        <thead><tr><th>Werbungskosten</th><th>Regel</th><th className="num">gesamt</th><th className="num">absetzbar</th></tr></thead>
+        <tbody>{s.zeilen.map(([l, ges, ab, regel]: [string, number, number, string]) => (
+          <tr key={l}><td className="klein">{kurzname(l)}</td><td className="klein hinweis">{regel}</td><td className="num">{euro(ges)}</td><td className="num">{euro(ab)}</td></tr>
+        ))}</tbody>
+        <tfoot><tr><td colSpan={2}>Summe</td><td className="num">{euro(s.summe_gesamt_ct)}</td><td className="num"><b>{euro(s.zeilen.reduce((x: number, z: Row) => x + z[2], 0))}</b></td></tr></tfoot>
+      </table>
+      <p className="klein hinweis">Kosten einer Einheit entstehen, wenn du die Buchung (oder ihren Beleg) einer Einheit zuordnest. Die 15-%-Grenze gilt dann nur für den vermieteten Teil. Bitte für die Steuererklärung mit dem Steuerberater abstimmen.</p>
+    </div>
   );
 }
 
@@ -64,8 +118,11 @@ function anlageVSeite(a: Row, objekt: Row) {
   const w = a.werbungskosten.map(([l, c]: [string, number]) => [esc(l), `#r${euro(c)}`]);
   const det = Object.values(a.gruppen).filter((g: any) => g.konten.length).map((g: any) =>
     `<h2>${esc(g.label.split(' (')[0])}</h2>` + tabelle(['Konto', '#rBetrag'], g.konten.map((k: Row) => [`${k.nr} ${esc(k.bezeichnung)}`, `#r${euro(k.ct)}`]))).join('');
+  const s = a.selbstnutzung;
+  const teil = s ? `<h2>Aufteilung wegen Selbstnutzung</h2><p>Vermietet ${prozent(s.anteil * 100)} der Fläche (tagegenau); selbst genutzt: ${s.einheiten.map((e: Row) => esc(e.bezeichnung)).join(', ')}.</p>`
+    + tabelle(['Werbungskosten', 'Regel', '#rgesamt', '#rabsetzbar'], s.zeilen.map(([l, g, ab, r]: [string, number, number, string]) => [esc(kurzname(l)), esc(r), `#r${euro(g)}`, `#r${euro(ab)}`])) : '';
   return bericht(`Einkünfte aus Vermietung und Verpachtung ${a.jahr}`, `${objekt.bezeichnung} · Aufstellung als Grundlage für die Anlage V`,
-    `<h2>Einnahmen</h2>${tabelle(['Art', '#rBetrag'], z, { summe: ['Summe Einnahmen', `#r${euro(a.summe_einnahmen_ct)}`] })}
+    `${teil}<h2>Einnahmen</h2>${tabelle(['Art', '#rBetrag'], z, { summe: ['Summe Einnahmen', `#r${euro(a.summe_einnahmen_ct)}`] })}
      <h2>Werbungskosten</h2>${tabelle(['Art', '#rBetrag'], w, { summe: ['Summe Werbungskosten', `#r${euro(a.summe_werbungskosten_ct)}`] })}
      <p class="hervor">Überschuss / Verlust: ${euro(a.ergebnis_ct)}</p>${det}
      <p class="klein">Einnahmen nach Zufluss, Ausgaben nach Abfluss im Kalenderjahr. Keine Steuerberatung – bitte mit der Steuererklärung bzw. dem Steuerberater abgleichen.</p>`);
@@ -105,6 +162,8 @@ function SteuerWaechter(props: { objekt: Row }) {
               </div>
               <div className="fortschritt" style={{ height: 8 }}><span style={{ width: `${Math.min(100, g.anteil * 100)}%`, background: g.anteil >= 1 ? 'var(--rot)' : g.anteil >= 0.8 ? 'var(--gelb)' : undefined }} /></div>
               <p className="klein">Gebäudeanteil der Anschaffungskosten {euro(g.gebaeude_ct)} · Grenze 15 % = {euro(g.grenze_ct)} netto · bisher {euro(g.summe_netto_ct)} netto ({euro(g.summe_brutto_ct)} brutto) auf Instandhaltungskonten seit {datum(g.kaufdatum)}.</p>
+              {g.vermietet_anteil != null && <p className="klein">Selbstnutzung: Grenze und Kosten gelten nur für den vermieteten Teil ({prozent(g.vermietet_anteil * 100)} der Fläche; Gebäudeanteil ganz {euro(g.gebaeude_ganz_ct)}).
+                Kosten der eigenen Wohnung zählen nicht, Kosten vermieteter Einheiten voll.</p>}
               <p className="klein hinweis">Übersteigen Instandsetzungs- und Modernisierungskosten in den ersten drei Jahren nach dem Kauf 15 % der Gebäudekosten (ohne Umsatzsteuer),
                 gelten sie als anschaffungsnahe Herstellungskosten und sind nicht sofort, sondern nur über die AfA absetzbar (§ 6 Abs. 1 Nr. 1a EStG). Jährlich übliche Erhaltungsarbeiten zählen nicht mit.</p>
             </>
@@ -202,13 +261,16 @@ function AnlageV(props: { objekt: Row }) {
   const [a, reload] = useLoad<Row>(() => call('anlageV', props.objekt.id, jahr), [props.objekt.id, jahr]);
   const [m, setM] = useState<Record<string, string>>({});
   useEffect(() => {
-    if (a) setM(Object.fromEntries(['schuldzinsen_ct', 'geldbeschaffung_ct', 'fahrtkosten_ct', 'sonstige_ct', 'ruecklage_hausgeld_ct']
-      .map((k) => [k, a.manuell[k] != null ? (a.manuell[k] / 100).toFixed(2).replace('.', ',') : ''])));
+    if (a) setM({ ...Object.fromEntries(['schuldzinsen_ct', 'geldbeschaffung_ct', 'fahrtkosten_ct', 'sonstige_ct', 'ruecklage_hausgeld_ct']
+      .map((k) => [k, a.manuell[k] != null ? (a.manuell[k] / 100).toFixed(2).replace('.', ',') : ''])), zins_anteil: a.manuell.zins_anteil != null ? String(a.manuell.zins_anteil).replace('.', ',') : '' });
   }, [a?.jahr, a?.objekt?.id]);
   if (!a) return null;
 
   async function speichern() {
-    await call('steuerangabenSetzen', props.objekt.id, jahr, Object.fromEntries(Object.entries(m).map(([k, v]) => [k, v ? parseCent(v) : null])));
+    const { zins_anteil, ...geld } = m;
+    const anteil = zins_anteil ? parseZahl(zins_anteil) : null;
+    if (anteil != null && (anteil < 0 || anteil > 100)) return fehler('Der Zinsanteil muss zwischen 0 und 100 % liegen.');
+    await call('steuerangabenSetzen', props.objekt.id, jahr, { ...Object.fromEntries(Object.entries(geld).map(([k, v]) => [k, v ? parseCent(v) : null])), zins_anteil: anteil });
     reload();
   }
   const pdf = () => a && alsPdf([anlageVSeite(a, props.objekt)], `Anlage V ${props.objekt.bezeichnung} ${jahr}`);
@@ -222,6 +284,7 @@ function AnlageV(props: { objekt: Row }) {
       </div>
       {a.gemischt && <p className="fehler">Gemischtes Objekt: Die Kosten gelten für das ganze Haus. Für deine Steuer zählt nur dein Anteil – bitte entsprechend anpassen.</p>}
       {!a.objekt.afa_satz && <p className="hinweis">Für die AfA unter Objekte → Bearbeiten Kaufpreis, Kaufdatum, Gebäudeanteil und AfA-Satz eintragen.</p>}
+      {a.selbstnutzung && <Aufteilung s={a.selbstnutzung} />}
       <div className="zweispaltig">
         <div>
           <table>
@@ -243,6 +306,8 @@ function AnlageV(props: { objekt: Row }) {
             {feld('schuldzinsen_ct', 'Schuldzinsen')}{feld('geldbeschaffung_ct', 'Geldbeschaffungskosten')}
             {feld('fahrtkosten_ct', 'Fahrtkosten')}{feld('sonstige_ct', 'Weitere Werbungskosten')}
             {feld('ruecklage_hausgeld_ct', 'Im Hausgeld enthaltene Rücklagenzuführung')}
+            {a.selbstnutzung && <label>Abziehbarer Zinsanteil (%)<input className="num" value={m.zins_anteil ?? ''} placeholder={`nach Fläche: ${zahl(Math.round(a.selbstnutzung.anteil * 1000) / 10)}`}
+              onChange={(e) => setM({ ...m, zins_anteil: e.target.value })} /></label>}
           </div>
           <div className="buttons"><span className="spacer" /><button className="primary" onClick={speichern}>Übernehmen</button></div>
           <p className="klein hinweis">Einnahmen nach Zahlungseingang im Jahr, Ausgaben nach Zahlung. Die Zuführung zur Erhaltungsrücklage einer WEG ist erst bei Verwendung abziehbar.</p>

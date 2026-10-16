@@ -17,6 +17,8 @@ import { kontoauszugPdf } from './Konten';
 import { ROLLEN } from './WegExtras';
 import { BESCHEINIGUNGEN, musterbrief } from './Kommunikation';
 import { sollNachfrage } from './Sollstellung';
+import { EinheitKennzahlen, Kalender, MieterKennzahlen, SelbstnutzungDialog, Zahlungsverhalten } from './Kennzahlen';
+import { euro0, prozent, Ring, RingZeile, ZONEN_KAUTION } from '../zeiger';
 
 const monatKurz = (m: string | null | undefined) => (m && /^\d{4}-\d{2}/.test(m) ? `${m.slice(5, 7)}/${m.slice(2, 4)}` : datum(m));
 const GRUND: Record<string, string> = {
@@ -71,6 +73,7 @@ export function PersonSeite(props: { id: number }) {
   const [a, reload] = useLoad<Row>(() => call('personAkte', props.id), [props.id]);
   const [tab, setTab] = useState<'uebersicht' | 'zahlungen' | 'dokumente' | 'vorgaenge' | 'verlauf'>('uebersicht');
   const [edit, setEdit] = useState(false);
+  const [kzVertrag, setKzVertrag] = useState<number | null>(null);
   useAktion('person-bearbeiten', () => setEdit(true));
   const aktuell = a?.vertraege.filter((v: Row) => v.aktuell || v.zukuenftig) ?? [];
   const erster = aktuell[0] ?? a?.vertraege[0];
@@ -81,6 +84,11 @@ export function PersonSeite(props: { id: number }) {
   if (!a) return null;
   const p = a.person;
   const rueckstand = aktuell.reduce((s: number, v: Row) => s + (v.ueberfaellig_ct ?? 0), 0);
+  // Tenant profile for the main tenancy (the largest current one, otherwise the latest), switchable when there are more.
+  const mieten = a.vertraege.filter((v: Row) => v.typ === 'miete');
+  const laufend = mieten.filter((v: Row) => v.aktuell).sort((x: Row, y: Row) => y.monatlich_ct - x.monatlich_ct);
+  const kzListe = laufend.length ? laufend : mieten.slice(0, 1);
+  const kzId = kzListe.some((v: Row) => v.id === kzVertrag) ? kzVertrag : kzListe[0]?.id ?? null;
 
   return (
     <section className="detailseite">
@@ -107,6 +115,13 @@ export function PersonSeite(props: { id: number }) {
       <Reiter value={tab} onChange={setTab} tabs={[['uebersicht', 'Übersicht'], ['zahlungen', 'Zahlungen', a.zahlungen.length],
         ['dokumente', 'Dokumente', a.dokumente.length], ['vorgaenge', 'Vorgänge & Termine', a.vorgaenge.length + a.termine.length], ['verlauf', 'Verlauf']]} />
 
+      {tab === 'uebersicht' && kzId != null && (
+        <MieterKennzahlen key={kzId} vertragId={kzId} titel={kzListe.length > 1 || !laufend.length ? (
+          <div className="toolbar klein">
+            <span className="hinweis">{laufend.length ? 'Kennzahlen für' : 'Kennzahlen des früheren Mietverhältnisses'}</span>
+            {kzListe.length > 1 && <div className="tabs">{kzListe.map((v: Row) => <button key={v.id} className={v.id === kzId ? 'active' : ''} onClick={() => setKzVertrag(v.id)}>{v.einheit}</button>)}</div>}
+          </div>) : undefined} />
+      )}
       {tab === 'uebersicht' && (
         <div className="raster2">
           <div className="spalte">
@@ -208,6 +223,7 @@ export function EinheitSeite(props: { id: number }) {
   const [a, reload] = useLoad<Row>(() => call('einheitAkte', props.id), [props.id]);
   const [tab, setTab] = useState<'uebersicht' | 'dokumente' | 'verlauf'>('uebersicht');
   const [edit, setEdit] = useState(false);
+  const [selbstEdit, setSelbstEdit] = useState<Row | null>(null);
   useEffect(() => { if (a?.einheit) navi.setzeObjekt(a.einheit.objekt_id); }, [a?.einheit?.objekt_id]);
   usePfad(a ? [{ label: a.einheit.objekt, ziel: { objekt: a.einheit.objekt_id } }, { label: 'Einheiten', ziel: { seite: 'einheiten', objektId: a.einheit.objekt_id } },
     { label: a.einheit.bezeichnung }] : null, [a]);
@@ -216,11 +232,14 @@ export function EinheitSeite(props: { id: number }) {
   const mieter = a.mieter.find((v: Row) => v.aktuell);
   const kuenftig = a.mieter.find((v: Row) => v.zukuenftig);
   const eigner = a.eigentum.filter((v: Row) => v.aktuell);
-  const selbst = eigner.find((v: Row) => v.selbstnutzer);
+  // Self-use: the landlord's own (period with household size) or an owner who lives in the unit.
+  const eigen = a.selbst;
+  const selbst = eigen ?? eigner.find((v: Row) => v.selbstnutzer);
   const zeigeMiete = e.objekt_art !== 'weg';
   const zeigeWeg = e.objekt_art !== 'miete';
   const b = mieter?.betraege;
   const status = mieter ? <Chip art="miete">vermietet</Chip> : selbst ? <Chip art="weg">selbst genutzt</Chip> : zeigeMiete ? <Chip art="gelb">leer</Chip> : null;
+  const selbstNeu = () => setSelbstEdit({ beginn: heute(), personen: 1 });
 
   return (
     <section className="detailseite">
@@ -239,11 +258,13 @@ export function EinheitSeite(props: { id: number }) {
         aktionen={<>
           <button className="icon" onClick={() => ablegen({ objekt_id: e.objekt_id, einheit_id: e.id })}><I.ImagePlus size={15} />Fotos & Dokumente</button>
           <button className="icon" onClick={() => navi.zu({ seite: 'zaehler', objektId: e.objekt_id })}><I.Gauge size={15} />Zählerstand</button>
+          {zeigeMiete && !mieter && !eigen && <button className="icon" title="Die Einheit selbst bewohnen: zählt nicht als Leerstand, eigener Anteil in der Betriebskostenabrechnung, Anlage V nur für den vermieteten Teil" onClick={selbstNeu}><I.House size={15} />Selbst nutzen</button>}
           <button className="icon" onClick={() => setEdit(true)}><I.Pencil size={15} />Bearbeiten</button>
         </>}
       />
       <Reiter value={tab} onChange={setTab} tabs={[['uebersicht', 'Übersicht'], ['dokumente', 'Fotos & Dokumente', a.dokumente.length], ['verlauf', 'Verlauf']]} />
 
+      {tab === 'uebersicht' && zeigeMiete && <EinheitKennzahlen key={e.id} einheit={e} selbstnutzung={a.selbstnutzung} reload={reload} />}
       {tab === 'uebersicht' && (
         <div className="raster2">
           <div className="spalte">
@@ -252,7 +273,11 @@ export function EinheitSeite(props: { id: number }) {
                 {zeigeMiete && (mieter ? (
                   <Fakt l="Mieter"><L zu={{ person: mieter.person_id }}>{mieter.name}</L>{mieter.person2 && <> und <L zu={{ person: mieter.person2.id }}>{mieter.person2.name}</L></>}
                     {' '}<span className="klein hinweis">seit {datum(mieter.beginn)}</span></Fakt>
+                ) : eigen ? (
+                  <Fakt l="Selbst genutzt">seit {datum(eigen.beginn)}{eigen.ende ? ` bis ${datum(eigen.ende)}` : ''} · {zahl(eigen.personen)} {eigen.personen === 1 ? 'Person' : 'Personen'}{' '}
+                    <button className="link klein" onClick={() => setSelbstEdit(eigen)}>ändern</button></Fakt>
                 ) : <Fakt l="Mieter">{selbst ? 'selbst genutzt' : 'leer'}</Fakt>)}
+                {zeigeMiete && !eigen && a.selbst_kuenftig && <Fakt l="Selbstnutzung">ab {datum(a.selbst_kuenftig.beginn)} <button className="link klein" onClick={() => setSelbstEdit(a.selbst_kuenftig)}>ändern</button></Fakt>}
                 {mieter && <Fakt l="Mietkonto"><L zu={{ vertrag: mieter.id, typ: 'miete' }}>Mietverhältnis öffnen</L> <SaldoChip v={mieter} /></Fakt>}
                 {mieter?.ende && <Fakt l="Mietende"><span className="negativ">{datum(mieter.ende)}</span></Fakt>}
                 {kuenftig && <Fakt l="Nachmieter"><L zu={{ person: kuenftig.person_id }}>{kuenftig.name}</L> ab {datum(kuenftig.beginn)}</Fakt>}
@@ -273,7 +298,7 @@ export function EinheitSeite(props: { id: number }) {
                     {mieter.ust_ct ? <Fakt l={`USt ${zahl(mieter.ust_satz)} %`}>{euro(mieter.ust_ct)}</Fakt> : null}
                     <Fakt l="Gesamt / Monat">{euro(mieter.monatlich_ct)}</Fakt>
                   </div>
-                ) : <p className="hinweis klein">{selbst ? 'Die Einheit wird vom Eigentümer selbst genutzt.' : 'Zurzeit nicht vermietet.'}</p>}
+                ) : <p className="hinweis klein">{eigen ? 'Du nutzt die Einheit selbst – es wird keine Miete gefordert.' : selbst ? 'Die Einheit wird vom Eigentümer selbst genutzt.' : 'Zurzeit nicht vermietet.'}</p>}
                 {a.anpassungen.length > 0 && (
                   <table className="kompakt">
                     <thead><tr><th>Gültig ab</th><th>Grund</th><th className="num">Kaltmiete</th></tr></thead>
@@ -285,14 +310,20 @@ export function EinheitSeite(props: { id: number }) {
               </Panel>
             )}
             {zeigeMiete && (
-              <Panel titel="Mieterhistorie" aktion={<span className="klein hinweis">{a.leertage ? `${a.leertage} Tage leer in ${diesesJahr()}` : `kein Leerstand in ${diesesJahr()}`}</span>}>
-                {a.mieter.length ? (
-                  <ul className="liste">{a.mieter.map((v: Row) => (
-                    <li key={v.id} className={v.aktuell || v.zukuenftig ? '' : 'vergangen'}>
-                      <span><L zu={{ person: v.person_id }}>{v.name}</L> <span className="klein hinweis">{v.ende ? `${datum(v.beginn)} – ${datum(v.ende)}` : `seit ${datum(v.beginn)}`}</span></span>
-                      <L zu={{ vertrag: v.id, typ: 'miete' }}>Vertrag</L>
-                    </li>
-                  ))}</ul>
+              <Panel titel={a.selbstnutzung.length ? 'Nutzung' : 'Mieterhistorie'} aktion={<span className="klein hinweis">{a.leertage ? `${a.leertage} Tage leer in ${diesesJahr()}` : `kein Leerstand in ${diesesJahr()}`}</span>}>
+                {a.mieter.length || a.selbstnutzung.length ? (
+                  <ul className="liste">{[...a.mieter.map((v: Row) => ({ ...v, art: 'miete' })), ...a.selbstnutzung.map((x: Row) => ({ ...x, art: 'selbst' }))]
+                    .sort((x: Row, y: Row) => (x.beginn < y.beginn ? 1 : -1)).map((v: Row) => v.art === 'miete' ? (
+                      <li key={'m' + v.id} className={v.aktuell || v.zukuenftig ? '' : 'vergangen'}>
+                        <span><L zu={{ person: v.person_id }}>{v.name}</L> <span className="klein hinweis">{v.ende ? `${datum(v.beginn)} – ${datum(v.ende)}` : `seit ${datum(v.beginn)}`}</span></span>
+                        <L zu={{ vertrag: v.id, typ: 'miete' }}>Vertrag</L>
+                      </li>
+                    ) : (
+                      <li key={'s' + v.id} className={!v.ende || v.ende >= heute() ? '' : 'vergangen'}>
+                        <span>selbst genutzt <span className="klein hinweis">{v.ende ? `${datum(v.beginn)} – ${datum(v.ende)}` : `seit ${datum(v.beginn)}`} · {zahl(v.personen)} Pers.</span></span>
+                        <button className="link klein" onClick={() => setSelbstEdit(v)}>Bearbeiten</button>
+                      </li>
+                    ))}</ul>
                 ) : <p className="hinweis klein">Noch keine Mietverhältnisse.</p>}
               </Panel>
             )}
@@ -334,6 +365,7 @@ export function EinheitSeite(props: { id: number }) {
             )}
             {zeigeMiete && !mieter && !selbst && (
               <Panel titel="Vermietung" aktion={<L zu={{ seite: 'vermietung', objektId: e.objekt_id }}>Vermietung →</L>}>
+                <p className="klein"><button className="link" onClick={selbstNeu}>Oder selbst nutzen …</button></p>
                 <p className="klein">{a.angebot ? `Angebot: ${euro(a.angebot.kaltmiete_ct)} kalt${a.angebot.frei_ab ? `, frei ab ${datum(a.angebot.frei_ab)}` : ''}` : 'Noch kein Angebot.'}</p>
                 <p className="klein hinweis">{a.interessenten.length} Interessent(en) im Gespräch.</p>
               </Panel>
@@ -346,6 +378,7 @@ export function EinheitSeite(props: { id: number }) {
 
       {edit && <FormDialog title="Einheit bearbeiten" row={e} fields={EINHEIT_FELDER}
         onSave={(r) => call('save', 'einheiten', { ...r, objekt_id: e.objekt_id })} onClose={() => { setEdit(false); reload(); }} />}
+      {selbstEdit && <SelbstnutzungDialog einheitId={e.id} row={selbstEdit} onClose={() => { setSelbstEdit(null); reload(); }} />}
     </section>
   );
 }
@@ -356,6 +389,7 @@ export function EinheitSeite(props: { id: number }) {
 export function VertragSeite(props: { typ: 'miete' | 'weg'; id: number }) {
   const navi = useNavi();
   const [a, reload] = useLoad<Row>(() => call('vertragAkte', props.typ, props.id), [props.typ, props.id]);
+  const [zv] = useLoad<Row | null>(() => call('zahlungsverhalten', props.typ, props.id), [props.typ, props.id, a]);
   const [einheiten] = useLoad<Row[]>(() => (a ? call('einheiten', a.einheit.objekt_id) : Promise.resolve([])), [a?.einheit?.objekt_id]);
   const [personen] = useLoad<Row[]>(() => call('personen'), []);
   const [tab, setTab] = useState<'uebersicht' | 'konto' | 'dokumente'>('uebersicht');
@@ -413,6 +447,9 @@ export function VertragSeite(props: { typ: 'miete' | 'weg'; id: number }) {
       />
       <Reiter value={tab} onChange={setTab} tabs={[['uebersicht', 'Übersicht'], ['konto', 'Kontoauszug', a.kontoauszug?.zeilen.length], ['dokumente', 'Dokumente', a.dokumente.length]]} />
 
+      {tab === 'uebersicht' && zv && zv.faellig > 0 && (
+        <div className="kz-raster"><Zahlungsverhalten z={zv} breite={4} /><Kalender z={zv} breite={8} /></div>
+      )}
       {tab === 'uebersicht' && (
         <div className="raster2">
           <div className="spalte">
@@ -471,11 +508,13 @@ export function VertragSeite(props: { typ: 'miete' | 'weg'; id: number }) {
             </Panel>
             {!weg && (
               <Panel titel="Kaution" aktion={<L zu={{ seite: 'kaution', objektId: e.objekt_id }}>Kautionen →</L>}>
-                <div className="fakten einspaltig">
-                  <Fakt l="Vereinbart">{v.kaution_ct ? euro(v.kaution_ct) : 'keine'}</Fakt>
-                  <Fakt l="Erfasst">{a.kaution ? <span className={a.kaution.bestand_ct < v.kaution_ct ? 'negativ' : ''}>{euro(a.kaution.bestand_ct)}</span> : '–'}</Fakt>
-                  {a.kaution?.bank && <Fakt l="Angelegt bei">{a.kaution.bank}</Fakt>}
-                </div>
+                {v.kaution_ct > 0 ? (
+                  <RingZeile ring={<Ring wert={Math.min(100, (a.kaution?.bestand_ct ?? 0) / v.kaution_ct * 100)} zonen={ZONEN_KAUTION}
+                    text={prozent(Math.floor(Math.min(100, (a.kaution?.bestand_ct ?? 0) / v.kaution_ct * 100)))} />}
+                    wert={<>{euro0(a.kaution?.bestand_ct ?? 0)}<small>von {euro0(v.kaution_ct)} erfasst</small></>}>
+                    {a.kaution?.bank && <div className="kz-text">Angelegt bei {a.kaution.bank}</div>}
+                  </RingZeile>
+                ) : <p className="hinweis klein">Keine Kaution vereinbart.</p>}
               </Panel>
             )}
             {a.kuendigung && (a.kuendigung.kuendigung_eingang || a.kuendigung.kuendigung_zum) && (

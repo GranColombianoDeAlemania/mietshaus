@@ -1,5 +1,5 @@
 // Deposits, rent adjustments (index, stepped, increase), keys and insurance policies.
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { anrede, call, datum, euro, fehler, heute, parseZahl, personName, zahl, type Row } from '../api';
 import { useLoad } from '../useLoad';
 import { L } from '../navi';
@@ -101,6 +101,14 @@ export function Mietanpassung(props: { objekt: Row }) {
   const [tab, setTab] = useState<'vertraege' | 'index'>('vertraege');
   const [vertraege] = useLoad<Row[]>(() => call('vertraege', 'mietverhaeltnisse', props.objekt.id), [props.objekt.id]);
   const [offen, setOffen] = useState<Row | null>(null);
+  // From the rent increase radar in the cockpit: open the contract with the suggested change filled in (not saved yet).
+  const [vorlage, setVorlage] = useState<Row | null>(() => {
+    try { const v = JSON.parse(sessionStorage.getItem('anpassungVorlage') ?? 'null'); sessionStorage.removeItem('anpassungVorlage'); return v; } catch { return null; }
+  });
+  useEffect(() => {
+    const v = vorlage && vertraege?.find((x) => x.id === vorlage.vertrag_id);
+    if (v) setOffen(v);
+  }, [vertraege, vorlage]);
   return (
     <section>
       <div className="toolbar">
@@ -121,16 +129,17 @@ export function Mietanpassung(props: { objekt: Row }) {
           </table>
         </>
       )}
-      {offen && <Anpassungen vertrag={offen} objekt={props.objekt} onClose={() => setOffen(null)} />}
+      {offen && <Anpassungen vertrag={offen} objekt={props.objekt} vorlage={vorlage?.vertrag_id === offen.id ? vorlage : null} onClose={() => { setOffen(null); setVorlage(null); }} />}
     </section>
   );
 }
 
-function Anpassungen(props: { vertrag: Row; objekt: Row; onClose: () => void }) {
+function Anpassungen(props: { vertrag: Row; objekt: Row; vorlage?: Row | null; onClose: () => void }) {
   const v = props.vertrag;
   const [liste, reload] = useLoad<Row[]>(() => call('anpassungen', 'miete', v.id), [v.id]);
   const [modell, ladeModell] = useLoad<Row | null>(() => call('mietmodell', v.id), [v.id]);
-  const [edit, setEdit] = useState<Row | null>(null);
+  const [edit, setEdit] = useState<Row | null>(() => (props.vorlage
+    ? { gueltig_ab: props.vorlage.gueltig_ab, grund: props.vorlage.grund, kaltmiete_ct: props.vorlage.kaltmiete_ct, notiz: props.vorlage.notiz ?? '' } : null));
   const [index, setIndex] = useState<Row | null>(null);
   const [pruefung, setPruefung] = useState<Row | null>(null);
   const [briefFuer, setBriefFuer] = useState<Row | null>(null);

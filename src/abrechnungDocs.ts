@@ -52,7 +52,7 @@ export function nkUebersicht(a: Row, objekt: Row) {
     a.posten.map((p: Row) => [esc(p.label), esc(p.schluessel), `#r${p.gesamt_einheiten ? z(p.gesamt_einheiten) : ''}`, `#r${euro(p.gesamt_ct)}`]),
     { summe: ['Summe', '', '', `#r${euro(a.summe_ct)}`] });
   const erg = tabelle(['Einheit', 'Nutzer', 'Zeitraum', '#rKosten', '#rVorauszahlungen', '#rErgebnis'],
-    a.ergebnisse.map((e: Row) => [esc(e.segment.einheit.bezeichnung), e.segment.vertrag ? esc(e.segment.vertrag.name) : '<i>Leerstand (Vermieter)</i>',
+    a.ergebnisse.map((e: Row) => [esc(e.segment.einheit.bezeichnung), e.segment.vertrag ? esc(e.segment.vertrag.name) : e.segment.selbst ? '<i>selbst genutzt (Eigenanteil)</i>' : '<i>Leerstand (Vermieter)</i>',
       `${datum(e.segment.von)} – ${datum(e.segment.bis)}`, `#r${euro(e.kosten_ct)}`, `#r${euro(e.bk_vz_ct + e.hk_vz_ct)}`, `#r${euro(e.ergebnis_ct)}`]));
   return bericht(`Betriebskostenabrechnung – Gesamtübersicht`, `${objekt.bezeichnung} · ${datum(a.von)} – ${datum(a.bis)}`, `<h2>Kosten</h2>${posten}<h2>Verteilung</h2>${erg}`);
 }

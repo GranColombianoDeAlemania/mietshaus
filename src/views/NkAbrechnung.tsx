@@ -120,6 +120,7 @@ export function NkAbrechnung(props: { objekt: Row }) {
         <p className="hinweis klein">
           Berücksichtigt werden alle Kostenkonten mit „umlagefähig“ und Buchungsdatum im Zeitraum (Abflussprinzip). Kosten werden nach
           dem Schlüssel des Kontos auf die Einheiten verteilt und bei Mieterwechsel tagegenau aufgeteilt; Leerstand trägt der Vermieter.
+          Eine selbst genutzte Wohnung nimmt an allen Schlüsseln teil (nach Personen mit deiner Haushaltsgröße); ihren Eigenanteil trägst du.
           {heizung === 'intern' && ' Heizkosten: Grundkosten nach Wohnfläche, Verbrauchskosten nach Wärme- bzw. Warmwasserzählern (Schlüssel vom Typ „Zähler“).'}
         </p>
         <div className="buttons"><span className="spacer" /><button className="primary" onClick={berechnen}>Berechnen</button></div>
@@ -151,7 +152,7 @@ export function NkAbrechnung(props: { objekt: Row }) {
                   <tr key={i}><td>{p.label}</td><td>{p.schluessel}</td><td className="num">{p.gesamt_einheiten ? zahl(+p.gesamt_einheiten.toFixed(3)) : ''} {p.einheit}</td><td className="num">{euro(p.gesamt_ct)}</td></tr>
                 ))}
               </tbody>
-              <tfoot><tr><td colSpan={3}>Summe (davon Leerstand/Vermieter {euro(a.leerstand_ct)})</td><td className="num"><b>{euro(a.summe_ct)}</b></td></tr></tfoot>
+              <tfoot><tr><td colSpan={3}>Summe (davon Leerstand {euro(a.leerstand_ct)}{a.eigenanteil_ct ? ` · Eigenanteil selbst genutzt ${euro(a.eigenanteil_ct)}` : ''})</td><td className="num"><b>{euro(a.summe_ct)}</b></td></tr></tfoot>
             </table>
           </div>
           <div className="block">
@@ -165,7 +166,7 @@ export function NkAbrechnung(props: { objekt: Row }) {
                   return (
                     <tr key={i} className={v ? '' : 'inaktiv'} data-ziel={v ? `vertrag:miete:${v.id}` : `einheit:${e.segment.einheit.id}`}>
                       <td><L zu={{ einheit: e.segment.einheit.id }}>{e.segment.einheit.bezeichnung}</L></td>
-                      <td>{v ? <L zu={{ vertrag: v.id, typ: 'miete' }}>{v.name}</L> : 'Leerstand (Vermieter)'}</td>
+                      <td>{v ? <L zu={{ vertrag: v.id, typ: 'miete' }}>{v.name}</L> : e.segment.selbst ? `selbst genutzt · Eigenanteil (${zahl(e.segment.selbst.personen)} Pers.)` : 'Leerstand (Vermieter)'}</td>
                       <td>{datum(e.segment.von)} – {datum(e.segment.bis)}</td>
                       <td className="num">{euro(e.kosten_ct)}</td>
                       <td className="num">{euro(e.bk_vz_ct + e.hk_vz_ct)}</td>

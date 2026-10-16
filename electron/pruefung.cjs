@@ -62,6 +62,34 @@ module.exports = function pruefung({ all, get, PERSON_NAME, bh, aw, einstellunge
         });
       }
     }
+    // Self-use periods: no tenancy at the same time, no overlaps, a household size for per-person keys.
+    pruefe(() => {
+      const zeit = (a, b) => (b ? `${datumDe(a)} – ${datumDe(b)}` : `ab ${datumDe(a)}`);
+      for (const x of all(`SELECT s.*, e.bezeichnung AS einheit, e.objekt_id, o.bezeichnung AS objekt, m.id AS vertrag_id, m.beginn AS m_beginn, m.ende AS m_ende, ${PERSON_NAME} AS name
+          FROM selbstnutzung s JOIN einheiten e ON e.id = s.einheit_id JOIN objekte o ON o.id = e.objekt_id
+          JOIN mietverhaeltnisse m ON m.einheit_id = s.einheit_id JOIN personen p ON p.id = m.person_id
+          WHERE s.beginn <= coalesce(nullif(m.ende, ''), '9999-12-31') AND m.beginn <= coalesce(nullif(s.ende, ''), '9999-12-31')`)) {
+        add('Verträge', `selbstmiete:${x.id}:${x.vertrag_id}`, 'fehler', `${x.objekt}, ${x.einheit}: Die Selbstnutzung (${zeit(x.beginn, x.ende)}) überschneidet sich mit dem Mietverhältnis ${x.name} (${zeit(x.m_beginn, x.m_ende)}).`,
+          { links: [{ text: x.einheit, ziel: { einheit: x.einheit_id } }, { text: x.name, ziel: { vertrag: x.vertrag_id, typ: 'miete' } }],
+            hilfe: 'Eine Einheit ist entweder vermietet oder selbst genutzt. Ende der Selbstnutzung bzw. Beginn des Mietverhältnisses anpassen – sonst stimmen Betriebskostenabrechnung und Anlage V nicht.' });
+      }
+      for (const x of all(`SELECT a.id AS a_id, b.id AS b_id, e.id AS einheit_id, e.bezeichnung AS einheit, o.bezeichnung AS objekt FROM selbstnutzung a
+          JOIN selbstnutzung b ON b.einheit_id = a.einheit_id AND b.id > a.id JOIN einheiten e ON e.id = a.einheit_id JOIN objekte o ON o.id = e.objekt_id
+          WHERE a.beginn <= coalesce(nullif(b.ende, ''), '9999-12-31') AND b.beginn <= coalesce(nullif(a.ende, ''), '9999-12-31')`)) {
+        add('Verträge', `selbstdoppelt:${x.a_id}:${x.b_id}`, 'warnung', `${x.objekt}, ${x.einheit}: Zwei Zeiträume der Selbstnutzung überschneiden sich.`,
+          { links: [{ text: x.einheit, ziel: { einheit: x.einheit_id } }], hilfe: 'Die Zeiträume zusammenfassen oder beim früheren ein Ende eintragen.' });
+      }
+      for (const x of all(`SELECT s.*, e.bezeichnung AS einheit, o.bezeichnung AS objekt FROM selbstnutzung s JOIN einheiten e ON e.id = s.einheit_id
+          JOIN objekte o ON o.id = e.objekt_id WHERE s.ende IS NOT NULL AND s.ende <> '' AND s.ende < s.beginn`)) {
+        add('Verträge', `selbstende:${x.id}`, 'fehler', `${x.objekt}, ${x.einheit}: Das Ende der Selbstnutzung liegt vor dem Beginn.`, { links: [{ text: x.einheit, ziel: { einheit: x.einheit_id } }] });
+      }
+      for (const x of all(`SELECT s.*, e.bezeichnung AS einheit, e.objekt_id, o.bezeichnung AS objekt FROM selbstnutzung s JOIN einheiten e ON e.id = s.einheit_id
+          JOIN objekte o ON o.id = e.objekt_id WHERE NOT (s.personen > 0) AND (s.ende IS NULL OR s.ende = '' OR s.ende >= ?)`, t)) {
+        if (get(`SELECT 1 FROM konten k JOIN umlageschluessel u ON u.id = k.schluessel_id WHERE k.objekt_id = ? AND k.umlagefaehig = 1 AND u.typ = 'personen'`, x.objekt_id))
+          add('Verträge', `selbstpersonen:${x.id}`, 'warnung', `${x.objekt}, ${x.einheit}: Für die Selbstnutzung ist keine Haushaltsgröße eingetragen – nach Personen verteilte Kosten tragen dann allein die Mieter.`,
+            { links: [{ text: x.einheit, ziel: { einheit: x.einheit_id } }] });
+      }
+    });
     pruefe(() => {
       for (const typ of ['miete', 'weg']) {
         for (const v of all(`SELECT v.id, v.beginn, v.ende, e.bezeichnung AS einheit, ${PERSON_NAME} AS name FROM ${vertragTab(typ)} v JOIN einheiten e ON e.id = v.einheit_id

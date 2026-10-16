@@ -1,5 +1,7 @@
 // Overviews that pull everything together: object tiles for the cockpit, the object fact sheet
 // and the person file, each with a timeline of what happened.
+const { selbstSql } = require('./buchhaltung.cjs');
+
 module.exports = function akten({ db, all, get, PERSON_NAME, bh }) {
   const heute = () => new Date().toISOString().slice(0, 10);
   const BILD = `(lower(d.datei) GLOB '*.jp*g' OR lower(d.datei) GLOB '*.png' OR lower(d.datei) GLOB '*.webp')`;
@@ -49,6 +51,8 @@ module.exports = function akten({ db, all, get, PERSON_NAME, bh }) {
       UNION ALL SELECT v.erstellt, 'Vorgang: ' || v.titel || CASE WHEN v.status = 'erledigt' THEN ' (erledigt)' ELSE '' END, 'vorgang' FROM vorgaenge v WHERE v.einheit_id = ?1
       UNION ALL SELECT a.gueltig_ab, 'Mietanpassung', 'vertrag' FROM anpassungen a JOIN mietverhaeltnisse m ON a.vertrag_typ = 'miete' AND m.id = a.vertrag_id
         WHERE m.einheit_id = ?1 AND a.kaltmiete_ct IS NOT NULL
+      UNION ALL SELECT s.beginn, 'Selbstnutzung beginnt', 'selbst' FROM selbstnutzung s WHERE s.einheit_id = ?1
+      UNION ALL SELECT s.ende, 'Selbstnutzung endet', 'selbst' FROM selbstnutzung s WHERE s.einheit_id = ?1 AND s.ende IS NOT NULL AND s.ende <> ''
       ORDER BY 1 DESC LIMIT 60`, einheitId).filter((z) => z.datum);
   }
 
@@ -102,9 +106,10 @@ module.exports = function akten({ db, all, get, PERSON_NAME, bh }) {
             WHERE g.einheit_id = e.id AND g.beginn <= ?2 AND (g.ende IS NULL OR g.ende = '' OR g.ende >= ?2))`, o.id, t).n
           : get(`SELECT count(*) AS n FROM einheiten e WHERE e.objekt_id = ?1 AND NOT EXISTS (SELECT 1 FROM mietverhaeltnisse m
             WHERE m.einheit_id = e.id AND m.beginn <= ?2 AND (m.ende IS NULL OR m.ende = '' OR m.ende >= ?2))
-            AND NOT EXISTS (SELECT 1 FROM eigentum g WHERE g.einheit_id = e.id AND g.selbstnutzer = 1)`, o.id, t).n;
+            AND NOT EXISTS (SELECT 1 FROM eigentum g WHERE g.einheit_id = e.id AND g.selbstnutzer = 1) AND NOT ${selbstSql('e', '?2')}`, o.id, t).n;
+        const selbst = get(`SELECT count(*) AS n FROM einheiten e WHERE e.objekt_id = ?1 AND ${selbstSql('e', '?2')}`, o.id, t).n;
         const vorgaenge = get(`SELECT count(*) AS n FROM vorgaenge WHERE objekt_id = ? AND status <> 'erledigt'`, o.id).n;
-        return { ...o, titelbild: titelbild(o), einheiten: einheiten.n, flaeche: einheiten.f, leer,
+        return { ...o, titelbild: titelbild(o), einheiten: einheiten.n, flaeche: einheiten.f, leer, selbst,
           rueckstand_ct: rueckstand(o.id, modus === 'weg' ? 'weg' : 'miete'), vorgaenge };
       });
     },
@@ -152,17 +157,20 @@ module.exports = function akten({ db, all, get, PERSON_NAME, bh }) {
         WHERE v.einheit_id = ? ORDER BY v.beginn DESC`, einheitId).map((v) => vertragInfo(typ, v));
       const mieter = liste('miete');
       const eigentum = liste('weg');
-      // Vacant days this year: days without a tenancy (a unit used by its owner is not vacant).
+      const selbstnutzung = all('SELECT * FROM selbstnutzung WHERE einheit_id = ? ORDER BY beginn DESC', einheitId);
+      // Vacant days this year: days without a tenancy (a unit used by its owner or the landlord is not vacant).
       const jahrStart = `${t.slice(0, 4)}-01-01`;
       const tageJahr = tageZwischen(jahrStart, t) + 1;
       const belegt = new Set();
-      for (const v of [...mieter, ...eigentum.filter((g) => g.selbstnutzer)]) {
+      for (const v of [...mieter, ...eigentum.filter((g) => g.selbstnutzer), ...selbstnutzung]) {
         const a = v.beginn > jahrStart ? v.beginn : jahrStart, b = (v.ende || '9999-12-31') < t ? v.ende : t;
         for (let d = Date.parse(a); d <= Date.parse(b); d += 86400000) belegt.add(d);
       }
       const personIds = [...new Set([...mieter, ...eigentum].flatMap((v) => [v.person_id, v.person2_id]).filter(Boolean))];
       return {
-        einheit: e, mieter, eigentum,
+        einheit: e, mieter, eigentum, selbstnutzung,
+        selbst: selbstnutzung.find((x) => x.beginn <= t && (!x.ende || x.ende >= t)) ?? null,
+        selbst_kuenftig: selbstnutzung.find((x) => x.beginn > t) ?? null,
         leertage: Math.max(0, tageJahr - belegt.size), tage_jahr: tageJahr,
         zaehler: all(`SELECT z.*, (SELECT stand FROM zaehlerstaende s WHERE s.zaehler_id = z.id ORDER BY datum DESC LIMIT 1) AS letzter_stand,
             (SELECT datum FROM zaehlerstaende s WHERE s.zaehler_id = z.id ORDER BY datum DESC LIMIT 1) AS letztes_datum

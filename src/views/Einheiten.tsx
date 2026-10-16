@@ -5,6 +5,7 @@ import { useLoad } from '../useLoad';
 import { Galerie } from '../Galerie';
 import { L, useNavi } from '../navi';
 import { Leer, SortTh, sortiere, type Sortierung } from '../ui';
+import { BelegungMini, QmMini } from './Kennzahlen';
 
 const ARTEN = ['Wohnung', 'Gewerbe', 'Garage', 'Stellplatz', 'Keller', 'Sonstiges'];
 
@@ -16,12 +17,16 @@ export const EINHEIT_FELDER: Field[] = [
   { key: 'wohnflaeche', label: 'Fläche m²', type: 'number' },
   { key: 'zimmer', label: 'Zimmer', type: 'number' },
   { key: 'mea', label: 'Miteigentumsanteile (MEA)', type: 'number' },
-  { key: 'notiz', label: 'Notiz', type: 'textarea' },
+  { key: 'vergleichsmiete_ct', label: 'Ortsübliche Vergleichsmiete je m²', type: 'money', section: 'Vergleichsmiete – nur wenn sie vom Haus abweicht (z. B. andere Größenklasse im Mietspiegel)' },
+  { key: 'mietspiegel_von_ct', label: 'Mietspiegel von je m²', type: 'money' },
+  { key: 'mietspiegel_bis_ct', label: 'Mietspiegel bis je m²', type: 'money' },
+  { key: 'notiz', label: 'Notiz', type: 'textarea', section: 'Sonstiges' },
 ];
 
 export function Einheiten(props: { modus: Modus; objekt: Row }) {
   const navi = useNavi();
   const [rows, reload] = useLoad<Row[]>(() => call('einheiten', props.objekt.id), [props.objekt.id]);
+  const [kz, ladeKz] = useLoad<Row>(() => call('listenKennzahlen', props.objekt.id), [props.objekt.id]);
   const [edit, setEdit] = useState<Row | null>(null);
   const [sort, setSort] = useState<Sortierung>(null);
   const gemischt = props.objekt.art === 'gemischt';
@@ -53,6 +58,8 @@ export function Einheiten(props: { modus: Modus; objekt: Row }) {
               {zeigeEigentuemer && <SortTh k="mea" s={sort} set={setSort} className="num">MEA</SortTh>}
               {zeigeEigentuemer && <SortTh k="eigentuemer" s={sort} set={setSort} className="seite-weg">Eigentümer</SortTh>}
               {zeigeMieter && <SortTh k="mieter" s={sort} set={setSort} className="seite-miete">Mieter</SortTh>}
+              {zeigeMieter && <th title="Vermietet oder selbst genutzt in den letzten 12 Monaten, tagegenau">Belegung</th>}
+              {zeigeMieter && <th className="num" title="Kaltmiete je m² und Monat; gelb unter, rot über der Spanne des Mietspiegels">€/m²</th>}
               <th />
             </tr>
           </thead>
@@ -68,6 +75,8 @@ export function Einheiten(props: { modus: Modus; objekt: Row }) {
                 {zeigeEigentuemer && <td className="num">{zahl(e.mea)}</td>}
                 {zeigeEigentuemer && <td className="seite-weg">{e.eigentuemer ? <L zu={{ person: e.eigentuemer_id }}>{e.eigentuemer}</L> : <i className="hinweis">–</i>}</td>}
                 {zeigeMieter && <td className="seite-miete">{e.mieter ? <L zu={{ person: e.mieter_id }}>{e.mieter}</L> : <i className="hinweis">{e.selbstgenutzt ? 'selbst genutzt' : 'leer'}</i>}</td>}
+                {zeigeMieter && <td><BelegungMini x={kz?.einheiten[e.id]} /></td>}
+                {zeigeMieter && <td className="num"><QmMini x={kz?.einheiten[e.id]} /></td>}
                 <td className="aktionen"><button onClick={(ev) => { ev.stopPropagation(); setEdit(e); }}>Bearbeiten</button></td>
               </tr>
             ))}
@@ -78,7 +87,7 @@ export function Einheiten(props: { modus: Modus; objekt: Row }) {
               <td className="num">{zahl(summe('wohnflaeche'))}</td><td />
               {zeigeEigentuemer && <td className="num">{zahl(summe('mea'))}</td>}
               {zeigeEigentuemer && <td />}
-              {zeigeMieter && <td />}
+              {zeigeMieter && <><td /><td /><td /></>}
               <td />
             </tr>
           </tfoot>
@@ -96,6 +105,7 @@ export function Einheiten(props: { modus: Modus; objekt: Row }) {
           onClose={() => {
             setEdit(null);
             reload();
+            ladeKz();
           }}
         />
       )}
