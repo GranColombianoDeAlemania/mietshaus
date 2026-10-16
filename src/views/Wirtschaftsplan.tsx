@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { call, datum, diesesJahr, euro, fehler, parseCent, type Row } from '../api';
 import { useLoad } from '../useLoad';
-import { absenderAus, alsPdf, bericht, esc, tabelle } from '../dokument';
+import { L } from '../navi';
+import { absenderAus, alsPdf, bericht, esc, tabelle, empfaengerVon } from '../dokument';
 import { wiplEinzel } from '../abrechnungDocs';
 import { Gespeichert } from './NkAbrechnung';
 
@@ -46,7 +47,7 @@ export function Wirtschaftsplan(props: { objekt: Row }) {
       tabelle(['Einheit', 'Eigentümer', '#rKosten', '#rRücklage', '#rHausgeld mtl.'],
         w.zeilen.map((z: Row) => [esc(z.einheit.bezeichnung), esc(z.eigentum?.name ?? '–'), `#r${euro(z.kosten_ct)}`, `#r${euro(z.ruecklage_ct)}`, `#r${euro(z.monat_hausgeld_ct)}`])));
     const seiten = [gesamt];
-    for (const z of w.zeilen.filter((z: Row) => z.eigentum)) seiten.push(wiplEinzel(w, z, absender, props.objekt, await call('get', 'personen', z.eigentum.person_id), ab));
+    for (const z of w.zeilen.filter((z: Row) => z.eigentum)) seiten.push(wiplEinzel(w, z, absender, props.objekt, await empfaengerVon(z.eigentum), ab));
     await alsPdf(seiten, `Wirtschaftsplan ${props.objekt.bezeichnung} ${jahr}`);
   }
 
@@ -62,7 +63,7 @@ export function Wirtschaftsplan(props: { objekt: Row }) {
   return (
     <section>
       <div className="toolbar">
-        <h1>Wirtschaftsplan – {props.objekt.bezeichnung}</h1>
+        <h1>Wirtschaftsplan</h1>
         <span className="spacer" />
         <label>Jahr <input className="kurz num" type="number" value={jahr} onChange={(e) => setJahr(Number(e.target.value))} /></label>
       </div>
@@ -91,7 +92,7 @@ export function Wirtschaftsplan(props: { objekt: Row }) {
             <tbody>
               {w.zeilen.map((z: Row) => (
                 <tr key={z.einheit.id}>
-                  <td>{z.einheit.bezeichnung}</td><td>{z.eigentum?.name ?? <i>kein Eigentümer</i>}</td>
+                  <td><L zu={{ einheit: z.einheit.id }}>{z.einheit.bezeichnung}</L></td><td>{z.eigentum ? <L zu={{ vertrag: z.eigentum.id, typ: 'weg' }}>{z.eigentum.name}</L> : <i>kein Eigentümer</i>}</td>
                   <td className="num">{euro(z.kosten_ct)}</td><td className="num">{euro(z.ruecklage_ct)}</td>
                   <td className="num"><b>{euro(z.monat_hausgeld_ct)}</b></td><td className="num">{euro(z.monat_ruecklage_ct)}</td>
                 </tr>

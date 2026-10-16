@@ -68,7 +68,8 @@ module.exports = function automatik({ db, all, get, tx, PERSON_NAME, bh, ab, vw,
         AND NOT EXISTS (SELECT 1 FROM dokumente x WHERE x.id < d.id AND x.rechnungsnr = d.rechnungsnr AND coalesce(x.betrag_ct, -1) = coalesce(d.betrag_ct, -1)
           AND coalesce(x.absender, '') = coalesce(d.absender, ''))`, plusTage(t, 7))) {
       add({ schluessel: `re:${r.id}`, stufe: r.faellig < t ? 'rot' : 'orange', kategorie: 'Rechnungen', objekt_id: r.objekt_id, objekt: r.objekt,
-        text: `Rechnung ${r.absender ?? r.titel} über ${euro(r.betrag_ct)} ${r.faellig < t ? 'überfällig seit' : 'fällig am'} ${datumDe(r.faellig)}.`, ziel: 'rechnungen' });
+        text: `Rechnung ${r.absender ?? r.titel} über ${euro(r.betrag_ct)} ${r.faellig < t ? 'überfällig seit' : 'fällig am'} ${datumDe(r.faellig)}.`, ziel: 'rechnungen',
+        links: [{ text: `Rechnung ${r.absender ?? r.titel}`, ziel: { dokument: r.id } }] });
     }
 
     for (const o of objekte) {
@@ -85,13 +86,26 @@ module.exports = function automatik({ db, all, get, tx, PERSON_NAME, bh, ab, vw,
         const alt = Math.max(...ueberfaellig.map((x) => x.verzug));
         const monate = ueberfaellig.map((x) => x.monat ? `${x.monat.slice(5)}/${x.monat.slice(2, 4)}${x.status === 'teilweise bezahlt' ? ' (teilw.)' : ''}` : x.text).join(', ');
         add({ modus: k.vertrag_typ, schluessel: `op:${k.id}:${t.slice(0, 7)}`, stufe: alt >= 14 ? 'rot' : 'orange', kategorie: k.vertrag_typ === 'weg' ? 'Hausgeld' : 'Miete',
-          text: `Rückstand ${k.bezeichnung}: ${euro(betrag)} – offen: ${monate} (seit ${alt} Tagen).`, ...ziel('op') });
+          text: `Rückstand ${k.bezeichnung}: ${euro(betrag)} – offen: ${monate} (seit ${alt} Tagen).`, ...ziel('op'),
+          links: k.vertrag_id ? [{ text: k.bezeichnung, ziel: { vertrag: k.vertrag_id, typ: k.vertrag_typ } }] : [] });
+      }
+
+      // Instalment agreements: a missed instalment, or the plan paid off.
+      for (const r of all(`SELECT r.id, k.bezeichnung, k.vertrag_id, k.vertrag_typ FROM ratenplaene r JOIN konten k ON k.id = r.konto_id
+          WHERE k.objekt_id = ? AND r.status = 'aktiv'`, o.id)) {
+        const st = bh.ratenplanStand(r.id, t);
+        const links = r.vertrag_id ? [{ text: r.bezeichnung, ziel: { vertrag: r.vertrag_id, typ: r.vertrag_typ } }] : [];
+        if (st.erfuellt) add({ modus: r.vertrag_typ, schluessel: `rate-ok:${r.id}`, stufe: 'gelb', kategorie: 'Ratenzahlung', ...ziel('op'), links,
+          text: `Ratenzahlung ${r.bezeichnung} ist vollständig bezahlt – Vereinbarung als erfüllt abschließen.` });
+        else if (st.verzug_ct > 0) add({ modus: r.vertrag_typ, schluessel: `rate:${r.id}:${t.slice(0, 7)}`, stufe: 'rot', kategorie: 'Ratenzahlung', ...ziel('op'), links,
+          text: `Ratenzahlung ${r.bezeichnung}: ${euro(st.verzug_ct)} der fälligen Raten fehlen.` });
       }
 
       // Returned direct debits in the last 30 days.
-      for (const b of all(`SELECT b.datum, b.betrag_ct, k.bezeichnung FROM buchungen b JOIN konten k ON k.id = b.soll_id
+      for (const b of all(`SELECT b.datum, b.betrag_ct, k.bezeichnung, k.vertrag_id, k.vertrag_typ FROM buchungen b JOIN konten k ON k.id = b.soll_id
           WHERE b.objekt_id = ? AND k.klasse = 'person' AND b.art = 'bank' AND b.datum >= ? AND lower(coalesce(b.text,'')) GLOB '*r*cklastschrift*'`, o.id, plusTage(t, -30))) {
-        add({ schluessel: `rl:${o.id}:${b.datum}:${b.betrag_ct}`, stufe: 'rot', kategorie: 'Bank', text: `Rücklastschrift ${b.bezeichnung} über ${euro(b.betrag_ct)} am ${datumDe(b.datum)}.`, ...ziel('op') });
+        add({ schluessel: `rl:${o.id}:${b.datum}:${b.betrag_ct}`, stufe: 'rot', kategorie: 'Bank', text: `Rücklastschrift ${b.bezeichnung} über ${euro(b.betrag_ct)} am ${datumDe(b.datum)}.`, ...ziel('op'),
+          links: b.vertrag_id ? [{ text: b.bezeichnung, ziel: { vertrag: b.vertrag_id, typ: b.vertrag_typ } }] : [] });
       }
 
       // Service-charge statement for last year: deadline 31.12. of this year (§ 556 Abs. 3 BGB).
@@ -105,7 +119,8 @@ module.exports = function automatik({ db, all, get, tx, PERSON_NAME, bh, ab, vw,
               AND EXISTS (SELECT 1 FROM buchungen b WHERE b.soll_id = k.id AND substr(b.datum, 1, 4) = ?)
               AND NOT EXISTS (SELECT 1 FROM buchungen b WHERE b.soll_id = k.id AND substr(b.datum, 1, 4) = ?)`, o.id, String(jahr - 2), String(jahr - 1))) {
             add({ modus: 'miete', schluessel: `nkfehlt:${k.id}:${jahr - 1}`, stufe: 'orange', kategorie: 'Abrechnung', ...ziel('archiv'),
-              text: `Für „${k.bezeichnung}“ fehlt ${jahr - 1} eine Rechnung (${jahr - 2} war gebucht) – für die Betriebskostenabrechnung nachreichen.` });
+              text: `Für „${k.bezeichnung}“ fehlt ${jahr - 1} eine Rechnung (${jahr - 2} war gebucht) – für die Betriebskostenabrechnung nachreichen.`,
+              links: [{ text: k.bezeichnung, ziel: { konto: k.id } }] });
           }
         }
       }
@@ -131,32 +146,33 @@ module.exports = function automatik({ db, all, get, tx, PERSON_NAME, bh, ab, vw,
       if (miete) {
         for (const v of all(`SELECT m.*, e.bezeichnung AS einheit, ${PERSON_NAME} AS name FROM mietverhaeltnisse m JOIN einheiten e ON e.id = m.einheit_id
             JOIN personen p ON p.id = m.person_id WHERE e.objekt_id = ?1 AND m.beginn <= ?2 AND (m.ende IS NULL OR m.ende = '' OR m.ende >= ?2)`, o.id, t)) {
+          const links = [{ text: v.name, ziel: { person: v.person_id } }, { text: v.einheit, ziel: { einheit: v.einheit_id } }];
           const modell = get('SELECT * FROM mietmodelle WHERE vertrag_id = ?', v.id);
           // Indexed rent: possible once 12 months have passed and the index has risen.
           if (modell?.art === 'index') {
             try {
               const r = vw.indexBerechnung(v.id);
-              if (r.neue_miete_ct > r.alte_miete_ct) add({ modus: 'miete', schluessel: `idx:${v.id}:${r.neu_monat}`, stufe: 'gelb', kategorie: 'Chance', ...ziel('anpassung'),
+              if (r.neue_miete_ct > r.alte_miete_ct) add({ modus: 'miete', schluessel: `idx:${v.id}:${r.neu_monat}`, stufe: 'gelb', kategorie: 'Chance', ...ziel('anpassung'), links,
                 text: `Indexerhöhung möglich bei ${v.name} (${v.einheit}): +${euro(r.neue_miete_ct - r.alte_miete_ct)} pro Monat, frühestens ab ${datumDe(r.frueheste_wirkung)}.` });
             } catch (err) {
-              add({ modus: 'miete', schluessel: `idxfehlt:${v.id}`, stufe: 'gelb', kategorie: 'Stammdaten', ...ziel('anpassung'), text: `Indexmiete ${v.name}: ${err.message}` });
+              add({ modus: 'miete', schluessel: `idxfehlt:${v.id}`, stufe: 'gelb', kategorie: 'Stammdaten', ...ziel('anpassung'), links, text: `Indexmiete ${v.name}: ${err.message}` });
             }
           } else if (!modell) {
             const letzte = get(`SELECT max(gueltig_ab) AS d FROM anpassungen WHERE vertrag_typ = 'miete' AND vertrag_id = ? AND kaltmiete_ct IS NOT NULL`, v.id).d ?? v.beginn;
-            if (plusMonate(letzte, 15) <= t) add({ modus: 'miete', schluessel: `mh:${v.id}:${jahr}`, stufe: 'gelb', kategorie: 'Chance', ...ziel('anpassung'),
+            if (plusMonate(letzte, 15) <= t) add({ modus: 'miete', schluessel: `mh:${v.id}:${jahr}`, stufe: 'gelb', kategorie: 'Chance', ...ziel('anpassung'), links,
               text: `Mieterhöhung prüfen bei ${v.name} (${v.einheit}): Miete seit ${datumDe(letzte)} unverändert.` });
           }
           // Deposit not fully paid three months after move-in.
           if (v.kaution_ct > 0 && plusMonate(v.beginn, 3) <= t) {
             const k = get('SELECT id FROM kautionen WHERE vertrag_id = ?', v.id);
             const ist = k ? get(`SELECT coalesce(sum(CASE WHEN art IN ('einzahlung','zinsen') THEN betrag_ct ELSE -betrag_ct END), 0) AS s FROM kautionsbewegungen WHERE kaution_id = ?`, k.id).s : 0;
-            if (ist < v.kaution_ct) add({ modus: 'miete', schluessel: `kau:${v.id}`, stufe: 'orange', kategorie: 'Miete', ...ziel('kaution'),
+            if (ist < v.kaution_ct) add({ modus: 'miete', schluessel: `kau:${v.id}`, stufe: 'orange', kategorie: 'Miete', ...ziel('kaution'), links,
               text: `Kaution ${v.name}: ${euro(ist)} von ${euro(v.kaution_ct)} erfasst.` });
           }
-          if (v.ende && v.ende <= plusTage(t, 60)) add({ modus: 'miete', schluessel: `ende:${v.id}`, stufe: 'orange', kategorie: 'Miete', ...ziel('vertraege'),
+          if (v.ende && v.ende <= plusTage(t, 60)) add({ modus: 'miete', schluessel: `ende:${v.id}`, stufe: 'orange', kategorie: 'Miete', ...ziel('vertraege'), links,
             text: `Mietende ${v.name} (${v.einheit}) am ${datumDe(v.ende)}: Übergabe, Zählerstände, Kautionsabrechnung planen.` });
           if (v.lastschrift && (!get('SELECT iban FROM personen WHERE id = ?', v.person_id)?.iban || !v.sepa_mandat))
-            add({ modus: 'miete', schluessel: `ls:${v.id}`, stufe: 'orange', kategorie: 'Bank', ...ziel('vertraege'), text: `Lastschrift bei ${v.name}: IBAN oder Mandatsreferenz fehlt.` });
+            add({ modus: 'miete', schluessel: `ls:${v.id}`, stufe: 'orange', kategorie: 'Bank', ...ziel('vertraege'), links, text: `Lastschrift bei ${v.name}: IBAN oder Mandatsreferenz fehlt.` });
         }
         // Advance payments too low: last statement asked for a large back payment and nothing was adjusted since.
         const nk = get(`SELECT * FROM abrechnungen WHERE objekt_id = ? AND typ = 'nk' ORDER BY bis DESC LIMIT 1`, o.id);
@@ -167,13 +183,14 @@ module.exports = function automatik({ db, all, get, tx, PERSON_NAME, bh, ab, vw,
             if (!e2.segment?.vertrag || vz <= 0 || e2.ergebnis_ct <= vz * 0.15) continue;
             const angepasst = get(`SELECT 1 FROM anpassungen WHERE vertrag_typ = 'miete' AND vertrag_id = ? AND gueltig_ab > ? AND (bk_vz_ct IS NOT NULL OR hk_vz_ct IS NOT NULL)`, e2.segment.vertrag.id, nk.bis);
             if (!angepasst && !e2.segment.vertrag.ende) add({ modus: 'miete', schluessel: `vz:${e2.segment.vertrag.id}:${nk.bis}`, stufe: 'gelb', kategorie: 'Chance', ...ziel('nk'),
+              links: [{ text: e2.segment.vertrag.name, ziel: { vertrag: e2.segment.vertrag.id, typ: 'miete' } }],
               text: `Vorauszahlungen ${e2.segment.vertrag.name} zu niedrig: Nachzahlung ${euro(e2.ergebnis_ct)} bei ${euro(vz)} Vorauszahlungen – anpassen.` });
           }
         }
-        const leer = all(`SELECT e.bezeichnung FROM einheiten e WHERE e.objekt_id = ?1 AND NOT EXISTS (SELECT 1 FROM mietverhaeltnisse m WHERE m.einheit_id = e.id
+        const leer = all(`SELECT e.id, e.bezeichnung FROM einheiten e WHERE e.objekt_id = ?1 AND NOT EXISTS (SELECT 1 FROM mietverhaeltnisse m WHERE m.einheit_id = e.id
           AND m.beginn <= ?2 AND (m.ende IS NULL OR m.ende = '' OR m.ende >= ?2)) AND NOT EXISTS (SELECT 1 FROM eigentum g WHERE g.einheit_id = e.id AND g.selbstnutzer = 1)`, o.id, t);
-        if (leer.length) add({ modus: 'miete', schluessel: `leer:${o.id}:${t.slice(0, 7)}`, stufe: 'gelb', kategorie: 'Miete', ...ziel('einheiten'),
-          text: `Leerstand: ${leer.map((x) => x.bezeichnung).join(', ')}.` });
+        if (leer.length) add({ modus: 'miete', schluessel: `leer:${o.id}:${t.slice(0, 7)}`, stufe: 'gelb', kategorie: 'Miete', ...ziel('vermietung'),
+          text: `Leerstand: ${leer.map((x) => x.bezeichnung).join(', ')}.`, links: leer.map((x) => ({ text: x.bezeichnung, ziel: { einheit: x.id } })) });
       }
 
       // Interest rate fixation ends: look for follow-up financing in time (18 months ahead, urgent within 6).
@@ -183,7 +200,9 @@ module.exports = function automatik({ db, all, get, tx, PERSON_NAME, bh, ab, vw,
       }
 
       if (!o.iban) add({ schluessel: `stamm:iban:${o.id}`, stufe: 'gelb', kategorie: 'Stammdaten', ...ziel('objekte'), text: 'IBAN des Objektkontos fehlt (nötig für Briefe und SEPA).' });
-      const ohneFlaeche = get('SELECT count(*) AS n FROM einheiten WHERE objekt_id = ? AND (wohnflaeche IS NULL OR wohnflaeche = 0)', o.id).n;
+      // Garages, parking spaces and cellars have no living area.
+      const ohneFlaeche = get(`SELECT count(*) AS n FROM einheiten WHERE objekt_id = ? AND (wohnflaeche IS NULL OR wohnflaeche = 0)
+        AND coalesce(art, 'Wohnung') NOT IN ('Garage', 'Stellplatz', 'Keller')`, o.id).n;
       if (ohneFlaeche) add({ schluessel: `stamm:flaeche:${o.id}`, stufe: 'gelb', kategorie: 'Stammdaten', ...ziel('einheiten'), text: `${ohneFlaeche} Einheit(en) ohne Wohnfläche – wichtig für die Kostenverteilung.` });
 
       for (const v of all(`SELECT * FROM versicherungen WHERE objekt_id = ? AND kuendbar_bis BETWEEN ? AND ?`, o.id, t, plusTage(t, 60))) {
@@ -228,7 +247,69 @@ module.exports = function automatik({ db, all, get, tx, PERSON_NAME, bh, ab, vw,
     return { monat, soll_ct: soll, ist_ct: ist, geld_ct: geld, einheiten, vermietet, verlauf };
   }
 
+  // First steps after a fresh start: what is set up already and what is still missing.
+  function ersteSchritte() {
+    const e = einst();
+    const n = (sql, ...p) => get(sql, ...p).n;
+    const schritte = [
+      { punkt: 'verwalter', text: 'Eigene Absenderdaten eintragen (stehen auf allen Briefen)', fertig: !!e.verwalter_name, ziel: { seite: 'einstellungen' } },
+      { punkt: 'objekt', text: 'Erstes Haus anlegen', fertig: n('SELECT count(*) AS n FROM objekte') > 0, ziel: { seite: 'objekte', aktion: 'neues-objekt' } },
+      { punkt: 'einheiten', text: 'Einheiten mit Wohnfläche erfassen', fertig: n('SELECT count(*) AS n FROM einheiten') > 0 && !n(`SELECT count(*) AS n FROM einheiten WHERE (wohnflaeche IS NULL OR wohnflaeche = 0) AND coalesce(art, 'Wohnung') NOT IN ('Garage', 'Stellplatz', 'Keller')`), ziel: { seite: 'einheiten' } },
+      { punkt: 'personen', text: 'Mieter und Eigentümer ins Adressbuch aufnehmen', fertig: n('SELECT count(*) AS n FROM personen') > 0, ziel: { seite: 'personen', aktion: 'neue-person' } },
+      { punkt: 'vertraege', text: 'Mietverhältnisse bzw. Eigentum zuordnen', fertig: n('SELECT (SELECT count(*) FROM mietverhaeltnisse) + (SELECT count(*) FROM eigentum) AS n') > 0, ziel: { seite: 'vertraege' } },
+      { punkt: 'iban', text: 'IBAN des Objektkontos hinterlegen', fertig: n('SELECT count(*) AS n FROM objekte') > 0 && !n(`SELECT count(*) AS n FROM objekte WHERE iban IS NULL OR iban = ''`), ziel: { seite: 'objekte' } },
+      { punkt: 'soll', text: 'Monatliche Sollstellung prüfen (läuft automatisch)', fertig: n(`SELECT count(*) AS n FROM buchungen WHERE art = 'soll'`) > 0, ziel: { seite: 'soll' } },
+      { punkt: 'bank', text: 'Ersten Kontoauszug importieren', fertig: n(`SELECT count(*) AS n FROM buchungen WHERE art = 'bank'`) > 0, ziel: { seite: 'bank' } },
+      { punkt: 'sicherung', text: 'Eine Datensicherung anlegen', fertig: !!e.letzte_sicherung, ziel: { seite: 'einstellungen' } },
+    ];
+    const ausgeblendet = !!get(`SELECT 1 FROM checkliste WHERE liste = 'erste-schritte' AND punkt = 'ausgeblendet'`);
+    return { schritte, fertig: schritte.every((x) => x.fertig), ausgeblendet };
+  }
+
+  // Year-end checklist for the year being closed. Points are ticked automatically when the data shows them done;
+  // the others can be ticked by hand (table checkliste, list "jahreswechsel-<year>").
+  function jahreswechsel(jahr) {
+    const e = einst();
+    const n = (sql, ...p) => get(sql, ...p).n;
+    const ende = `${jahr}-12-31`;
+    const liste = `jahreswechsel-${jahr}`;
+    const haken = new Set(all('SELECT punkt FROM checkliste WHERE liste = ?', liste).map((x) => x.punkt));
+    const objekte = all('SELECT * FROM objekte');
+    const mietObjekte = objekte.filter((o) => o.art !== 'weg' && n(`SELECT count(*) AS n FROM mietverhaeltnisse m JOIN einheiten x ON x.id = m.einheit_id WHERE x.objekt_id = ? AND m.beginn <= ?`, o.id, ende));
+    const wegObjekte = objekte.filter((o) => o.art !== 'miete' && n(`SELECT count(*) AS n FROM eigentum g JOIN einheiten x ON x.id = g.einheit_id WHERE x.objekt_id = ?`, o.id));
+    const bankBis = objekte.every((o) => {
+      const d = get(`SELECT max(b.datum) AS d FROM buchungen b JOIN konten k ON k.id IN (b.soll_id, b.haben_id) WHERE k.objekt_id = ? AND k.klasse = 'geld' AND b.art = 'bank'`, o.id).d;
+      return !n(`SELECT count(*) AS n FROM konten WHERE objekt_id = ? AND klasse = 'person'`, o.id) || (d && d >= `${jahr}-12-20`);
+    });
+    const zaehlerOffen = n(`SELECT count(*) AS n FROM zaehler z WHERE (z.ausbau IS NULL OR z.ausbau = '' OR z.ausbau > ?1) AND (z.einbau IS NULL OR z.einbau = '' OR z.einbau <= ?1)
+      AND NOT EXISTS (SELECT 1 FROM zaehlerstaende s WHERE s.zaehler_id = z.id AND abs(julianday(s.datum) - julianday(?1)) <= 14)`, ende);
+    const punkte = [
+      { punkt: 'kontoauszuege', text: `Alle Kontoauszüge bis 31.12.${jahr} importiert und gebucht`, auto: bankBis, ziel: { seite: 'bank' } },
+      { punkt: 'postfach', text: 'Postfach abgearbeitet', auto: !n(`SELECT count(*) AS n FROM dokumente WHERE status = 'postfach'`), ziel: { seite: 'postfach' } },
+      { punkt: 'rechnungen', text: `Alle Rechnungen aus ${jahr} gebucht`, auto: !n(`SELECT count(*) AS n FROM dokumente WHERE typ = 'Rechnung' AND buchung_id IS NULL AND substr(coalesce(datum, erfasst), 1, 4) = ?`, String(jahr)), ziel: { seite: 'rechnungen' } },
+      { punkt: 'zaehler', text: `Zählerstände zum 31.12.${jahr} abgelesen`, auto: zaehlerOffen === 0, hinweis: zaehlerOffen ? `${zaehlerOffen} Zähler ohne Stand` : null, ziel: { seite: 'zaehler' } },
+      { punkt: 'rueckstaende', text: 'Offene Posten geprüft, Mahnungen verschickt', auto: false, ziel: { seite: 'op' } },
+      ...(mietObjekte.length ? [{ punkt: 'nk', text: `Betriebskostenabrechnung ${jahr - 1} bis 31.12.${jahr} beim Mieter (Frist!)`,
+        auto: mietObjekte.every((o) => get(`SELECT 1 FROM abrechnungen WHERE objekt_id = ? AND typ = 'nk' AND substr(von, 1, 4) = ?`, o.id, String(jahr - 1))), ziel: { seite: 'nk' } }] : []),
+      ...(mietObjekte.length ? [{ punkt: 'anpassungen', text: `Mieterhöhungen und Indexanpassungen für ${jahr + 1} geprüft`, auto: false, ziel: { seite: 'anpassung' } }] : []),
+      ...(wegObjekte.length ? [{ punkt: 'wipl', text: `Wirtschaftsplan ${jahr + 1} beschlossen`,
+        auto: wegObjekte.every((o) => get(`SELECT 1 FROM abrechnungen WHERE objekt_id = ? AND typ = 'wipl' AND substr(von, 1, 4) = ?`, o.id, String(jahr + 1))), ziel: { seite: 'wipl', modus: 'weg' } }] : []),
+      { punkt: 'versicherungen', text: 'Versicherungen und Verträge mit Kündigungsfrist zum Jahresende geprüft', auto: false, ziel: { seite: 'versicherungen' } },
+      ...(n(`SELECT count(*) AS n FROM kautionen WHERE art = 'konto'`) ? [{ punkt: 'kautionszinsen', text: `Zinsen der Kautionskonten für ${jahr} gutgeschrieben`, auto: false, ziel: { seite: 'kaution' } }] : []),
+      { punkt: 'steuer', text: `Steuerunterlagen ${jahr} für den Steuerberater erstellt`, auto: false, ziel: { seite: 'auswertung' } },
+      { punkt: 'festschreibung', text: `Jahr ${jahr} festgeschrieben (nach allen Abrechnungen)`, auto: (e.festgeschrieben_bis ?? '') >= ende, ziel: { seite: 'einstellungen' } },
+      { punkt: 'sicherung', text: 'Datensicherung angelegt', auto: (e.letzte_sicherung ?? '') >= `${jahr}-12-01`, ziel: { seite: 'einstellungen' } },
+    ].map((x) => ({ ...x, erledigt: x.auto || haken.has(x.punkt), manuell: !x.auto && haken.has(x.punkt) }));
+    return { jahr, punkte, fertig: punkte.filter((x) => x.erledigt).length, gesamt: punkte.length };
+  }
+
   return {
+    jahreswechsel,
+    jahreswechselHaken: (jahr, punkt, an) => (an
+      ? db.prepare('INSERT OR IGNORE INTO checkliste (liste, punkt) VALUES (?, ?)').run(`jahreswechsel-${jahr}`, punkt)
+      : db.prepare('DELETE FROM checkliste WHERE liste = ? AND punkt = ?').run(`jahreswechsel-${jahr}`, punkt)),
+    ersteSchritte,
+    ersteSchritteAusblenden: () => db.prepare(`INSERT OR IGNORE INTO checkliste (liste, punkt) VALUES ('erste-schritte', 'ausgeblendet')`).run(),
     automatikLauf: lauf,
     hinweise,
     kennzahlen,

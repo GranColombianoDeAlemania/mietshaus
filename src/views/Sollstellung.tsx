@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { betrag, call, datum, euro, type Modus, type Row } from '../api';
 import { useLoad } from '../useLoad';
+import { L } from '../navi';
 
 const monatJetzt = () => new Date().toISOString().slice(0, 7);
 
@@ -23,12 +24,13 @@ export function Sollstellung(props: { objekt: Row; modus: Modus }) {
   return (
     <section>
       <div className="toolbar">
-        <h1>Sollstellung – {props.objekt.bezeichnung}</h1>
+        <h1>Sollstellung</h1>
       </div>
       <p className="hinweis">
         Erzeugt die monatlichen Forderungen aus den {props.modus === 'weg' ? 'Eigentumsverhältnissen (Hausgeld, Rücklage)' : 'Mietverträgen (Miete, Vorauszahlungen)'} als
-        Buchungen auf den {props.modus === 'weg' ? 'Eigentümerkonten' : 'Mieterkonten'}. Bereits erzeugte Monate werden übersprungen. Ein- und Auszüge im Monat werden tagegenau
-        anteilig berechnet; Miet- und Hausgeldänderungen werden ab ihrem Gültigkeitsdatum berücksichtigt.
+        Buchungen auf den {props.modus === 'weg' ? 'Eigentümerkonten' : 'Mieterkonten'}. Bereits erzeugte Monate werden übersprungen. Wie ein Ein- oder Auszug mitten im Monat
+        berechnet wird (tagegenau, voller Monat oder ab dem Folgemonat), steht im jeweiligen Vertrag; der erste Monat ist nie vor dem Einzug fällig.
+        Miet- und Hausgeldänderungen gelten ab ihrem Gültigkeitsdatum.
       </p>
       <div className="toolbar">
         <label>Von Monat <input type="month" value={von} onChange={(e) => setVon(e.target.value)} /></label>
@@ -41,12 +43,12 @@ export function Sollstellung(props: { objekt: Row; modus: Modus }) {
         <thead><tr><th>Monat</th><th>Fällig</th><th>Vertrag</th><th>Einheit</th><th>Posten</th><th className="num">Betrag</th><th>Status</th></tr></thead>
         <tbody>
           {zeilen?.map((z, i) => (
-            <tr key={i} className={z.vorhanden ? 'inaktiv' : ''}>
+            <tr key={i} className={z.vorhanden ? 'inaktiv' : ''} data-ziel={`vertrag:${z.typ}:${z.vertrag_id}`}>
               <td>{z.monat.slice(5)}/{z.monat.slice(0, 4)}</td>
               <td>{datum(z.datum)}</td>
-              <td>{z.name}</td>
-              <td>{z.einheit}</td>
-              <td>{z.posten}{z.anteilig && <span className="tag">anteilig</span>}</td>
+              <td><L zu={{ vertrag: z.vertrag_id, typ: z.typ }}>{z.name}</L></td>
+              <td><L zu={{ einheit: z.einheit_id }}>{z.einheit}</L></td>
+              <td>{z.posten} {z.anteilig && <span className="tag" title="Ein- oder Auszug in diesem Monat">anteilig {z.tage}/{z.tage_monat} Tage</span>}</td>
               <td className="num">{betrag(z.betrag_ct)}</td>
               <td>{z.vorhanden ? 'bereits gebucht' : 'neu'}</td>
             </tr>

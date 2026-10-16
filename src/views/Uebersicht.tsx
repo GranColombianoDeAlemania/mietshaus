@@ -1,8 +1,11 @@
 // Cockpit: what needs attention, what is coming up, opportunities, key figures and cash flow.
 import { useState } from 'react';
+import * as I from 'lucide-react';
 import { call, datum, euro, type Modus, type Row } from '../api';
 import { useLoad } from '../useLoad';
 import { ObjektKacheln } from './Steckbrief';
+import { L, mitLinks, useNavi } from '../navi';
+import { Jahreswechsel, jahreswechselZeit } from './Jahreswechsel';
 
 const STUFE: Record<string, [string, string]> = { rot: ['●', 'Jetzt handeln'], orange: ['●', 'Bald / prüfen'], gelb: ['●', 'Chance / Hinweis'] };
 
@@ -12,6 +15,8 @@ export function Uebersicht(props: { modus: Modus; objekte: Row[]; oeffne: (seite
   const [d] = useLoad<Row>(() => call('uebersicht', props.modus), [props.modus]);
   const [f] = useLoad<Row>(() => call('faelligkeiten', 7), []);
   const [vorgaenge] = useLoad<Row[]>(() => call('vorgaengeListe', null, true), []);
+  const [start, ladeStart] = useLoad<Row>(() => call('ersteSchritte'), []);
+  const navi = useNavi();
   const weg = props.modus === 'weg';
   if (!hinweise || !k || !d || !f) return null;
 
@@ -34,6 +39,24 @@ export function Uebersicht(props: { modus: Modus; objekte: Row[]; oeffne: (seite
         {f.termine.length + offeneVorgaenge.length > 0 && ` Diese Woche: ${f.termine.length} Termin(e), ${offeneVorgaenge.length} fällige Vorgänge.`}
       </p>
 
+      {start && !start.fertig && !start.ausgeblendet && (
+        <div className="panel">
+          <div className="panelkopf"><h3>Erste Schritte</h3>
+            <button className="link klein" onClick={async () => { await call('ersteSchritteAusblenden'); ladeStart(); }}>Ausblenden</button></div>
+          <ul className="checkliste">
+            {start.schritte.map((x: Row) => (
+              <li key={x.punkt} className={x.fertig ? 'fertig' : ''}>
+                <span className="haken"><I.Check size={13} strokeWidth={3} /></span>
+                <span className="text">{x.text}</span>
+                {!x.fertig && <button className="klein" onClick={() => navi.zu(x.ziel)}>Jetzt erledigen</button>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {jahreswechselZeit() && (!start || start.fertig || start.ausgeblendet) && <Jahreswechsel kompakt />}
+
       <ObjektKacheln modus={props.modus} oeffne={props.oeffne} />
       <div className="kacheln">
         {k.soll_ct > 0 && (
@@ -50,7 +73,7 @@ export function Uebersicht(props: { modus: Modus; objekte: Row[]; oeffne: (seite
 
       <div className="cockpit-raster">
         <div className="panel">
-          <h3>Zu erledigen</h3>
+          <div className="panelkopf"><h3>Zu erledigen</h3></div>
           {handeln.length === 0 && <p className="hinweis">Nichts offen.</p>}
           <ul className="hinweisliste">
             {handeln.map((h) => <Hinweis key={h.schluessel} h={h} oeffne={props.oeffne} reload={reload} />)}
@@ -58,24 +81,26 @@ export function Uebersicht(props: { modus: Modus; objekte: Row[]; oeffne: (seite
         </div>
         <div>
           <div className="panel">
-            <h3>Diese Woche</h3>
+            <div className="panelkopf"><h3>Diese Woche</h3></div>
             {f.termine.length + offeneVorgaenge.length === 0 && <p className="hinweis">Keine Termine oder fälligen Vorgänge.</p>}
             <ul className="hinweisliste">
               {f.termine.map((t: Row) => (
-                <li key={'t' + t.id} className="klickbar" onClick={() => props.oeffne('termine')}>
-                  <div className="inhalt"><div>📅 {t.titel}</div><div className="klein hinweis">{datum(t.datum)} {t.uhrzeit}{t.objekt ? ` · ${t.objekt}` : ''}</div></div>
+                <li key={'t' + t.id}>
+                  <span className="punkt"><I.CalendarDays size={14} /></span>
+                  <div className="inhalt"><L zu={{ seite: 'termine' }}>{t.titel}</L><div className="klein hinweis">{datum(t.datum)} {t.uhrzeit}{t.objekt ? ` · ${t.objekt}` : ''}</div></div>
                 </li>
               ))}
               {offeneVorgaenge.map((v) => (
-                <li key={'v' + v.id} className="klickbar" onClick={() => props.oeffne('vorgaenge', v.objekt_id)}>
-                  <div className="inhalt"><div>📌 {v.titel}</div><div className="klein hinweis">fällig {datum(v.faellig)}{v.objekt ? ` · ${v.objekt}` : ''}</div></div>
+                <li key={'v' + v.id}>
+                  <span className="punkt"><I.ListChecks size={14} /></span>
+                  <div className="inhalt"><L zu={{ vorgang: v.id, objektId: v.objekt_id }}>{v.titel}</L><div className="klein hinweis">fällig {datum(v.faellig)}{v.objekt ? ` · ${v.objekt}` : ''}</div></div>
                 </li>
               ))}
             </ul>
           </div>
           {chancen.length > 0 && (
             <div className="panel">
-              <h3>Chancen & Hinweise</h3>
+              <div className="panelkopf"><h3>Chancen & Hinweise</h3></div>
               <ul className="hinweisliste">{chancen.map((h) => <Hinweis key={h.schluessel} h={h} oeffne={props.oeffne} reload={reload} />)}</ul>
             </div>
           )}
@@ -83,20 +108,10 @@ export function Uebersicht(props: { modus: Modus; objekte: Row[]; oeffne: (seite
       </div>
 
       <div className="panel">
-        <h3>Ein- und Auszahlungen der letzten 12 Monate</h3>
+        <div className="panelkopf"><h3>Ein- und Auszahlungen der letzten 12 Monate</h3></div>
         <Zahlungsverlauf verlauf={k.verlauf} />
       </div>
 
-      {d.objekte === 0 && (
-        <div className="hinweis">
-          <p><b>So geht's los:</b></p>
-          <ol>
-            <li>Unter <i>Objekte</i> ein Haus anlegen. Häuser mit Mietern und Eigentümern anlegen als „Miet/WEG gemischt“.</li>
-            <li>Unter <i>Einheiten</i> die Wohnungen, Garagen usw. erfassen.</li>
-            <li>Verträge, Rechnungen und Bescheide einfach ins Fenster ziehen – sie landen im Postfach.</li>
-          </ol>
-        </div>
-      )}
     </section>
   );
 }
@@ -108,8 +123,8 @@ function Hinweis(props: { h: Row; oeffne: (seite: string, objektId?: number) => 
     <li className={`hinweis-${h.stufe}`}>
       <span className="punkt" title={STUFE[h.stufe][1]} aria-label={STUFE[h.stufe][1]}>{STUFE[h.stufe][0]}</span>
       <div className="inhalt">
-        <div>{h.text}</div>
-        <div className="klein hinweis">{h.kategorie}{h.objekt ? ` · ${h.objekt}` : ''}</div>
+        <div>{mitLinks(h.text, h.links)}</div>
+        <div className="klein hinweis">{h.kategorie}{h.objekt ? <> · <L zu={{ objekt: h.objekt_id }}>{h.objekt}</L></> : ''}</div>
       </div>
       <div className="aktionen">
         {h.ziel && <button onClick={() => props.oeffne(h.ziel, h.objekt_id)}>Öffnen</button>}
@@ -120,7 +135,7 @@ function Hinweis(props: { h: Row; oeffne: (seite: string, objektId?: number) => 
   );
 }
 
-// Grouped bars per month: inflows (slot 1, blue) and outflows (slot 2, orange); hover shows both values.
+// Grouped bars per month: inflows (slot 1, graphite) and outflows (slot 2, orange); hover shows both values.
 const FARBEN = { ein: 'var(--c1)', aus: 'var(--c2)' };
 const MONATE = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
 
@@ -136,7 +151,7 @@ function Zahlungsverlauf(props: { verlauf: Row[] }) {
   const oben = schritt * 4;
   const B = 760, H = 220, L = 56, U = 26, T = 10;
   const breite = (B - L) / v.length;
-  const balken = Math.min(18, (breite - 10) / 2);
+  const balken = Math.min(10, (breite - 14) / 2);
   const y = (ct: number) => T + (H - T - U) * (1 - ct / oben);
   const kurz = (ct: number) => new Intl.NumberFormat('de-DE', { notation: 'compact', maximumFractionDigits: 1 }).format(ct / 100) + ' €';
   const leer = v.every((m) => !m.ein_ct && !m.aus_ct);

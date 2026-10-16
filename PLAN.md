@@ -5,8 +5,9 @@ Win-CASA (template database `../db/schema.sql`, form inventory `../forms_own.txt
 to learn which features, fields and calculations exist.
 
 Two modes, kept separate but linked:
-- **Mietverwaltung** – blue background
-- **WEG-Verwaltung** – green background
+- **Mietverwaltung** – orange accent
+- **WEG-Verwaltung** – green accent
+- **Projekte** – slate blue accent
 - Mixed houses (rental and WEG together) appear in both modes; each unit shows its tenant and its owner.
 
 ## Phases
@@ -39,10 +40,25 @@ Two modes, kept separate but linked:
 | Bank | Returned debits detected (with case), outgoing payments matched to open invoices | done |
 | NAS-Sync | One shared database file on the Synology (SMB), lock per device, PDFs local for 4 weeks | open (user sets up NAS first) |
 
+## Version 0.6 – linked and checked
+
+| Area | Contents | Status |
+|------|----------|--------|
+| Navigation | Every name, unit, contract and account is a link; detail pages for person, unit, contract and account; back/forward (⌘[ ⌘], swipe), breadcrumb, hover cards, unit tree in the sidebar, right-click menu, files dropped onto records | done |
+| Design | Calm anthracite sidebar, off-white pages, hairlines instead of shadows, thin large figures; accent per mode | done |
+| Miete | Partial month per contract (by day / full month / from the next month); first month never due before moving in; 3rd working day with public holidays per state; VAT for commercial lettings; instalment plans; notice assistant with letters; permanent invoices | done |
+| Briefe | Model letters (certificates, Wohnungsgeberbestätigung, reminders, warnings, announcements) and checked letters for § 558, § 557b, § 557a, § 559 and § 560 Abs. 4; letters to a contract address every tenant | done |
+| Prüfung | Check report (about 35 checks), checks before a service-charge statement (deadline, non-allocable costs, cable TV, fibre fee, CO₂, heating share, vacancy), year-end assistant | done |
+| Steuer | 15 % rule (net per booking, exact with e-invoices), § 82b distribution, tax adviser package (ZIP), VAT overview (Kz 81/86/66/83) | done |
+| E-Rechnung | ZUGFeRD/Factur-X (XML inside the PDF) and XRechnung (CII and UBL): exact amounts, VAT, IBAN, line items; readable view; input tax when booking | done |
+| Tests | `scripts/rechentest.cjs` builds a sample house and recomputes every figure independently; `scripts/klicktest.cjs` opens every page, clicks the buttons and checks PDFs and SEPA XML (ISO 20022 schemas) | done |
+
 ## Development
 
 ```
 cd ~/Work/wincasa/app
 npm run dev        # Vite + Electron with hot reload (Linux)
 npm run dist:mac   # packages an ad-hoc signed Apple Silicon app (zip) in release/ (needs rcodesign, see scripts/dist-mac.sh)
+ELECTRON_RUN_AS_NODE=1 npx electron scripts/rechentest.cjs        # calculation test with the sample house
+npm run build && XSD=<folder with pain.*.xsd> npx electron scripts/klicktest.cjs <outdir>   # click test
 ```

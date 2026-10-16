@@ -24,7 +24,7 @@ export function Ruecklagen(props: { objekt: Row }) {
   return (
     <section>
       <div className="toolbar">
-        <h1>Erhaltungsrücklage – {props.objekt.bezeichnung}</h1>
+        <h1>Erhaltungsrücklage</h1>
         <span className="spacer" />
         <Zeitraum von={von} bis={bis} onChange={(a, b) => { setVon(a); setBis(b); }} />
       </div>

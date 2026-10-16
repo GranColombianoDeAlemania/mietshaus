@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { anrede, call, datum, euro, heute, parseCent, personName, type Modus, type Row } from '../api';
 import { useLoad } from '../useLoad';
 import { Betrag, Dialog } from '../ui';
-import { absaetze, absenderAus, alsPdf, brief, esc, tabelle } from '../dokument';
+import { absaetze, absenderAus, alsPdf, brief, esc, tabelle, empfaengerVon } from '../dokument';
+import { L } from '../navi';
 
 const STUFEN = ['Zahlungserinnerung', '1. Mahnung', '2. Mahnung', 'Letzte Mahnung'];
 const plusTage = (iso: string, n: number) => {
@@ -25,7 +26,7 @@ export function OffenePosten(props: { objekt: Row; modus: Modus }) {
   return (
     <section>
       <div className="toolbar">
-        <h1>Offene Posten & Mahnwesen – {props.objekt.bezeichnung}</h1>
+        <h1>Offene Posten & Mahnwesen</h1>
         <span className="spacer" />
         <label>Stichtag <input type="date" value={stichtag} onChange={(e) => setStichtag(e.target.value)} /></label>
       </div>
@@ -43,9 +44,9 @@ export function OffenePosten(props: { objekt: Row; modus: Modus }) {
         <thead><tr><th>Konto</th><th>Name</th><th>Offene Monate</th><th className="num">Ältester Verzug</th><th>Letzte Mahnung</th><th className="num">Rückstand</th><th /></tr></thead>
         <tbody>
           {rueckstand.map((r) => (
-            <tr key={r.konto.id} onDoubleClick={() => setDetail(r)}>
-              <td className="num">{r.konto.nr}</td>
-              <td>{r.konto.bezeichnung}</td>
+            <tr key={r.konto.id} onDoubleClick={() => setDetail(r)} data-ziel={r.konto.vertrag_id ? `vertrag:${r.konto.vertrag_typ}:${r.konto.vertrag_id}` : `konto:${r.konto.id}`}>
+              <td className="num"><L zu={{ konto: r.konto.id }}>{r.konto.nr}</L></td>
+              <td>{r.konto.vertrag_id ? <L zu={{ vertrag: r.konto.vertrag_id, typ: r.konto.vertrag_typ }}>{r.konto.bezeichnung}</L> : r.konto.bezeichnung}</td>
               <td className="klein">{r.offen.map((o: Row) => (o.monat ? `${o.monat.slice(5)}/${o.monat.slice(2, 4)}${o.status === 'teilweise bezahlt' ? ' (teilw.)' : ''}` : o.text)).join(', ')}</td>
               <td className="num">{Math.max(0, ...r.offen.map((o: Row) => o.verzug))} Tage</td>
               <td>{r.konto.mahnstufe ? `${STUFEN[Math.min(r.konto.mahnstufe, 3)]} am ${datum(r.konto.letzte_mahnung)}` : '–'}</td>
@@ -66,14 +67,16 @@ export function OffenePosten(props: { objekt: Row; modus: Modus }) {
             <thead><tr><th>Konto</th><th>Name</th><th className="num">Guthaben</th></tr></thead>
             <tbody>
               {guthaben.map((r) => (
-                <tr key={r.konto.id}><td className="num">{r.konto.nr}</td><td>{r.konto.bezeichnung}</td><td className="num">{euro(-r.summe_ct)}</td></tr>
+                <tr key={r.konto.id}><td className="num"><L zu={{ konto: r.konto.id }}>{r.konto.nr}</L></td>
+                  <td>{r.konto.vertrag_id ? <L zu={{ vertrag: r.konto.vertrag_id, typ: r.konto.vertrag_typ }}>{r.konto.bezeichnung}</L> : r.konto.bezeichnung}</td><td className="num">{euro(-r.summe_ct)}</td></tr>
               ))}
             </tbody>
           </table>
         </>
       )}
       {detail && (
-        <Dialog titel={`Offene Posten ${detail.konto.bezeichnung}`} onClose={() => setDetail(null)} breit>
+        <Dialog titel={`Offene Posten ${detail.konto.bezeichnung}`} onClose={() => setDetail(null)} breit
+          aktionen={detail.konto.vertrag_id ? <L zu={{ vertrag: detail.konto.vertrag_id, typ: detail.konto.vertrag_typ }} className="weiter">Vertrag öffnen →</L> : undefined}>
           <table>
             <thead><tr><th>Fällig am</th><th>Forderung</th><th className="num">Soll</th><th className="num">bezahlt</th><th className="num">offen</th><th>Status</th><th className="num">Verzug</th></tr></thead>
             <tbody>
@@ -116,6 +119,7 @@ function Mahnlauf(props: { objekt: Row; faelle: Row[]; stichtag: string; onClose
       const a = auswahl[f.konto.id];
       if (!a?.an) continue;
       const geb = parseCent(gebuehr[a.stufe]);
+      const an = await empfaengerVon(f.person);
       const posten = tabelle(['Fällig am', 'Forderung', '#rSoll', '#rgezahlt', '#roffen'],
         f.offen.map((o: Row) => [datum(o.datum), esc(o.text), `#r${euro(o.soll_ct)}`, `#r${o.bezahlt_ct ? euro(o.bezahlt_ct) : '–'}`, `#r${euro(o.offen_ct)}`]),
         { summe: ['', f.guthaben_ct > 0 ? `Summe abzüglich Guthaben ${euro(f.guthaben_ct)}` : 'Summe offener Forderungen', '', '', `#r${euro(f.summe_ct)}`] });
@@ -133,10 +137,10 @@ function Mahnlauf(props: { objekt: Row; faelle: Row[]; stichtag: string; onClose
       ].filter(Boolean).join('\n\n');
       seiten.push(brief({
         absender: { ...absender, iban: props.objekt.iban || absender.iban, bank: props.objekt.bank || absender.bank, bic: props.objekt.bic || absender.bic },
-        empfaenger: f.person,
+        empfaenger: an,
         betreff: `${STUFEN[a.stufe]} – ${props.objekt.bezeichnung}`,
         info: [['Objekt', props.objekt.bezeichnung], ['Konto', String(f.konto.nr)]],
-        inhalt: `<p>${esc(anrede(f.person))}</p>${absaetze(text.join('\n\n'))}${posten}${absaetze(nach)}<p class="unterschrift">Mit freundlichen Grüßen<br><br>${esc(absender.name)}</p>`,
+        inhalt: `<p>${esc(anrede(an))}</p>${absaetze(text.join('\n\n'))}${posten}${absaetze(nach)}<p class="unterschrift">Mit freundlichen Grüßen<br><br>${esc(absender.name)}</p>`,
       }));
       await call('mahnen', { konto_id: f.konto.id, stufe: a.stufe, gebuehr_ct: geb, frist, datum: heute(), offen_ct: f.summe_ct });
     }

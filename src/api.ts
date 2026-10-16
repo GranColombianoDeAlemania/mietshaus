@@ -10,6 +10,7 @@ declare global {
       zoom: (faktor: number) => void;
       call: (fn: string, ...args: unknown[]) => Promise<any>;
       pdf: (html: string, name: string) => Promise<string | null>;
+      steuerpaket: (objektId: number, jahr: number, html: string) => Promise<{ datei: string; belege: number; buchungen: number } | null>;
       pdfAblegen: (html: string, name: string, meta: Row) => Promise<{ id: number; datei: string }>;
       speichern: (inhalt: string, name: string, filter?: DateiFilter) => Promise<string | null>;
       oeffnen: (filter?: DateiFilter) => Promise<{ name: string; base64: string } | null>;
@@ -31,6 +32,7 @@ declare global {
       mailAbrufen: () => Promise<{ neu: number; mails: number }>;
       claudeStatus: () => Promise<{ datei: string; installiert: boolean; verbunden: boolean; eintrag: Row }>;
       claudeVerbinden: () => Promise<{ datei: string; installiert: boolean; verbunden: boolean; eintrag: Row }>;
+      kontextmenue: (eintraege: ({ id: string; label: string; enabled?: boolean } | '-')[]) => Promise<string | null>;
     };
   }
 }
@@ -65,17 +67,30 @@ export const parseZahl = (s: string | number | null | undefined): number | null 
 };
 export const parseCent = (s: string | number | null | undefined) => Math.round((parseZahl(s) ?? 0) * 100);
 
-export const personName = (p: Row) =>
-  [p.nachname, p.vorname].filter(Boolean).join(', ') + (p.firma ? ` (${p.firma})` : '') || '(ohne Namen)';
+export const personName = (p: Row) => {
+  const name = [p.nachname, p.vorname].filter(Boolean).join(', ');
+  return (name ? name + (p.firma ? ` (${p.firma})` : '') : p.firma) || '(ohne Namen)';
+};
 
 // Name as used in letters: "Dr. Anna Meier".
 export const briefName = (p: Row) =>
   [p.titel, p.vorname, p.nachname].filter(Boolean).join(' ') || p.firma || '';
 
-export const anrede = (p: Row) =>
+const eineAnrede = (p: Row) =>
   p.anrede === 'Herr' ? `Sehr geehrter Herr ${[p.titel, p.nachname].filter(Boolean).join(' ')},`
     : p.anrede === 'Frau' ? `Sehr geehrte Frau ${[p.titel, p.nachname].filter(Boolean).join(' ')},`
       : 'Sehr geehrte Damen und Herren,';
+// A letter to a contract addresses every party of it (p.mit: the second tenant or owner).
+export const anrede = (p: Row) => {
+  const a = eineAnrede(p);
+  if (!p.mit) return a;
+  const b = eineAnrede(p.mit);
+  return a === b ? a : `${a} ${b.charAt(0).toLowerCase()}${b.slice(1)}`;
+};
+// Due day 0 is the statutory third working day (§ 556b BGB).
+export const faelligText = (tag: number | null | undefined) => (!tag ? 'bis zum 3. Werktag des Monats' : `am ${tag}. des Monats`);
+// Names of all parties: "Max Muster und Erika Muster".
+export const alleNamen = (p: Row) => [briefName(p) || p.firma, p.mit && (briefName(p.mit) || p.mit.firma)].filter(Boolean).join(' und ');
 
 export const OBJEKT_ART: Record<string, string> = {
   miete: 'Mietobjekt',
@@ -90,6 +105,7 @@ export const KLASSEN: Record<string, string> = {
   ruecklage: 'Rücklagen',
   person: 'Mieter- und Eigentümerkonten',
   darlehen: 'Darlehen',
+  steuer: 'Steuerkonten (Umsatzsteuer, Vorsteuer)',
 };
 
 export const kontoLabel = (k: Row) => `${k.nr} ${k.bezeichnung}`;

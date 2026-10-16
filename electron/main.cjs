@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, protocol, safeStorage } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, protocol, safeStorage, Menu } = require('electron');
 const { pathToFileURL } = require('node:url');
 const path = require('node:path');
 const fs = require('node:fs');
@@ -6,6 +6,7 @@ const crypto = require('node:crypto');
 const { open, api } = require('./db.cjs');
 const analyse = require('./analyse.cjs');
 const eingang = require('./eingang.cjs');
+const { zip } = require('./zip.cjs');
 
 let db;
 let rawDb;
@@ -32,8 +33,9 @@ function createWindow() {
     minHeight: 640,
     title: 'Hausverwalter',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
-    // macOS: translucent sidebar material behind the navigation.
-    ...(process.platform === 'darwin' ? { vibrancy: 'sidebar', visualEffectState: 'followWindow', backgroundColor: '#00000000' } : {}),
+    // The traffic lights sit on the charcoal sidebar; the same colour avoids a white flash while loading.
+    trafficLightPosition: { x: 18, y: 18 },
+    backgroundColor: '#1c2324',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -43,7 +45,18 @@ function createWindow() {
   });
   hauptfenster = win;
   win.loadURL(seite('index.html'));
+  // Back/forward: three-finger swipe (macOS) and the mouse's side buttons (Windows/Linux).
+  win.on('swipe', (_e, richtung) => melden('navigation', richtung === 'right' ? 'zurueck' : richtung === 'left' ? 'vor' : null));
+  win.on('app-command', (_e, cmd) => melden('navigation', cmd === 'browser-backward' ? 'zurueck' : cmd === 'browser-forward' ? 'vor' : null));
 }
+
+// Native right-click menu built from the renderer's entries.
+ipcMain.handle('kontextmenue', (e, eintraege) => new Promise((resolve) => {
+  let gewaehlt = null;
+  const menu = Menu.buildFromTemplate(eintraege.map((x) => (x === '-' ? { type: 'separator' }
+    : { label: x.label, enabled: x.enabled !== false, click: () => { gewaehlt = x.id; resolve(x.id); } })));
+  menu.popup({ window: BrowserWindow.fromWebContents(e.sender), callback: () => setTimeout(() => resolve(gewaehlt), 30) });
+}));
 
 function oeffneDb() {
   rawDb = open(dbFile);
@@ -58,6 +71,48 @@ setInterval(() => {
   if (letzteVersion != null && v !== letzteVersion) melden('aktualisiert');
   letzteVersion = v;
 }, 2000);
+
+// Renders HTML to PDF bytes.
+async function htmlZuPdf(html) {
+  const tmp = path.join(app.getPath('temp'), `hv-${crypto.randomUUID()}.html`);
+  fs.writeFileSync(tmp, html);
+  const win = new BrowserWindow({ show: false, webPreferences: { sandbox: true, javascript: false } });
+  try {
+    await win.loadFile(tmp);
+    return await win.webContents.printToPDF({ pageSize: 'A4', printBackground: true, preferCSSPageSize: true });
+  } finally {
+    win.destroy();
+    fs.rmSync(tmp, { force: true });
+  }
+}
+
+// Tax adviser package: Anlage V as PDF, journal, balances and account sheets as CSV, receipts of the year – one ZIP file.
+async function steuerpaket(objektId, jahr, anlageVHtml) {
+  const d = db.steuerpaketDaten(objektId, jahr);
+  const dateien = [
+    { name: `Anlage V ${jahr}.pdf`, daten: await htmlZuPdf(anlageVHtml) },
+    { name: `Journal ${jahr}.csv`, daten: d.journal },
+    { name: `Saldenliste ${jahr}.csv`, daten: d.salden },
+    { name: `Kontenblätter ${jahr}.csv`, daten: d.kontenblaetter },
+  ];
+  let fehlend = 0;
+  for (const b of d.belege) {
+    const p = path.join(dokumentOrdner(), b.datei);
+    if (fs.existsSync(p)) dateien.push({ name: b.name, daten: fs.readFileSync(p) });
+    else fehlend++;
+  }
+  dateien.push({ name: 'Liesmich.txt', daten: [`Steuerunterlagen ${d.objekt} – ${jahr}`, '',
+    `Anlage V ${jahr}.pdf: Aufstellung der Einnahmen und Werbungskosten (Zufluss-/Abflussprinzip).`,
+    'Journal: alle Buchungen des Jahres. Saldenliste: Stand aller Konten. Kontenblätter: jede Buchung je Konto.',
+    `Belege: ${d.belege.length - fehlend} Dokumente (Rechnungen, Bescheide, Kontoauszüge und mit Buchungen verknüpfte Belege).`,
+    'CSV-Dateien: Semikolon getrennt, Beträge mit Komma, UTF-8 – öffnen mit Excel oder Numbers.', '',
+    `Erstellt am ${new Date().toLocaleDateString('de-DE')} mit Hausverwalter.`].join('\r\n') });
+  const ziel = await dialog.showSaveDialog({ defaultPath: path.join(app.getPath('documents'), `Steuerunterlagen ${d.objekt} ${jahr}.zip`), filters: [{ name: 'ZIP-Archiv', extensions: ['zip'] }] });
+  if (ziel.canceled || !ziel.filePath) return null;
+  fs.writeFileSync(ziel.filePath, zip(dateien));
+  shell.showItemInFolder(ziel.filePath);
+  return { datei: ziel.filePath, belege: d.belege.length - fehlend, buchungen: d.anzahl_buchungen };
+}
 
 // Renders an HTML document to a PDF file the user picks, then opens it.
 async function pdf(html, name) {
@@ -118,6 +173,7 @@ async function sicherung() {
   fs.rmSync(ziel.filePath, { force: true });
   // VACUUM INTO writes a consistent copy even while the database is open.
   rawDb.prepare('VACUUM INTO ?').run(ziel.filePath);
+  db.setzeEinstellungen({ letzte_sicherung: new Date().toISOString() });
   return ziel.filePath;
 }
 
@@ -240,6 +296,7 @@ app.whenReady().then(() => {
     return db[fn](...args);
   });
   ipcMain.handle('pdf', (_e, html, name) => pdf(html, name));
+  ipcMain.handle('steuerpaket', (_e, objektId, jahr, html) => steuerpaket(objektId, jahr, html));
   ipcMain.handle('pdfAblegen', (_e, html, name, meta) => pdfAblegen(html, name, meta));
   ipcMain.handle('speichern', (_e, inhalt, name, filter) => speichern(inhalt, name, filter));
   ipcMain.handle('oeffnen', (_e, filter) => oeffnen(filter));

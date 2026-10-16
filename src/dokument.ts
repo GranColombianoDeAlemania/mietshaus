@@ -1,5 +1,5 @@
 // HTML documents for PDF output: letters in DIN 5008 layout and plain reports.
-import { briefName, datum, heute, type Row } from './api';
+import { briefName, call, datum, heute, type Row } from './api';
 
 export const esc = (s: unknown) =>
   String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
@@ -37,6 +37,8 @@ table.t tr.zwischen td { font-weight: bold; background: #f6f6f6; }
 .klein { font-size: 8pt; color: #444; }
 .hervor { background: #f2f2f2; padding: 2.5mm 4mm; margin: 3mm 0; font-weight: bold; }
 .unterschrift { margin-top: 8mm; page-break-inside: avoid; }
+table.unterschriften { width: 100%; margin-top: 14mm; border-collapse: collapse; page-break-inside: avoid; }
+table.unterschriften td { width: 50%; vertical-align: bottom; font-size: 9pt; color: #333; padding-right: 8mm; }
 `;
 
 export type Absender = { name: string; strasse?: string; ort?: string; telefon?: string; email?: string; bank?: string; iban?: string; bic?: string };
@@ -58,17 +60,29 @@ const fuss = (a: Absender) => `<div class="fuss">
   <div>${a.bank ? esc(a.bank) + '<br>' : ''}${a.iban ? 'IBAN ' + esc(a.iban) : ''}${a.bic ? '<br>BIC ' + esc(a.bic) : ''}</div>
 </div>`;
 
+// Recipient of a contract letter: the contract party with the second tenant or owner (mit), so legal declarations
+// reach everyone. Without an own address the unit's address is used.
+export async function empfaengerVon(v: Row): Promise<Row> {
+  const e = v.einheit_id ? await call('get', 'einheiten', v.einheit_id) : null;
+  const o = e ? await call('get', 'objekte', e.objekt_id) : null;
+  const adresse = (p: Row) => (p.strasse || !o ? p : { ...p, strasse: o.strasse, plz: o.plz, ort: o.ort });
+  const p = adresse(await call('get', 'personen', v.person_id));
+  const p2 = v.person2_id ? adresse(await call('get', 'personen', v.person2_id)) : null;
+  return p2 ? { ...p, mit: p2 } : p;
+}
+
 export function brief(opts: {
   absender: Absender;
   empfaenger: Row;
   betreff: string;
   inhalt: string;
   info?: [string, string][];
-  datum?: string;
+  // null: no date (forms the recipient fills in and signs).
+  datum?: string | null;
 }) {
   const e = opts.empfaenger;
   const a = opts.absender;
-  const zeilen = [e.firma && e.nachname ? e.firma : null, briefName(e) || e.firma, e.strasse, [e.plz, e.ort].filter(Boolean).join(' '),
+  const zeilen = [e.firma && e.nachname ? e.firma : null, briefName(e) || e.firma, e.mit ? briefName(e.mit) || e.mit.firma : null, e.strasse, [e.plz, e.ort].filter(Boolean).join(' '),
     e.land && e.land !== 'Deutschland' ? e.land : null].filter(Boolean);
   return `<div class="seite">
     <div class="kopf"><b>${esc(a.name)}</b><br>${esc(a.strasse)} · ${esc(a.ort)}</div>
@@ -78,7 +92,7 @@ export function brief(opts: {
     </div>
     <div class="infoblock"><table>
       ${(opts.info ?? []).map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join('')}
-      <tr><td>Datum</td><td>${datum(opts.datum ?? heute())}</td></tr>
+      ${opts.datum === null ? '' : `<tr><td>Datum</td><td>${datum(opts.datum ?? heute())}</td></tr>`}
     </table></div>
     <div class="inhalt"><h1>${esc(opts.betreff)}</h1>${opts.inhalt}</div>
     ${fuss(a)}

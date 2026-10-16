@@ -72,6 +72,7 @@ ipcMain.handle('pdf', async (_e, html, name) => {
   return name;
 });
 ipcMain.handle('mailTesten', () => 'ok');
+ipcMain.handle('kontextmenue', () => null);
 ipcMain.handle('claudeStatus', () => ({ datei: '-', installiert: true, verbunden: false, eintrag: {} }));
 ipcMain.handle('info', () => ({ dbFile: ':memory:', dokumente: '-', version: app.getVersion() }));
 app.commandLine.appendSwitch('lang', 'de-DE');
@@ -117,31 +118,33 @@ app.whenReady().then(async () => {
   // Renderer errors are printed so a test run shows broken pages.
   win.webContents.on('console-message', (e) => { if (e.level === 'error' || e.level === 3) console.log('RENDERER-FEHLER:', e.message, e.sourceId?.split('/').pop(), e.lineNumber); });
   win.webContents.on('render-process-gone', (_e, d) => console.log('RENDERER-ABSTURZ:', d.reason));
-  const click = (text) => js(`[...document.querySelectorAll('button')].find(b => b.textContent.trim() === ${JSON.stringify(text)} || b.firstChild?.textContent?.trim() === ${JSON.stringify(text)})?.click()`);
+  const click = (text) => js(`[...document.querySelectorAll('button')].find(b => b.textContent.trim() === ${JSON.stringify(text)} || b.firstChild?.textContent?.trim() === ${JSON.stringify(text)} || b.querySelector('.lang')?.textContent.trim() === ${JSON.stringify(text)})?.click()`);
+  // Mode tabs in the sidebar.
+  const modus = (m) => js(`document.querySelector('.modus-${m === 'WEG-Verwaltung' ? 'weg' : m === 'Projekte' ? 'projekt' : 'miete'}')?.click()`);
   const shot = async (name) => { await wait(400); fs.writeFileSync(path.join(out, name + '.png'), (await win.webContents.capturePage()).toPNG()); };
   await js(`localStorage.clear(); localStorage.setItem('thema', 'hell')`);
   await win.reload(); await wait(500);
   console.log('AUTOMATIK', JSON.stringify(db.automatikLauf()), db.kennzahlen().soll_ct, db.einstellungen().auto_soll_ab);
   win.setSize(1300, 1250); await click('Cockpit'); await wait(800); await shot('1-miete-uebersicht');
-  await click('WEG-Verwaltung'); await wait(800); await shot('1b-weg-cockpit'); await click('Mietverwaltung'); win.setSize(1300, 760);
-  await click('Mietverwaltung'); await wait(200);
+  await modus('WEG-Verwaltung'); await wait(800); await shot('1b-weg-cockpit'); await modus('Mietverwaltung'); win.setSize(1300, 760);
+  await modus('Mietverwaltung'); await wait(200);
   await js(`document.querySelector('.objektwahl select').value='${o}'; document.querySelector('.objektwahl select').dispatchEvent(new Event('change',{bubbles:true}))`);
   await click('Buchungen'); await shot('2-buchungen');
   await click('Neue Buchung'); await shot('3-buchungsmaske');
   await click('Konten'); await shot('4-konten');
   await click('Sollstellung'); await shot('5-sollstellung');
-  await click('Offene Posten & Mahnungen'); await shot('6-op'); await click('Details'); await wait(400); await shot('6b-op-details'); await click('Schließen');
+  await click('Offene Posten'); await shot('6-op'); await click('Details'); await wait(400); await shot('6b-op-details'); await click('Schließen');
   await click('Bank & SEPA'); await click('SEPA-Lastschrift'); await shot('7-lastschrift');
   await click('Zähler'); await shot('8-zaehler');
-  await click('Einstellungen & Sicherung'); await shot('9-einstellungen');
-  await click('Mietverwaltung'); await click('Betriebskosten'); await wait(300);
+  await click('Einstellungen'); await shot('9-einstellungen');
+  await modus('Mietverwaltung'); await click('Betriebskosten'); await wait(300);
   await js(`document.querySelectorAll('.maske input[type=date]')[0].value`); 
   await js(`(() => { const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; const [a, b] = document.querySelectorAll('.maske input[type=date]');
     set.call(a, '${new Date().getFullYear()}-01-01'); a.dispatchEvent(new Event('input', { bubbles: true }));
     set.call(b, '${new Date().getFullYear()}-12-31'); b.dispatchEvent(new Event('input', { bubbles: true })); })()`);
   await click('Berechnen'); await wait(500); await shot('11-nk');
   await click('Abrechnungen als PDF'); await wait(2500);
-  await click('WEG-Verwaltung'); await click('Konten'); await shot('10-weg-konten');
+  await modus('WEG-Verwaltung'); await click('Konten'); await shot('10-weg-konten');
   await click('Jahresabrechnung'); await wait(300);
   await js(`(() => { const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; const [a, b] = document.querySelectorAll('.maske input[type=date]');
     set.call(a, '${new Date().getFullYear()}-01-01'); a.dispatchEvent(new Event('input', { bubbles: true }));
@@ -149,19 +152,30 @@ app.whenReady().then(async () => {
   await click('Berechnen'); await wait(500); await shot('12-weg-abrechnung');
   await click('Abrechnung als PDF'); await wait(2500);
   await click('Wirtschaftsplan'); await wait(300); await click('Auf Eigentümer verteilen'); await wait(400); await shot('13-wipl');
-  await click('Rücklagen & Sonderumlagen'); await shot('14-ruecklagen');
+  await click('Rücklagen'); await shot('14-ruecklagen');
   // Visit every page in both modes once.
   for (const m of ['Mietverwaltung', 'WEG-Verwaltung']) {
-    await click(m); await wait(300);
+    await modus(m); await wait(300);
     const labels = await js(`[...document.querySelectorAll('nav .navgruppe .eintrag')].map(b => b.textContent.trim())`);
     for (const l of labels) { await click(l); await wait(250); const h = await js(`document.querySelector('main h1')?.textContent ?? '(kein Titel)'`); console.log('SEITE', m, '|', l, '→', h); }
   }
   win.setSize(1300, 1100);
-  await click('Mietverwaltung'); await click('Cockpit'); await wait(700); await shot('60-cockpit-kacheln');
+  await modus('Mietverwaltung'); await click('Cockpit'); await wait(700); await shot('60-cockpit-kacheln');
   await click('Steckbrief'); await wait(700); await shot('61-steckbrief');
-  await click('Adressbuch'); await wait(300); await js(`document.querySelector('tbody tr')?.click()`); await wait(700); await shot('62-akte'); await click('Schließen');
+  await click('Adressbuch'); await wait(300); await js(`document.querySelector('tbody tr')?.click()`); await wait(700); await shot('62-akte'); await js(`document.querySelector('.navknoepfe button')?.click()`); await wait(300);
+  // Detail pages reached through links: unit, contract, account; back and forward.
+  await click('Mieter'); await wait(300);
+  for (const [sel, name] of [['main button[data-ziel^="einheit:"]', '71-einheit'], ['main tr.klickbar', '72-vertrag'], ['main button[data-person]', '73-person']]) {
+    await js(`document.querySelector(${JSON.stringify(sel)})?.click()`); await wait(700); await shot(name);
+    console.log('SEITE Detail |', name, '→', await js(`document.querySelector('main h1')?.textContent ?? '(kein Titel)'`), '| Pfad:', await js(`document.querySelector('.pfad')?.textContent`));
+    await js(`document.querySelector('.navknoepfe button')?.click()`); await wait(400);
+  }
+  await js(`[...document.querySelectorAll('main .reiter button')][1]?.click()`);
+  await click('Konten'); await wait(300); await js(`document.querySelector('main tr.klickbar')?.click()`); await wait(600); await shot('74-konto');
+  console.log('SEITE Detail | Konto →', await js(`document.querySelector('main h1')?.textContent`));
+  console.log('NAVI zurück möglich:', await js(`!document.querySelector('.navknoepfe button').disabled`));
   await click('Darlehen'); await wait(400); await shot('63-darlehen');
-  await click('Übergaben & Mieterwechsel'); await wait(400);
+  await click('Übergaben'); await wait(400);
   const uid = db.uebergabeNeu({ einheit_id: e[0], vertrag_id: db.vertraege('mietverhaeltnisse', o).find((v) => v.einheit_id === e[0]).id, art: 'auszug', datum: new Date().toISOString().slice(0, 10) });
   await js(`window.dispatchEvent(new Event('hv-daten'))`); await wait(500);
   await js(`[...document.querySelectorAll('tbody tr')].find(t => t.textContent.includes('Auszug'))?.click()`); await wait(700);
@@ -182,31 +196,31 @@ app.whenReady().then(async () => {
   console.log('PALETTE →', await js(`document.querySelector('main h1')?.textContent + ' | dialog: ' + (document.querySelector('.dialog h2, .panel .tabs')?.textContent ?? '-')`));
   await js(`document.documentElement.dataset.thema = 'dunkel'`);
   await click('Cockpit'); await wait(700); await shot('64-dunkel-cockpit');
-  await click('WEG-Verwaltung'); await click('Konten'); await wait(500); await shot('65-dunkel-weg-konten');
-  await click('Projekte'); await click('Zeitplan'); await wait(500); await shot('66-dunkel-gantt');
+  await modus('WEG-Verwaltung'); await click('Konten'); await wait(500); await shot('65-dunkel-weg-konten');
+  await modus('Projekte'); await click('Zeitplan'); await wait(500); await shot('66-dunkel-gantt');
   await js(`document.documentElement.dataset.thema = 'hell'`); win.setSize(1300, 760);
-  await click('Mietverwaltung'); await click('Postfach'); await wait(500);
+  await modus('Mietverwaltung'); await click('Postfach'); await wait(500);
   await js(`document.querySelectorAll('.dokliste li input[type=checkbox]')[1]?.click(); document.querySelectorAll('.dokliste li input[type=checkbox]')[2]?.click()`);
   await wait(400); await shot('50-postfach-stapel');
   await click('Einheiten'); await wait(400); win.setSize(1300, 1000); await shot('51-einheiten-galerie');
   await click('Fotos & Dokumente'); await wait(600); await shot('52-einheit-fotos'); await click('Schließen'); win.setSize(1300, 760);
-  await click('Mietverwaltung'); await click('Rendite & Steuer'); await wait(500); await shot('40-rendite');
+  await modus('Mietverwaltung'); await click('Rendite & Steuer'); await wait(500); await shot('40-rendite');
   await click('Anlage V (Steuer)'); await wait(400); await shot('41-anlagev');
-  await click('Einstellungen & Sicherung'); await wait(300); await js(`window.scrollTo(0, 99999); document.querySelector('main').scrollTo(0, 99999)`); await wait(300); await shot('42-einstellungen');
-  await click('Mietverwaltung'); await click('Postfach'); await wait(800); await shot('20-postfach');
+  await click('Einstellungen'); await wait(300); await js(`window.scrollTo(0, 99999); document.querySelector('main').scrollTo(0, 99999)`); await wait(300); await shot('42-einstellungen');
+  await modus('Mietverwaltung'); await click('Postfach'); await wait(800); await shot('20-postfach');
   await click('Archiv & Suche'); await wait(300);
   await js(`(() => { const i = document.querySelector('.suche.gross'); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(i, 'abwasser'); i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
   await wait(500); await shot('21-archiv-suche');
   await click('Rechnungen'); await wait(300); await shot('22-rechnungen');
   await js(`(() => { const i = document.querySelector('.globalsuche input'); i.focus(); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(i, 'meier'); i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
   await wait(600); await shot('23-globalsuche');
-  await js(`document.activeElement?.blur()`); await click('Projekte'); await wait(500); win.setSize(1300, 1100); await click('Cockpit'); await wait(500); await shot('30-projekt-cockpit');
+  await js(`document.activeElement?.blur()`); await modus('Projekte'); await wait(500); win.setSize(1300, 1100); await click('Cockpit'); await wait(500); await shot('30-projekt-cockpit');
   await click('Zeitplan'); await wait(500); await shot('31-zeitplan');
   await click('Kosten & Budget'); await wait(400); await shot('32-kosten');
   await click('Fotos & Dokumente'); await wait(500); await shot('33-projekt-fotos'); win.setSize(1300, 760);
-  await click('WEG-Verwaltung'); await click('Versammlungen'); await wait(200); await click('Neue Versammlung'); await shot('15-versammlung-dialog'); await click('Abbrechen');
+  await modus('WEG-Verwaltung'); await click('Versammlungen'); await wait(200); await click('Neue Versammlung'); await shot('15-versammlung-dialog'); await click('Abbrechen');
   await click('Versammlungen'); await wait(200); await click('Tagesordnung & Beschlüsse'); await wait(300); await click('Einladungen (PDF)'); await wait(2500); await click('Schließen');
-  await click('Mietverwaltung'); await click('Briefe & Serienbriefe'); await wait(200);
+  await modus('Mietverwaltung'); await click('Briefe'); await wait(200);
   await js(`(() => { const sel = document.querySelector('.maske select'); sel.value = sel.options[1].value; sel.dispatchEvent(new Event('change', { bubbles: true })); })()`);
   await wait(200); await click('Alle Mieter'); 
   await js(`[...document.querySelectorAll('label.check')].find(l => l.textContent.includes('Alle Mieter'))?.querySelector('input').click()`); await wait(200);

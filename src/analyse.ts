@@ -9,10 +9,26 @@ type Seite = { nr: number; text: string; bild?: string };
 // A page with fewer characters than this is treated as a scan.
 const MIN_ZEICHEN = 40;
 
-async function pdfLesen(url: string): Promise<{ seiten: Seite[] }> {
+// ZUGFeRD / Factur-X / XRechnung: the invoice data is an XML file embedded in the PDF.
+const EXML = /^(factur-x|zugferd-invoice|zugferd_invoice|xrechnung|zugferd).*\.xml$/i;
+
+async function pdfLesen(url: string): Promise<{ seiten: Seite[]; xml: string | null }> {
   const daten = new Uint8Array(await (await fetch(url)).arrayBuffer());
   const aufgabe = getDocument({ data: daten });
   const pdf = await aufgabe.promise;
+  let xml: string | null = null;
+  try {
+    // pdf.js 6: a Map of id → { filename }, the content is fetched separately.
+    const anhaenge = (await pdf.getAttachments()) as Map<string, { filename: string }> | null;
+    const liste = anhaenge ? [...anhaenge.entries()].map(([id, a]) => ({ id, name: a.filename ?? id })) : [];
+    const a = liste.find((x) => EXML.test(x.name)) ?? liste.find((x) => /\.xml$/i.test(x.name));
+    if (a) {
+      const inhalt = await (pdf as unknown as { getAttachmentContent: (id: string) => Promise<Uint8Array | null> }).getAttachmentContent(a.id);
+      if (inhalt) xml = new TextDecoder('utf-8').decode(inhalt);
+    }
+  } catch {
+    // A broken attachment must not stop reading the text.
+  }
   const seiten: Seite[] = [];
   for (let nr = 1; nr <= pdf.numPages; nr++) {
     const page = await pdf.getPage(nr);
@@ -33,7 +49,7 @@ async function pdfLesen(url: string): Promise<{ seiten: Seite[] }> {
     page.cleanup();
   }
   await aufgabe.destroy();
-  return { seiten };
+  return { seiten, xml };
 }
 
 (window as unknown as { pdfLesen: typeof pdfLesen }).pdfLesen = pdfLesen;

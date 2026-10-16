@@ -71,7 +71,7 @@ export function Export(props: { objekt: Row }) {
   return (
     <section>
       <div className="toolbar">
-        <h1>Export – {o.bezeichnung}</h1>
+        <h1>Export &amp; Steuer</h1>
         <span className="spacer" />
         <Zeitraum von={von} bis={bis} onChange={(a, b) => { setVon(a); setBis(b); }} />
       </div>

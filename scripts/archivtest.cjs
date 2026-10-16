@@ -43,7 +43,13 @@ app.whenReady().then(async () => {
   const ana = analyse({ db, dokumentOrdner: () => docs, vorschauOrdner: () => path.join(docs, 'vorschau'),
     analyseUrl: () => pathToFileURL(path.join(__dirname, '..', 'dist', 'analyse.html')).href });
   const t0 = Date.now();
-  console.log('import', ana.importieren(['rechnung.pdf', 'scan.pdf', 'foto.png', 'rechnung.pdf'].map((f) => path.join(out, f))));
+  // E-invoices: a ZUGFeRD PDF (XML embedded) and a plain XRechnung (UBL XML).
+  const { zugferdPdf } = require('./testdaten/zugferd-pdf.cjs');
+  fs.writeFileSync(path.join(out, 'zugferd.pdf'), zugferdPdf(fs.readFileSync(path.join(__dirname, 'testdaten', 'erechnung-cii.xml'), 'utf8'),
+    ['Sanitaer Krueger GmbH - Gleimstrasse 12 - 10437 Berlin', 'Rechnung RE-2026-0815 vom 14.09.2026', 'Austausch Eckventile Bad und Kueche 4 Std. 260,00 EUR',
+      'Material 58,40 EUR', 'Summe netto 318,40 EUR, USt 19 % 60,50 EUR, Gesamt 378,90 EUR', 'Zahlbar bis 28.09.2026']));
+  fs.copyFileSync(path.join(__dirname, 'testdaten', 'erechnung-ubl.xml'), path.join(out, 'xrechnung.xml'));
+  console.log('import', ana.importieren(['rechnung.pdf', 'scan.pdf', 'foto.png', 'rechnung.pdf', 'zugferd.pdf', 'xrechnung.xml'].map((f) => path.join(out, f))));
   await new Promise((r) => setTimeout(r, 500));
   await ana.warteschlange();
   for (let i = 0; i < 120 && db.zuAnalysieren().length; i++) await new Promise((r) => setTimeout(r, 500));
@@ -51,7 +57,8 @@ app.whenReady().then(async () => {
   for (const d of db.dokumentListe({})) {
     const x = db.dokument(d.id);
     console.log(JSON.stringify({ name: x.name, analyse: x.analyse, ocr: x.ocr, seiten: x.seiten, typ: x.typ, betrag: x.betrag_ct, datum: x.datum,
-      faellig: x.faellig, rnr: x.rechnungsnr, iban: x.iban, absender: x.absender, objekt: x.objekt, zeichen: (x.text ?? '').length }));
+      faellig: x.faellig, rnr: x.rechnungsnr, iban: x.iban, absender: x.absender, objekt: x.objekt, zeichen: (x.text ?? '').length,
+      netto: x.netto_ct, ust: x.ust_ct, erechnung: x.erechnung ? JSON.parse(x.erechnung).syntax : null, titel: x.titel }));
   }
   for (const q of ['stadtwerke abwasser', 'SW-2026', 'musterstadt', 'gibtsnicht'])
     console.log('suche', q, '→', db.dokumentListe({ q }).map((d) => `${d.name}: ${d.treffer}`));

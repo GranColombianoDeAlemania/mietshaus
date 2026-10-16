@@ -42,7 +42,7 @@ export function Schluessel(props: { objekt: Row }) {
   return (
     <section>
       <div className="toolbar">
-        <h1>Umlageschlüssel – {props.objekt.bezeichnung}</h1>
+        <h1>Umlageschlüssel</h1>
         <span className="spacer" />
         <button onClick={() => setEdit({ typ: 'manuell' })}>Neuer Schlüssel</button>
         <button className="primary" disabled={!geaendert} onClick={speichern}>Werte speichern</button>

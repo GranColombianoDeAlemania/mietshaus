@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('hv', {
   zoom: (faktor) => webFrame.setZoomFactor(faktor),
   call: (fn, ...args) => ipcRenderer.invoke('db', fn, args),
   pdf: (html, name) => ipcRenderer.invoke('pdf', html, name),
+  steuerpaket: (objektId, jahr, html) => ipcRenderer.invoke('steuerpaket', objektId, jahr, html),
   pdfAblegen: (html, name, meta) => ipcRenderer.invoke('pdfAblegen', html, name, meta),
   speichern: (inhalt, name, filter) => ipcRenderer.invoke('speichern', inhalt, name, filter),
   oeffnen: (filter) => ipcRenderer.invoke('oeffnen', filter),
@@ -32,4 +33,6 @@ contextBridge.exposeInMainWorld('hv', {
   mailTesten: () => ipcRenderer.invoke('mailTesten'),
   mailAbrufen: () => ipcRenderer.invoke('mailAbrufen'),
   claudeVerbinden: () => ipcRenderer.invoke('claudeVerbinden'),
+  // Native context menu: entries { id, label, enabled } or '-'; resolves with the chosen id or null.
+  kontextmenue: (eintraege) => ipcRenderer.invoke('kontextmenue', eintraege),
 });

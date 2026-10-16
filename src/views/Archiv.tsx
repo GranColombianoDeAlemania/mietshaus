@@ -1,14 +1,54 @@
 // Document inbox, archive with full-text search and the invoice overview.
 import { useEffect, useState } from 'react';
-import { betrag, call, datum, diesesJahr, euro, fehler, heute, parseCent, personName, type Row } from '../api';
+import { betrag, call, datum, diesesJahr, euro, fehler, heute, parseCent, personName, zahl, type Row } from '../api';
 import { useLoad } from '../useLoad';
-import { KontoSelect } from '../ui';
+import { KontoSelect, Leer } from '../ui';
+import { L } from '../navi';
 import { painUeberweisung } from '../bankformate';
 
 const istBild = (datei: string) => /\.(png|jpe?g|gif|webp|bmp|tiff?)$/i.test(datei);
 export const dokUrl = (datei: string) => `hvdok://dokument/${encodeURIComponent(datei)}`;
 
-export function Vorschau(props: { datei: string }) {
+// Readable view of an e-invoice (XRechnung has no visual layout of its own).
+export function ERechnungAnsicht(props: { e: Row }) {
+  const e = props.e;
+  const partei = (p: Row | null, titel: string) => p && (
+    <div><div className="eyebrow">{titel}</div><b>{p.name}</b><div className="klein">{[p.strasse, [p.plz, p.ort].filter(Boolean).join(' ')].filter(Boolean).join(', ')}</div>
+      {(p.ust_id || p.steuernr) && <div className="klein hinweis">{p.ust_id ? `USt-IdNr. ${p.ust_id}` : `St.-Nr. ${p.steuernr}`}</div>}</div>
+  );
+  return (
+    <div className="erechnung">
+      <div className="kopf"><h2>{e.gutschrift ? 'Gutschrift' : 'Rechnung'} {e.nummer}</h2><span className="chip akzent">E-Rechnung {e.syntax}</span></div>
+      <div className="parteien">{partei(e.verkaeufer, 'Rechnungssteller')}{partei(e.kaeufer, 'Rechnungsempfänger')}</div>
+      <div className="fakten">
+        <div className="fakt"><span>Rechnungsdatum</span><b>{datum(e.datum)}</b></div>
+        {e.faellig && <div className="fakt"><span>Fällig am</span><b>{datum(e.faellig)}</b></div>}
+        {(e.leistung_von || e.lieferdatum) && <div className="fakt"><span>Leistung</span><b>{e.leistung_von ? `${datum(e.leistung_von)} – ${datum(e.leistung_bis)}` : datum(e.lieferdatum)}</b></div>}
+        {e.kaeufer_referenz && <div className="fakt"><span>Ihre Referenz</span><b>{e.kaeufer_referenz}</b></div>}
+      </div>
+      <div className="positionen-liste">
+        {(e.zeilen ?? []).map((z: Row, i: number) => {
+          const einheit = z.einheit === 'HUR' ? 'Std.' : z.einheit === 'C62' || z.einheit === 'H87' ? 'Stk.' : z.einheit === 'MON' ? 'Mon.' : z.einheit ?? '';
+          return (
+            <div key={i} className="pos">
+              <div>{z.text}</div>
+              <div className="pos-zahlen"><span>{[[z.menge != null && `${zahl(z.menge)} ${einheit}`.trim(), z.preis_ct != null && `× ${euro(z.preis_ct)}`].filter(Boolean).join(' '), z.satz != null && `${zahl(z.satz)} % USt`].filter(Boolean).join(' · ')}</span><b>{euro(z.netto_ct)}</b></div>
+            </div>
+          );
+        })}
+        <div className="summe"><span>Netto</span><b>{euro(e.netto_ct)}</b></div>
+        {(e.steuer ?? []).map((t: Row, i: number) => <div key={i} className="summe"><span>Umsatzsteuer {zahl(t.satz)} % auf {euro(t.basis_ct)}</span><b>{euro(t.steuer_ct)}</b></div>)}
+        <div className="summe gesamt"><span>Zu zahlen</span><b>{euro(e.zahlbetrag_ct)}</b></div>
+      </div>
+      {(e.iban || e.verwendungszweck || e.zahlungsbedingung) && <p className="klein">{[e.iban && `IBAN ${e.iban}`, e.verwendungszweck && `Verwendungszweck ${e.verwendungszweck}`, e.zahlungsbedingung].filter(Boolean).join(' · ')}</p>}
+    </div>
+  );
+}
+
+export function Vorschau(props: { datei: string; id?: number }) {
+  const xml = /\.xml$/i.test(props.datei);
+  const [d] = useLoad<Row | null>(() => (xml && props.id ? call('dokument', props.id) : Promise.resolve(null)), [props.id, xml]);
+  if (xml && d?.erechnung) return <div className="vorschau"><ERechnungAnsicht e={JSON.parse(d.erechnung)} /></div>;
   if (istBild(props.datei)) return <div className="vorschau"><img src={dokUrl(props.datei)} /></div>;
   if (/\.pdf$/i.test(props.datei)) return <iframe className="vorschau" src={dokUrl(props.datei)} />;
   return <div className="vorschau leer"><p>Keine Vorschau für diesen Dateityp.</p><button onClick={() => window.hv.dokumentOeffnen(props.datei)}>Mit Standardprogramm öffnen</button></div>;
@@ -89,10 +129,20 @@ function DokumentFormular(props: { id: number; onFertig: () => void; postfach?: 
         <label className="breit">IBAN<input value={f.iban ?? ''} onChange={(e) => set('iban', e.target.value)} /></label>
         <label className="breit">Zusammenfassung / Notiz<textarea rows={2} value={f.zusammenfassung ?? f.notiz ?? ''} onChange={(e) => set('zusammenfassung', e.target.value)} /></label>
       </div>
+      {d.erechnung && <p className="hinweisbox klein">E-Rechnung erkannt: Betrag, Netto/Umsatzsteuer, Rechnungsnummer, Fälligkeit und IBAN wurden exakt aus den Rechnungsdaten übernommen.</p>}
       <p className="klein hinweis">
         {d.analyse !== 'fertig' ? analyseText(d.analyse) : `${d.seiten ?? '?'} Seite(n)${d.ocr ? ', Text per Texterkennung gelesen' : ''} · ${d.name}`}
         {d.buchung_id && <> · <b>gebucht</b></>}
       </p>
+      {(d.objekt_id || d.einheit_id || d.person_id || d.buchung_id) && (
+        <p className="chips">
+          <span className="klein hinweis">Gehört zu:</span>
+          {d.objekt_id && <span className="chip"><L zu={{ objekt: d.objekt_id }}>{d.objekt}</L></span>}
+          {d.einheit_id && <span className="chip"><L zu={{ einheit: d.einheit_id }}>{d.einheit}</L></span>}
+          {d.person_id && <span className="chip"><L zu={{ person: d.person_id }}>{d.person}</L></span>}
+          {d.buchung_id && d.buchung_konto_id && <span className="chip"><L zu={{ konto: d.buchung_konto_id }}>Buchung vom {datum(d.buchung_datum)}</L></span>}
+        </p>
+      )}
       {buchen && f.objekt_id && <Belegbuchung dok={{ ...d, ...f, betrag_ct: parseCent(f.betrag) }} onFertig={async (bid) => { await call('dokumentSpeichern', { id: d.id, buchung_id: bid }); setBuchen(false); await speichern('abgelegt'); ladeD(); }} onAbbruch={() => setBuchen(false)} />}
       <div className="buttons">
         <button className="danger" onClick={async () => { if (confirm('Dokument und Datei löschen?')) { await window.hv.dokumentLoeschen(d.id); props.onFertig(); } }}>Löschen</button>
@@ -119,9 +169,20 @@ function Belegbuchung(props: { dok: Row; onFertig: (buchungId: number) => void; 
   useEffect(() => { if (vorschlag) setKosten(vorschlag); }, [vorschlag]);
   useEffect(() => { if (konten && !geld) setGeld(konten.find((k) => k.klasse === 'geld')?.id ?? ''); }, [konten]);
   const gutschrift = d.typ === 'Gutschrift';
+  const [objekt] = useLoad<Row>(() => call('get', 'objekte', d.objekt_id), [d.objekt_id]);
+  // With a VAT-able letting in the house the input tax goes to its own account (exact from an e-invoice, else 19 % assumed off).
+  const vst = konten?.find((k) => k.klasse === 'steuer' && k.kategorie === 'vorsteuer19');
+  const [mitVst, setMitVst] = useState(!!d.ust_ct);
+  const quote = objekt?.vorsteuer_quote ?? 100;
+  const ustBetrag = d.ust_ct ?? Math.round(d.betrag_ct * 19 / 119);
+  const abziehbar = vst && mitVst ? Math.round(ustBetrag * quote / 100) : 0;
   return (
     <div className="panel">
       <h3>{gutschrift ? 'Gutschrift' : 'Rechnung'} buchen: {euro(d.betrag_ct)}</h3>
+      {vst && (
+        <label className="check"><input type="checkbox" checked={mitVst} onChange={(e) => setMitVst(e.target.checked)} />
+          Vorsteuer abziehen: {euro(abziehbar)}{quote < 100 ? ` (${quote} % von ${euro(ustBetrag)})` : ''}{d.ust_ct ? ' – aus der E-Rechnung' : ' – 19 % angenommen'}</label>
+      )}
       <div className="maske">
         <label className="breit">Kostenart<KontoSelect konten={konten ?? []} klassen={['kosten', 'ruecklage', 'einnahme']} value={kosten} onChange={setKosten} /></label>
         <label>{gutschrift ? 'Eingang auf' : 'Bezahlt von'}<KontoSelect konten={konten ?? []} klassen={['geld']} value={geld} onChange={setGeld} /></label>
@@ -132,8 +193,9 @@ function Belegbuchung(props: { dok: Row; onFertig: (buchungId: number) => void; 
         <button onClick={props.onAbbruch}>Abbrechen</button>
         <button className="primary" disabled={!kosten || !geld} onClick={async () => {
           try {
+            const pos = [{ konto: kosten, ct: d.betrag_ct - abziehbar }, ...(abziehbar ? [{ konto: vst!.id, ct: abziehbar }] : [])];
             const id = await call('buchen', { objekt_id: d.objekt_id, datum: datumB, beleg: d.rechnungsnr, text: [d.absender, d.titel].filter(Boolean).join(' – ').slice(0, 120),
-              positionen: [gutschrift ? { soll_id: geld, haben_id: kosten, betrag_ct: d.betrag_ct } : { soll_id: kosten, haben_id: geld, betrag_ct: d.betrag_ct }] });
+              positionen: pos.map((p) => (gutschrift ? { soll_id: geld, haben_id: p.konto, betrag_ct: p.ct } : { soll_id: p.konto, haben_id: geld, betrag_ct: p.ct })) });
             props.onFertig(id);
           } catch (e) { fehler(e); }
         }}>Buchen</button>
@@ -177,7 +239,9 @@ export function Postfach() {
                 <span className="klein"><b>Alle auswählen</b></span>
               </li>
               {liste?.map((x) => (
-                <li key={x.id} className={x.id === aktiv ? 'aktiv' : ''} onClick={() => setAktiv(x.id)}>
+                <li key={x.id} className={x.id === aktiv ? 'aktiv' : ''} onClick={() => setAktiv(x.id)} draggable
+                  onDragStart={(e) => { e.dataTransfer.setData('application/x-hv-dokument', String(x.id)); e.dataTransfer.effectAllowed = 'link'; }}
+                  title="Zum Zuordnen auf eine Person, Einheit oder Buchung ziehen">
                   <input type="checkbox" checked={!!auswahl[x.id]} onClick={(e) => e.stopPropagation()} onChange={(e) => setAuswahl({ ...auswahl, [x.id]: e.target.checked })} />
                   <div className="inhalt">
                     <b>{x.titel}</b>
@@ -188,7 +252,7 @@ export function Postfach() {
                 </li>
               ))}
             </ul>
-            {d && <Vorschau key={d.id} datei={d.datei} />}
+            {d && <Vorschau key={d.id} datei={d.datei} id={d.id} />}
             {d && <DokumentFormular key={d.id + d.analyse} id={d.id} postfach onFertig={reload} />}
           </div>
         </>
@@ -261,18 +325,28 @@ export function Archiv(props: { objekt?: Row }) {
         <thead><tr><th>Datum</th><th>Titel</th><th>Typ</th><th>Objekt / Person</th><th className="num">Betrag</th><th /></tr></thead>
         <tbody>
           {liste?.map((d) => (
-            <tr key={d.id} onDoubleClick={() => setOffen(d)} className={d.status === 'postfach' ? 'inaktiv' : ''}>
+            <tr key={d.id} onClick={() => setOffen(d)} className={`klickbar${d.status === 'postfach' ? ' inaktiv' : ''}`} data-ziel={`dokument:${d.id}`} draggable
+              onDragStart={(e) => { e.dataTransfer.setData('application/x-hv-dokument', String(d.id)); e.dataTransfer.effectAllowed = 'link'; }}>
               <td>{datum(d.datum ?? d.erfasst)}</td>
               <td><b>{d.titel}</b>{d.status === 'postfach' && <span className="tag">Postfach</span>}{d.buchung_id && <span className="tag art-weg">gebucht</span>}
                 {d.treffer && <div className="klein treffer" dangerouslySetInnerHTML={{ __html: escHtml(d.treffer).replace(/\[/g, '<mark>').replace(/\]/g, '</mark>') }} />}</td>
               <td>{d.typ}</td>
-              <td className="klein">{[d.objekt, d.einheit, d.person, d.absender].filter(Boolean).join(' · ')}</td>
+              <td className="klein">
+                {d.objekt_id && <L zu={{ objekt: d.objekt_id }}>{d.objekt}</L>}
+                {d.einheit_id && <> · <L zu={{ einheit: d.einheit_id }}>{d.einheit}</L></>}
+                {d.person_id && <> · <L zu={{ person: d.person_id }}>{d.person}</L></>}
+                {d.absender && <span className="hinweis">{d.objekt_id || d.einheit_id || d.person_id ? ' · ' : ''}{d.absender}</span>}
+              </td>
               <td className="num">{d.betrag_ct != null ? euro(d.betrag_ct) : ''}</td>
-              <td className="aktionen"><button onClick={() => setOffen(d)}>Ansehen</button></td>
+              <td />
             </tr>
           ))}
         </tbody>
       </table>
+      {liste?.length === 0 && (
+        <Leer text={q || typ || jahr ? 'Nichts gefunden. Anderen Suchbegriff versuchen oder die Filter lockern.'
+          : 'Noch keine Dokumente abgelegt. Dateien einfach ins Fenster ziehen – auf eine Person, eine Einheit oder eine Buchung gezogen, landen sie gleich dort.'} />
+      )}
       {offen && <DokumentDialog id={offen.id} datei={offen.datei} onClose={() => { setOffen(null); reload(); }} />}
     </section>
   );
@@ -280,12 +354,14 @@ export function Archiv(props: { objekt?: Row }) {
 
 const escHtml = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 
-export function DokumentDialog(props: { id: number; datei: string; onClose: () => void }) {
+export function DokumentDialog(props: { id: number; datei?: string; onClose: () => void }) {
+  // Links only know the id; the stored file name is looked up then.
+  const [d] = useLoad<Row>(() => (props.datei ? Promise.resolve({ datei: props.datei }) : call('dokument', props.id)), [props.id, props.datei]);
   return (
     <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && props.onClose()}>
       <div className="dialog sehrbreit">
         <div className="postfach-raster zwei">
-          <Vorschau datei={props.datei} />
+          {d?.datei ? <Vorschau datei={d.datei} id={props.id} /> : <div className="vorschau leer">Dokument nicht gefunden.</div>}
           <div>
             <div className="toolbar"><span className="spacer" /><button onClick={props.onClose}>Schließen</button></div>
             <DokumentFormular id={props.id} onFertig={props.onClose} />
@@ -337,10 +413,10 @@ export function Rechnungen(props: { objekt?: Row }) {
               <tr key={r.id} onDoubleClick={() => setOffen(r)}>
                 <td>{!r.buchung_id && <input type="checkbox" checked={!!auswahl[r.id]} onChange={(e) => setAuswahl({ ...auswahl, [r.id]: e.target.checked })} />}</td>
                 <td>{datum(r.datum)}</td><td>{r.absender}</td>
-                <td>{r.titel}{r.duplikat_von && <span className="tag fehlertext" title="Gleiche Rechnungsnummer, gleicher Betrag und Absender wie ein anderes Dokument">Duplikat?</span>}<div className="klein">{r.rechnungsnr}</div></td><td>{r.objekt}</td>
+                <td>{r.titel}{r.duplikat_von && <span className="tag fehlertext" title="Gleiche Rechnungsnummer, gleicher Betrag und Absender wie ein anderes Dokument">Duplikat?</span>}<div className="klein">{r.rechnungsnr}</div></td><td>{r.objekt_id ? <L zu={{ objekt: r.objekt_id }}>{r.objekt}</L> : ''}</td>
                 <td className={s === 'überfällig' ? 'fehlertext' : ''}>{datum(r.faellig)}</td>
                 <td className="num">{betrag(r.betrag_ct)}</td>
-                <td><span className={`tag ${s === 'überfällig' ? 'fehlertext' : s === 'offen' ? '' : 'art-weg'}`}>{s}</span>{r.konto && <div className="klein">{r.konto}</div>}</td>
+                <td><span className={`tag ${s === 'überfällig' ? 'fehlertext' : s === 'offen' ? '' : 'art-weg'}`}>{s}</span>{r.konto && <div className="klein"><L zu={{ konto: r.konto_id }}>{r.konto}</L></div>}</td>
                 <td className="aktionen"><button onClick={() => setOffen(r)}>Öffnen</button></td>
               </tr>
             );

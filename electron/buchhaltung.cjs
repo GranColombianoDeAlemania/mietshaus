@@ -1,4 +1,5 @@
 // Bookkeeping: chart of accounts, postings, charges (Sollstellung), open items, dunning, meters and bank import.
+const kalender = require('./kalender.cjs');
 // Double entry: every posting moves betrag_ct from the credit account (haben) to the debit account (soll).
 // Balance of an account = sum of debits − sum of credits.
 
@@ -36,7 +37,11 @@ const STANDARDKONTEN = [
   [41200, 'Schornsteinreinigung', 'kosten', 'bk12', 'beide', { umlagefaehig: 1, p35a: 'handwerker' }],
   [41300, 'Sach- und Haftpflichtversicherung', 'kosten', 'bk13', 'beide', { umlagefaehig: 1 }],
   [41400, 'Hauswart', 'kosten', 'bk14', 'beide', { umlagefaehig: 1, p35a: 'dienstleistung' }],
-  [41500, 'Kabel / Antenne', 'kosten', 'bk15', 'beide', { umlagefaehig: 1, schluessel: 'einheiten' }],
+  // § 2 Nr. 15 BetrKV since 1 July 2024: only power and maintenance of the aerial / distribution system remain chargeable;
+  // cable TV fees are not. A fibre provision fee (§ 72 TKG) is chargeable within its limits.
+  [41500, 'Antenne/Breitband: Betriebsstrom & Wartung', 'kosten', 'bk15', 'beide', { umlagefaehig: 1, schluessel: 'einheiten' }],
+  [41510, 'Kabel-TV-Gebühren (seit 1.7.2024 nicht umlagefähig)', 'kosten', 'kabel_tv', 'beide', { seit: 2 }],
+  [41520, 'Glasfaser-Bereitstellungsentgelt (§ 72 TKG)', 'kosten', 'bk15c', 'beide', { umlagefaehig: 1, schluessel: 'einheiten', seit: 2 }],
   [41600, 'Sonstige Betriebskosten', 'kosten', 'bk17', 'beide', { umlagefaehig: 1 }],
   [45000, 'Verwaltervergütung', 'kosten', 'verwaltung', 'beide', { schluessel: 'einheiten' }],
   [45100, 'Instandhaltung / Reparaturen', 'kosten', 'instandhaltung', 'beide', { p35a: 'handwerker' }],
@@ -44,6 +49,17 @@ const STANDARDKONTEN = [
   [45300, 'Sonstige nicht umlagefähige Kosten', 'kosten', 'sonstige', 'beide'],
   [45400, 'Instandhaltung aus Rücklage', 'kosten', 'instandhaltung', 'weg', { aus_ruecklage: 1, p35a: 'handwerker' }],
 ];
+
+// VAT accounts, created once an object has a commercial letting with VAT.
+const USTKONTEN = [
+  [1576, 'Vorsteuer 19 %', 'steuer', 'vorsteuer19'],
+  [1571, 'Vorsteuer 7 %', 'steuer', 'vorsteuer7'],
+  [1776, 'Umsatzsteuer 19 %', 'steuer', 'ust19'],
+  [1771, 'Umsatzsteuer 7 %', 'steuer', 'ust7'],
+  [1780, 'Umsatzsteuer: Zahlungen an / Erstattungen vom Finanzamt', 'steuer', 'ust_fa'],
+];
+// Version of the standard chart; objects created earlier get the accounts added later (marker 'k2' in kontenplan).
+const KONTENPLAN_VERSION = 2;
 
 // Contract amounts and the income account category each one is charged to.
 const POSTEN = {
@@ -71,25 +87,37 @@ const tageZwischen = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 8640
 
 module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_NAME }) {
   const vertragTabelle = (typ) => (typ === 'weg' ? 'eigentum' : 'mietverhaeltnisse');
+  // State for public holidays (affects working-day due dates); empty = nationwide holidays only.
+  const land = () => get(`SELECT wert FROM einstellungen WHERE schluessel = 'bundesland'`)?.wert || null;
 
   // Creates missing standard accounts and one account per contract; keeps contract account names current.
   function syncKonten() {
     for (const o of all('SELECT id, art, kontenplan FROM objekte')) {
+      const plan = o.kontenplan.split(',').filter(Boolean);
       const seiten = o.art === 'gemischt' ? ['miete', 'weg'] : [o.art];
-      const fehlend = seiten.filter((s) => !o.kontenplan.split(',').includes(s));
-      if (!fehlend.length) continue;
-      const keys = Object.fromEntries(all('SELECT typ, id FROM umlageschluessel WHERE objekt_id = ? ORDER BY id DESC', o.id).map((k) => [k.typ, k.id]));
-      const ins = db.prepare(`INSERT OR IGNORE INTO konten (objekt_id, nr, bezeichnung, klasse, kategorie, umlagefaehig,
-        heizkosten, schluessel_id, weg_schluessel_id, aus_ruecklage, p35a) VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
-      for (const [nr, bez, klasse, kat, side, x = {}] of STANDARDKONTEN) {
-        if (side !== 'beide' && !fehlend.includes(side)) continue;
-        const sKey = keys[x.schluessel] ?? keys.flaeche ?? null;
-        const wKey = x.schluessel === 'einheiten' ? keys.einheiten : keys.mea ?? keys.flaeche ?? null;
-        ins.run(o.id, nr, bez, klasse, kat, x.umlagefaehig ?? 0, x.heizkosten ?? 0,
-          klasse === 'kosten' ? sKey : null, klasse === 'kosten' ? wKey : null, x.aus_ruecklage ?? 0, x.p35a ?? null);
+      const fehlend = seiten.filter((s) => !plan.includes(s));
+      // Accounts added to the standard chart later reach objects whose chart is older.
+      const nachtrag = plan.length > 0 && !plan.includes(`k${KONTENPLAN_VERSION}`);
+      if (fehlend.length || nachtrag) {
+        const keys = Object.fromEntries(all('SELECT typ, id FROM umlageschluessel WHERE objekt_id = ? ORDER BY id DESC', o.id).map((k) => [k.typ, k.id]));
+        const ins = db.prepare(`INSERT OR IGNORE INTO konten (objekt_id, nr, bezeichnung, klasse, kategorie, umlagefaehig,
+          heizkosten, schluessel_id, weg_schluessel_id, aus_ruecklage, p35a) VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
+        for (const [nr, bez, klasse, kat, side, x = {}] of STANDARDKONTEN) {
+          const neuSeite = fehlend.includes(side) || (side === 'beide' && fehlend.length === seiten.length);
+          const neuVersion = nachtrag && (x.seit ?? 1) > 1 && (side === 'beide' || plan.includes(side));
+          if (!neuSeite && !neuVersion) continue;
+          const sKey = keys[x.schluessel] ?? keys.flaeche ?? null;
+          const wKey = (x.schluessel === 'einheiten' ? keys.einheiten : null) ?? keys.mea ?? keys.flaeche ?? null;
+          ins.run(o.id, nr, bez, klasse, kat, x.umlagefaehig ?? 0, x.heizkosten ?? 0,
+            klasse === 'kosten' ? sKey : null, klasse === 'kosten' ? wKey : null, x.aus_ruecklage ?? 0, x.p35a ?? null);
+        }
+        if (nachtrag) db.prepare(`UPDATE konten SET bezeichnung = 'Antenne/Breitband: Betriebsstrom & Wartung'
+          WHERE objekt_id = ? AND nr = 41500 AND bezeichnung = 'Kabel / Antenne'`).run(o.id);
+        const neu = [...new Set([...plan.filter((x) => !/^k\d+$/.test(x)), ...fehlend, `k${KONTENPLAN_VERSION}`])].join(',');
+        db.prepare('UPDATE objekte SET kontenplan = ? WHERE id = ?').run(neu, o.id);
       }
-      const neu = [...new Set([...o.kontenplan.split(',').filter(Boolean), ...fehlend])].join(',');
-      db.prepare('UPDATE objekte SET kontenplan = ? WHERE id = ?').run(neu, o.id);
+      // Objects with a VAT-able letting get the VAT accounts.
+      if (get(`SELECT 1 FROM mietverhaeltnisse m JOIN einheiten e ON e.id = m.einheit_id WHERE e.objekt_id = ? AND m.ust_satz > 0`, o.id)) ustKontenAnlegen(o.id);
     }
 
     for (const typ of ['miete', 'weg']) {
@@ -112,6 +140,13 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
       // Accounts of deleted contracts disappear unless they still carry postings.
       db.prepare(`DELETE FROM konten WHERE vertrag_typ = ? AND vertrag_id NOT IN (SELECT id FROM ${vertragTabelle(typ)})
         AND NOT EXISTS (SELECT 1 FROM buchungen b WHERE b.soll_id = konten.id OR b.haben_id = konten.id)`).run(typ);
+    }
+  }
+
+  function ustKontenAnlegen(objektId) {
+    const ins = db.prepare(`INSERT OR IGNORE INTO konten (objekt_id, nr, bezeichnung, klasse, kategorie) VALUES (?, ?, ?, ?, ?)`);
+    for (const [nr, bez, klasse, kat] of USTKONTEN) {
+      if (!get('SELECT 1 FROM konten WHERE objekt_id = ? AND klasse = ? AND kategorie = ?', objektId, klasse, kat)) ins.run(objektId, nr, bez, klasse, kat);
     }
   }
 
@@ -168,6 +203,9 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
   }
 
   const BUCHUNG_SQL = `SELECT b.*, s.nr AS soll_nr, s.bezeichnung AS soll_bez, h.nr AS haben_nr, h.bezeichnung AS haben_bez,
+      s.klasse AS soll_klasse, h.klasse AS haben_klasse, s.vertrag_typ AS soll_vtyp, s.vertrag_id AS soll_vid, h.vertrag_typ AS haben_vtyp, h.vertrag_id AS haben_vid,
+      (SELECT d.id FROM dokumente d WHERE d.buchung_id IN (b.id, coalesce(b.gruppe, -1)) ORDER BY d.id LIMIT 1) AS dok_id,
+      (SELECT d.datei FROM dokumente d WHERE d.buchung_id IN (b.id, coalesce(b.gruppe, -1)) ORDER BY d.id LIMIT 1) AS dok_datei,
       EXISTS (SELECT 1 FROM buchungen x WHERE x.storno_von = b.id) AS storniert,
       b.datum <= coalesce((SELECT wert FROM einstellungen WHERE schluessel = 'festgeschrieben_bis'), '0000-00-00') AS festgeschrieben
     FROM buchungen b JOIN konten s ON s.id = b.soll_id JOIN konten h ON h.id = b.haben_id`;
@@ -212,6 +250,60 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
     return { offen, guthaben_ct: guthaben, summe_ct: offen.reduce((s, o) => s + o.offen_ct, 0) - guthaben };
   }
 
+  // Which part of a month a contract is charged for. The month of moving in or out is charged by day unless the
+  // contract says "full month" (or, moving in, "from the next month"). The first month is never due before the start.
+  function teilmonat(v, monat) {
+    const tage = tageImMonat(monat);
+    const erster = `${monat}-01`, letzter = `${monat}-${pad(tage)}`;
+    if (v.beginn > letzter || (v.ende && v.ende < erster)) return null;
+    const beginntHier = v.beginn > erster;
+    const endetHier = !!v.ende && v.ende < letzter;
+    if (beginntHier && v.teilmonat_beginn === 'folgemonat') return null;
+    const ab = beginntHier && v.teilmonat_beginn !== 'voll' ? v.beginn : erster;
+    const bis = endetHier && v.teilmonat_ende !== 'voll' ? v.ende : letzter;
+    const tageAnteil = tageZwischen(ab, bis) + 1;
+    // Due day 0 means the statutory rule: the 3rd working day of the month (§ 556b BGB, Saturdays not counted).
+    let datum = v.faelligkeitstag === 0 ? kalender.mieteFaellig(monat, land()) : `${monat}-${pad(Math.min(v.faelligkeitstag || 1, tage))}`;
+    if (beginntHier && datum < v.beginn) datum = v.beginn;
+    return { anteil: tageAnteil / tage, tage: tageAnteil, tage_monat: tage, datum, stichtag: beginntHier ? v.beginn : erster };
+  }
+
+  function sollZeile({ monat, datum, konto, ertrag, v, typ, posten, betrag_ct, t }) {
+    const vorhanden = get(`SELECT id FROM buchungen WHERE art = 'soll' AND soll_id = ? AND haben_id = ? AND monat = ?`, konto.id, ertrag.id, monat);
+    return { monat, datum, konto_id: konto.id, name: v.name, einheit: v.einheit, typ, vertrag_id: v.id, einheit_id: v.einheit_id, person_id: v.person_id,
+      posten, betrag_ct, ertrag_id: ertrag.id, vorhanden: !!vorhanden, anteilig: t.anteil < 1, tage: t.tage, tage_monat: t.tage_monat };
+  }
+
+  // Schedule and progress of an instalment plan on a date.
+  function ratenplanStand(id, stichtag) {
+    const p = get('SELECT * FROM ratenplaene WHERE id = ?', id);
+    if (!p) return null;
+    const raten = [];
+    let rest = p.betrag_ct;
+    for (let i = 0; rest > 0 && i < 240; i++) {
+      const d = new Date(p.erste_rate + 'T00:00:00Z');
+      const tag = d.getUTCDate();
+      const f = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + i, 1));
+      const letzter = new Date(Date.UTC(f.getUTCFullYear(), f.getUTCMonth() + 1, 0)).getUTCDate();
+      f.setUTCDate(Math.min(tag, letzter));
+      const betrag = Math.min(p.rate_ct, rest);
+      raten.push({ nr: i + 1, faellig: f.toISOString().slice(0, 10), betrag_ct: betrag });
+      rest -= betrag;
+    }
+    const op = offenePostenKonto(p.konto_id, stichtag);
+    const offenAlt = op.offen.filter((o) => o.datum <= p.datum).reduce((s, o) => s + o.offen_ct, 0);
+    const getilgt = Math.max(0, p.betrag_ct - offenAlt);
+    const soll = raten.filter((r) => r.faellig <= stichtag).reduce((s, r) => s + r.betrag_ct, 0);
+    const neu = op.offen.filter((o) => o.datum > p.datum && o.verzug >= 1).reduce((s, o) => s + o.offen_ct, 0);
+    let bezahlt = getilgt;
+    for (const r of raten) { r.bezahlt_ct = Math.min(r.betrag_ct, bezahlt); bezahlt -= r.bezahlt_ct; r.offen = r.faellig <= stichtag && r.bezahlt_ct < r.betrag_ct; }
+    return {
+      plan: p, raten, getilgt_ct: getilgt, rest_ct: p.betrag_ct - getilgt, soll_bis_heute_ct: soll,
+      verzug_ct: Math.max(0, soll - getilgt), neue_rueckstaende_ct: neu,
+      erfuellt: getilgt >= p.betrag_ct, naechste: raten.find((r) => r.bezahlt_ct < r.betrag_ct) ?? null,
+    };
+  }
+
   function verbrauch(zaehlerId, von, bis) {
     const z = get('SELECT * FROM zaehler WHERE id = ?', zaehlerId);
     const st = all('SELECT datum, stand FROM zaehlerstaende WHERE zaehler_id = ? ORDER BY datum', zaehlerId);
@@ -235,6 +327,8 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
 
   return {
     syncKonten,
+    ustKontenAnlegen,
+    teilmonat,
     kontoVon,
     buchenIntern: (b) => buchen(b, true),
     saldoBis: (kontoId, bis) => saldo(kontoId, bis),
@@ -294,7 +388,7 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
         const soll = b.soll_id === kontoId ? b.betrag_ct : 0;
         const haben = b.haben_id === kontoId ? b.betrag_ct : 0;
         lauf += soll - haben;
-        return { ...b, soll_ct: soll, haben_ct: haben, saldo_ct: lauf,
+        return { ...b, soll_ct: soll, haben_ct: haben, saldo_ct: lauf, gegen_id: b.soll_id === kontoId ? b.haben_id : b.soll_id,
           gegen: b.soll_id === kontoId ? `${b.haben_nr} ${b.haben_bez}` : `${b.soll_nr} ${b.soll_bez}` };
       });
       return { konto: get('SELECT * FROM konten WHERE id = ?', kontoId), anfang_ct: anfang, zeilen, ende_ct: lauf };
@@ -319,23 +413,24 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
           const konto = kontoVon(typ, v.id);
           if (!konto) continue;
           for (const monat of monatsliste(vonMonat, bisMonat)) {
-            const erster = `${monat}-01`, letzter = `${monat}-${pad(tageImMonat(monat))}`;
-            if (v.beginn > letzter || (v.ende && v.ende < erster)) continue;
-            // Partial months are charged pro rata by day.
-            const ab = v.beginn > erster ? v.beginn : erster;
-            const bis = v.ende && v.ende < letzter ? v.ende : letzter;
-            const anteil = (tageZwischen(ab, bis) + 1) / tageImMonat(monat);
-            const b = betraege(typ, v.id, ab);
-            const datum = `${monat}-${pad(Math.min(v.faelligkeitstag || 1, tageImMonat(monat)))}`;
+            const t = teilmonat(v, monat);
+            if (!t) continue;
+            const b = betraege(typ, v.id, t.stichtag);
+            let netto = 0;
             for (const [feld, kat, label] of POSTEN[typ]) {
-              const betrag = Math.round((b[feld] ?? 0) * anteil);
+              const betrag = Math.round((b[feld] ?? 0) * t.anteil);
               if (betrag <= 0) continue;
               const ertrag = kontoKat(objektId, kat);
               if (!ertrag) continue;
-              const vorhanden = get(`SELECT id FROM buchungen WHERE art = 'soll' AND soll_id = ? AND haben_id = ? AND monat = ?`,
-                konto.id, ertrag.id, monat);
-              zeilen.push({ monat, datum, konto_id: konto.id, name: v.name, einheit: v.einheit, posten: label,
-                betrag_ct: betrag, ertrag_id: ertrag.id, vorhanden: !!vorhanden, anteilig: anteil < 1 });
+              netto += betrag;
+              zeilen.push(sollZeile({ monat, datum: t.datum, konto, ertrag, v, typ, posten: label, betrag_ct: betrag, t }));
+            }
+            // Commercial lettings with VAT: one VAT charge per month on the net total.
+            const satz = typ === 'miete' ? Number(v.ust_satz) || 0 : 0;
+            if (satz > 0 && netto > 0) {
+              const ust = kontoKat(objektId, satz === 7 ? 'ust7' : 'ust19', 'steuer');
+              if (ust) zeilen.push(sollZeile({ monat, datum: t.datum, konto, ertrag: ust, v, typ,
+                posten: `USt ${String(satz).replace('.', ',')} %`, betrag_ct: Math.round(netto * satz / 100), t }));
             }
           }
         }
@@ -349,7 +444,7 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
             VALUES (?, ?, ?, ?, ?, ?, 'soll', ?)`);
           for (const z of zeilen.filter((z) => !z.vorhanden)) {
             const [y, m] = z.monat.split('-');
-            st.run(objektId, z.datum, `${z.posten} ${m}/${y}${z.anteilig ? ' (anteilig)' : ''}`, z.betrag_ct, z.konto_id, z.ertrag_id, z.monat);
+            st.run(objektId, z.datum, `${z.posten} ${m}/${y}${z.anteilig ? ` (anteilig ${z.tage}/${z.tage_monat} Tage)` : ''}`, z.betrag_ct, z.konto_id, z.ertrag_id, z.monat);
           }
         });
       }
@@ -366,6 +461,21 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
         return { konto: k, person: v, ...op };
       }).filter((x) => x.summe_ct !== 0 || x.offen.length);
     },
+
+    // ---------- Instalment agreements ----------
+    // The plan covers the arrears on the day it was agreed. Payments settle the oldest months first, so what is
+    // still open of the months due up to that day is what remains of the plan.
+    ratenplanAnlegen: ({ konto_id, datum, betrag_ct, rate_ct, erste_rate, notiz = null }) => {
+      if (!(rate_ct > 0) || !(betrag_ct > 0)) throw new Error('Bitte Rückstand und Ratenhöhe angeben.');
+      return Number(db.prepare(`INSERT INTO ratenplaene (konto_id, datum, betrag_ct, rate_ct, erste_rate, notiz) VALUES (?, ?, ?, ?, ?, ?)`)
+        .run(konto_id, datum, betrag_ct, rate_ct, erste_rate, notiz).lastInsertRowid);
+    },
+    ratenplanSetzen: (id, felder) => {
+      const erlaubt = ['status', 'notiz', 'dokument_id'];
+      const keys = Object.keys(felder).filter((k) => erlaubt.includes(k));
+      if (keys.length) db.prepare(`UPDATE ratenplaene SET ${keys.map((k) => `${k} = ?`).join(', ')} WHERE id = ?`).run(...keys.map((k) => felder[k]), id);
+    },
+    ratenplanStand: (id, stichtag = new Date().toISOString().slice(0, 10)) => ratenplanStand(id, stichtag),
 
     // Records a reminder; a fee becomes a charge on the contract account.
     mahnen: ({ konto_id, stufe, gebuehr_ct = 0, frist, datum, offen_ct }) => tx(() => {
@@ -397,7 +507,6 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
       for (const [id, stand] of Object.entries(werte)) if (stand != null && stand !== '') st.run(Number(id), datum, Number(stand));
     }),
 
-    // Suggests a counter account for each bank transaction: learned rules first, then the payer's IBAN.
     // Suggests a counter account for each bank transaction: returned debits, open invoices, learned rules, then the payer's IBAN.
     bankVorschlaege: (objektId, umsaetze) => {
       const regeln = all('SELECT * FROM bankregeln WHERE objekt_id = ? ORDER BY length(muster) DESC', objektId);
@@ -501,5 +610,7 @@ function prevDay(iso) {
 }
 
 module.exports.STANDARDKONTEN = STANDARDKONTEN;
+module.exports.USTKONTEN = USTKONTEN;
+module.exports.tageImMonat = tageImMonat;
 module.exports.tageZwischen = tageZwischen;
 module.exports.monatsliste = monatsliste;

@@ -1,7 +1,24 @@
 // Change log: who changed what and when (app or Claude), with the changed fields side by side.
 import { useState } from 'react';
-import { call, type Row } from '../api';
+import { call, euro, type Row } from '../api';
 import { useLoad } from '../useLoad';
+import { L, type Ziel } from '../navi';
+
+// Records that have their own page get a link (deleted ones are not checked; the page then shows nothing).
+const protokollZiel = (r: Row): Ziel | null => {
+  if (r.aktion === 'gelöscht') return null;
+  const id = Number(r.datensatz);
+  switch (r.tabelle) {
+    case 'personen': return { person: id };
+    case 'einheiten': return { einheit: id };
+    case 'mietverhaeltnisse': return { vertrag: id, typ: 'miete' };
+    case 'eigentum': return { vertrag: id, typ: 'weg' };
+    case 'konten': return { konto: id };
+    case 'objekte': return { objekt: id };
+    case 'dokumente': return { dokument: id };
+    default: return null;
+  }
+};
 
 const TABELLEN: Record<string, string> = {
   buchungen: 'Buchungen', konten: 'Konten', personen: 'Personen', mietverhaeltnisse: 'Mietverhältnisse', eigentum: 'Eigentum',
@@ -43,12 +60,12 @@ export function Protokoll() {
           {rows?.map((r) => {
             const d = unterschiede(r.alt ? JSON.parse(r.alt) : null, r.neu ? JSON.parse(r.neu) : null);
             const zusammen = r.aktion === 'geändert' ? d.slice(0, 3).map(([k, a, n]) => `${k}: ${zeige(a)} → ${zeige(n)}`).join(' · ')
-              : (() => { const o = JSON.parse(r.neu ?? r.alt ?? '{}'); return [o.bezeichnung, o.titel, o.text, o.nachname, o.betrag_ct != null ? `${(o.betrag_ct / 100).toFixed(2)} €` : null].filter(Boolean).join(' · '); })();
+              : (() => { const o = JSON.parse(r.neu ?? r.alt ?? '{}'); return [o.bezeichnung, o.titel, o.text, o.nachname, o.betrag_ct != null ? euro(o.betrag_ct) : null].filter(Boolean).join(' · '); })();
             return (
               <tr key={r.id} className="klickbar" onClick={() => setOffen(offen === r.id ? null : r.id)}>
                 <td className="klein" style={{ whiteSpace: 'nowrap' }}>{r.zeit}</td>
                 <td><span className={`tag ${r.quelle === 'claude' ? 'art-weg' : ''}`}>{r.quelle === 'claude' ? 'Claude' : 'Programm'}</span></td>
-                <td>{TABELLEN[r.tabelle] ?? r.tabelle} <span className="klein hinweis">#{r.datensatz}</span></td>
+                <td>{TABELLEN[r.tabelle] ?? r.tabelle} {protokollZiel(r) ? <L zu={protokollZiel(r)}>#{r.datensatz}</L> : <span className="klein hinweis">#{r.datensatz}</span>}</td>
                 <td>{r.aktion}</td>
                 <td className="klein">{offen === r.id
                   ? <table className="positionen"><tbody>{d.map(([k, a, n]) => <tr key={k}><td><b>{k}</b></td><td>{zeige(a)}</td><td>→ {zeige(n)}</td></tr>)}</tbody></table>

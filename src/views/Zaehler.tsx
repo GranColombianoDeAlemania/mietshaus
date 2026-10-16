@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { call, datum, heute, parseZahl, zahl, type Row } from '../api';
 import { FormDialog, type Field } from '../Form';
 import { useLoad } from '../useLoad';
+import { L } from '../navi';
 import { Dialog } from '../ui';
 
 export const ZAEHLER_ARTEN: [string, string][] = [
@@ -34,14 +35,15 @@ export function Zaehler(props: { objekt: Row }) {
   return (
     <section>
       <div className="toolbar">
-        <h1>Zähler – {props.objekt.bezeichnung}</h1>
+        <h1>Zähler</h1>
         <span className="spacer" />
         <button disabled={!rows?.length} onClick={() => setAblesen(true)}>Ablesung erfassen</button>
         <button className="primary" onClick={() => setEdit({ objekt_id: props.objekt.id, art: 'kaltwasser', einheit: 'm³', faktor: 1 })}>Neuer Zähler</button>
       </div>
       <p className="hinweis klein">
         Zählerstände dienen in den Abrechnungen als Verteilschlüssel (Umlageschlüssel vom Typ „Zähler“). Der Verbrauch im
-        Abrechnungszeitraum wird zwischen zwei Ablesungen tagegenau interpoliert. Bei einem Zählertausch: alten Zähler mit
+        Abrechnungszeitraum wird zwischen zwei Ablesungen tagegenau interpoliert. Ein Stand gilt für das Ende seines Tages: Für das
+        Jahr 2025 also die Stände vom 31.12.2024 und 31.12.2025, beim Auszug der Stand vom letzten Miettag. Bei einem Zählertausch: alten Zähler mit
         Ausbaudatum und Endstand, neuen Zähler mit Einbaudatum und Anfangsstand erfassen.
       </p>
       <table>
@@ -50,7 +52,7 @@ export function Zaehler(props: { objekt: Row }) {
           {rows?.map((z) => (
             <tr key={z.id} className={z.ausbau ? 'inaktiv' : ''} onDoubleClick={() => setEdit(z)}>
               <td>{artName(z.art)}</td>
-              <td>{z.einheit_id ? `${z.einheit_nr} – ${z.einheit_bez}` : <b>Hauptzähler</b>}</td>
+              <td>{z.einheit_id ? <L zu={{ einheit: z.einheit_id }}>{z.einheit_nr} – {z.einheit_bez}</L> : <b>Hauptzähler</b>}</td>
               <td>{z.nummer}</td><td>{z.ort}</td>
               <td className="num">{zahl(z.letzter_stand)} {z.einheit}</td>
               <td>{datum(z.letztes_datum)}</td>

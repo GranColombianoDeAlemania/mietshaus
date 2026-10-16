@@ -10,6 +10,7 @@ const auswertung = require('./auswertung.cjs');
 const akten = require('./akten.cjs');
 const darlehen = require('./darlehen.cjs');
 const mieterwechsel = require('./mieterwechsel.cjs');
+const pruefung = require('./pruefung.cjs');
 
 const MIGRATIONS = [
   `
@@ -588,19 +589,104 @@ const MIGRATIONS = [
     erstellt TEXT NOT NULL DEFAULT (date('now'))
   );
   `,
+  `
+  -- How the month of moving in / out is charged: by day, as a full month, or (moving in) from the next month on.
+  ALTER TABLE mietverhaeltnisse ADD COLUMN teilmonat_beginn TEXT NOT NULL DEFAULT 'anteilig';
+  ALTER TABLE mietverhaeltnisse ADD COLUMN teilmonat_ende TEXT NOT NULL DEFAULT 'anteilig';
+  ALTER TABLE eigentum ADD COLUMN teilmonat_beginn TEXT NOT NULL DEFAULT 'anteilig';
+  ALTER TABLE eigentum ADD COLUMN teilmonat_ende TEXT NOT NULL DEFAULT 'anteilig';
+  -- Commercial lettings with the option to charge VAT (§ 9 UStG): rate in percent, amounts stay net.
+  ALTER TABLE mietverhaeltnisse ADD COLUMN ust_satz REAL NOT NULL DEFAULT 0;
+
+  -- Instalment agreements for arrears.
+  CREATE TABLE ratenplaene (
+    id INTEGER PRIMARY KEY,
+    konto_id INTEGER NOT NULL REFERENCES konten(id) ON DELETE CASCADE,
+    datum TEXT NOT NULL,
+    betrag_ct INTEGER NOT NULL,
+    rate_ct INTEGER NOT NULL,
+    erste_rate TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'aktiv',
+    notiz TEXT,
+    dokument_id INTEGER REFERENCES dokumente(id) ON DELETE SET NULL
+  );
+
+  -- Notice of termination, recorded with the tenant change.
+  ALTER TABLE mieterwechsel ADD COLUMN kuendigung_art TEXT;
+  ALTER TABLE mieterwechsel ADD COLUMN kuendigung_zum TEXT;
+  ALTER TABLE mieterwechsel ADD COLUMN dokument_id INTEGER REFERENCES dokumente(id) ON DELETE SET NULL;
+
+  -- Larger maintenance costs spread over 2 to 5 years for income tax (§ 82b EStDV).
+  CREATE TABLE erhaltungsverteilung (
+    id INTEGER PRIMARY KEY,
+    objekt_id INTEGER NOT NULL REFERENCES objekte(id) ON DELETE CASCADE,
+    jahr INTEGER NOT NULL,
+    betrag_ct INTEGER NOT NULL,
+    jahre INTEGER NOT NULL CHECK (jahre BETWEEN 2 AND 5),
+    text TEXT
+  );
+
+  -- Ticked checklist items (first steps, year-end).
+  CREATE TABLE checkliste (
+    liste TEXT NOT NULL,
+    punkt TEXT NOT NULL,
+    erledigt TEXT NOT NULL DEFAULT (date('now')),
+    PRIMARY KEY (liste, punkt)
+  );
+
+  -- E-invoices: the data read from the XML; net amount and VAT for input tax.
+  ALTER TABLE dokumente ADD COLUMN erechnung TEXT;
+  ALTER TABLE dokumente ADD COLUMN netto_ct INTEGER;
+  ALTER TABLE dokumente ADD COLUMN ust_ct INTEGER;
+
+  -- VAT accounts need their own class.
+  CREATE TABLE konten_neu (
+    id INTEGER PRIMARY KEY,
+    objekt_id INTEGER NOT NULL REFERENCES objekte(id) ON DELETE CASCADE,
+    nr INTEGER NOT NULL,
+    bezeichnung TEXT NOT NULL,
+    klasse TEXT NOT NULL CHECK (klasse IN ('geld','kosten','einnahme','ruecklage','person','darlehen','steuer')),
+    kategorie TEXT,
+    umlagefaehig INTEGER NOT NULL DEFAULT 0,
+    heizkosten INTEGER NOT NULL DEFAULT 0,
+    schluessel_id INTEGER REFERENCES umlageschluessel(id) ON DELETE SET NULL,
+    weg_schluessel_id INTEGER REFERENCES umlageschluessel(id) ON DELETE SET NULL,
+    aus_ruecklage INTEGER NOT NULL DEFAULT 0,
+    p35a TEXT,
+    iban TEXT,
+    vertrag_typ TEXT CHECK (vertrag_typ IN ('miete','weg')),
+    vertrag_id INTEGER,
+    inaktiv INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (objekt_id, nr)
+  );
+  INSERT INTO konten_neu SELECT id, objekt_id, nr, bezeichnung, klasse, kategorie, umlagefaehig, heizkosten, schluessel_id, weg_schluessel_id,
+    aus_ruecklage, p35a, iban, vertrag_typ, vertrag_id, inaktiv FROM konten;
+  DROP TABLE konten;
+  ALTER TABLE konten_neu RENAME TO konten;
+  CREATE UNIQUE INDEX konten_vertrag ON konten (vertrag_typ, vertrag_id) WHERE vertrag_id IS NOT NULL;
+  `,
+  `
+  -- Share of input tax that may be deducted (mixed houses: commercial share), in percent.
+  ALTER TABLE objekte ADD COLUMN vorsteuer_quote REAL;
+  `,
+  `
+  -- Cap for rent increases under § 558 BGB in percent: 20, or 15 where a state ordinance applies.
+  ALTER TABLE objekte ADD COLUMN kappungsgrenze INTEGER;
+  `,
 ];
 
 // Columns the renderer may write, per table. Everything else is rejected.
 const TABLES = {
   objekte: ['bezeichnung', 'art', 'strasse', 'plz', 'ort', 'baujahr', 'wj_beginn', 'iban', 'bic', 'bank',
-    'ruecklage_iban', 'sepa_glaeubiger_id', 'hausmeister', 'notiz', 'kaufpreis_ct', 'kaufnebenkosten_ct', 'kaufdatum', 'gebaeudeanteil', 'afa_satz', 'titelbild_id'],
+    'ruecklage_iban', 'sepa_glaeubiger_id', 'hausmeister', 'notiz', 'kaufpreis_ct', 'kaufnebenkosten_ct', 'kaufdatum', 'gebaeudeanteil', 'afa_satz', 'titelbild_id', 'vorsteuer_quote', 'kappungsgrenze'],
   einheiten: ['objekt_id', 'nr', 'bezeichnung', 'art', 'lage', 'wohnflaeche', 'zimmer', 'mea', 'notiz'],
   personen: ['anrede', 'titel', 'vorname', 'nachname', 'firma', 'strasse', 'plz', 'ort', 'land', 'telefon',
     'mobil', 'email', 'iban', 'bic', 'kontoinhaber', 'geburtsdatum', 'notiz'],
   mietverhaeltnisse: ['einheit_id', 'person_id', 'person2_id', 'beginn', 'ende', 'kaltmiete_ct', 'bk_vz_ct',
-    'hk_vz_ct', 'sonstiges_ct', 'kaution_ct', 'personen_anzahl', 'faelligkeitstag', 'lastschrift', 'sepa_mandat', 'notiz'],
+    'hk_vz_ct', 'sonstiges_ct', 'kaution_ct', 'personen_anzahl', 'faelligkeitstag', 'lastschrift', 'sepa_mandat', 'notiz',
+    'teilmonat_beginn', 'teilmonat_ende', 'ust_satz'],
   eigentum: ['einheit_id', 'person_id', 'person2_id', 'beginn', 'ende', 'hausgeld_ct', 'ruecklage_ct',
-    'selbstnutzer', 'faelligkeitstag', 'lastschrift', 'sepa_mandat', 'notiz'],
+    'selbstnutzer', 'faelligkeitstag', 'lastschrift', 'sepa_mandat', 'notiz', 'teilmonat_beginn', 'teilmonat_ende'],
   umlageschluessel: ['objekt_id', 'bezeichnung', 'einheit', 'typ', 'zaehler_art'],
   konten: ['objekt_id', 'nr', 'bezeichnung', 'klasse', 'kategorie', 'umlagefaehig', 'heizkosten', 'schluessel_id',
     'weg_schluessel_id', 'aus_ruecklage', 'p35a', 'iban', 'inaktiv'],
@@ -622,7 +708,8 @@ const TABLES = {
   rollen: ['objekt_id', 'person_id', 'rolle', 'von', 'bis', 'notiz'],
   vorlagen: ['titel', 'kategorie', 'betreff', 'text'],
   dokumente: ['objekt_id', 'person_id', 'einheit_id', 'titel', 'kategorie', 'datum', 'datei', 'name', 'groesse', 'notiz',
-    'status', 'typ', 'betrag_ct', 'absender', 'rechnungsnr', 'iban', 'faellig', 'zusammenfassung', 'buchung_id', 'quelle'],
+    'status', 'typ', 'betrag_ct', 'absender', 'rechnungsnr', 'iban', 'faellig', 'zusammenfassung', 'buchung_id', 'quelle', 'netto_ct', 'ust_ct'],
+  erhaltungsverteilung: ['objekt_id', 'jahr', 'betrag_ct', 'jahre', 'text'],
   vorgaenge: ['objekt_id', 'person_id', 'einheit_id', 'titel', 'kategorie', 'status', 'prioritaet', 'faellig', 'beschreibung', 'projekt_id'],
   vorgangseintraege: ['vorgang_id', 'datum', 'art', 'text'],
   termine: ['objekt_id', 'person_id', 'vorgang_id', 'titel', 'datum', 'uhrzeit', 'dauer_min', 'ort', 'erledigt', 'notiz', 'projekt_id'],
@@ -635,8 +722,10 @@ const TABLES = {
   projektposten: ['projekt_id', 'art', 'datum', 'firma', 'person_id', 'titel', 'betrag_ct', 'status', 'bezahlt_am', 'faellig', 'aufgabe_id', 'dokument_id', 'notiz'],
 };
 
-const PERSON_NAME = `trim(coalesce(p.nachname,'') || coalesce(', ' || p.vorname,'') ||
-  CASE WHEN p.firma IS NOT NULL AND p.firma <> '' THEN ' (' || p.firma || ')' ELSE '' END)`;
+// "Meier, Anna (Firma)"; a company without a contact person is just its name.
+const PERSON_NAME = `CASE WHEN coalesce(p.nachname, '') = '' AND coalesce(p.vorname, '') = '' THEN coalesce(p.firma, '')
+  ELSE trim(coalesce(nullif(p.nachname, ''), '') || coalesce(', ' || nullif(p.vorname, ''), '') ||
+  CASE WHEN p.firma IS NOT NULL AND p.firma <> '' THEN ' (' || p.firma || ')' ELSE '' END) END`;
 
 // A contract is current when it has started and not yet ended.
 const aktuell = (a) => `${a}.beginn <= date('now') AND (${a}.ende IS NULL OR ${a}.ende = '' OR ${a}.ende >= date('now'))`;
@@ -664,8 +753,9 @@ function open(file, quelle = 'app') {
 
 // Tables whose changes are logged, and columns left out of the log (large or derived).
 const PROTOKOLLIERT = ['interessenten', 'uebergaben', 'objekte', 'einheiten', 'personen', 'mietverhaeltnisse', 'eigentum', 'konten', 'buchungen', 'anpassungen',
-  'kautionen', 'kautionsbewegungen', 'dokumente', 'darlehen', 'beschluesse', 'projekte', 'projektposten', 'zaehlerstaende', 'mahnungen', 'abrechnungen'];
-const NICHT_PROTOKOLLIEREN = new Set(['text', 'daten', 'erfasst', 'unterschrift_mieter', 'unterschrift_vermieter']);
+  'kautionen', 'kautionsbewegungen', 'dokumente', 'darlehen', 'beschluesse', 'projekte', 'projektposten', 'zaehlerstaende', 'mahnungen', 'abrechnungen',
+  'ratenplaene', 'erhaltungsverteilung'];
+const NICHT_PROTOKOLLIEREN = new Set(['text', 'daten', 'erfasst', 'unterschrift_mieter', 'unterschrift_vermieter', 'erechnung']);
 
 // Temporary triggers belong to this connection only, so each process records its own source (app or Claude).
 function protokollAktivieren(db, quelle) {
@@ -793,8 +883,12 @@ function api(db) {
     einheiten: (objektId) => all(`SELECT e.*,
         (SELECT ${PERSON_NAME} FROM mietverhaeltnisse m JOIN personen p ON p.id = m.person_id
           WHERE m.einheit_id = e.id AND ${aktuell('m')} ORDER BY m.beginn DESC LIMIT 1) AS mieter,
+        (SELECT m.person_id FROM mietverhaeltnisse m WHERE m.einheit_id = e.id AND ${aktuell('m')} ORDER BY m.beginn DESC LIMIT 1) AS mieter_id,
+        (SELECT m.id FROM mietverhaeltnisse m WHERE m.einheit_id = e.id AND ${aktuell('m')} ORDER BY m.beginn DESC LIMIT 1) AS mietvertrag_id,
         (SELECT ${PERSON_NAME} FROM eigentum g JOIN personen p ON p.id = g.person_id
           WHERE g.einheit_id = e.id AND ${aktuell('g')} ORDER BY g.beginn DESC LIMIT 1) AS eigentuemer,
+        (SELECT g.person_id FROM eigentum g WHERE g.einheit_id = e.id AND ${aktuell('g')} ORDER BY g.beginn DESC LIMIT 1) AS eigentuemer_id,
+        (SELECT g.id FROM eigentum g WHERE g.einheit_id = e.id AND ${aktuell('g')} ORDER BY g.beginn DESC LIMIT 1) AS eigentum_id,
         (SELECT max(g.selbstnutzer) FROM eigentum g WHERE g.einheit_id = e.id AND ${aktuell('g')}) AS selbstgenutzt
       FROM einheiten e WHERE e.objekt_id = ? ORDER BY e.nr`, objektId),
 
@@ -814,7 +908,14 @@ function api(db) {
         WHERE e.objekt_id = ? ORDER BY e.nr, v.beginn DESC`, objektId).map((v) => {
         const b = bh.betraege(typ, v.id, v.ende && v.ende < heute ? v.ende : heute < v.beginn ? v.beginn : heute);
         const akt = Object.fromEntries(['kaltmiete_ct', 'bk_vz_ct', 'hk_vz_ct', 'sonstiges_ct', 'hausgeld_ct', 'ruecklage_ct'].map((k) => [`akt_${k}`, b[k] ?? 0]));
-        return { ...v, ...akt, angepasst: Object.keys(akt).some((k) => akt[k] !== (v[k.slice(4)] ?? 0)) ? 1 : 0 };
+        const angepasst = Object.keys(akt).some((k) => akt[k] !== (v[k.slice(4)] ?? 0)) ? 1 : 0;
+        const ust = typ === 'miete' && v.ust_satz > 0 ? Math.round((akt.akt_kaltmiete_ct + akt.akt_bk_vz_ct + akt.akt_hk_vz_ct + akt.akt_sonstiges_ct) * v.ust_satz / 100) : 0;
+        // Balance: what is overdue (due date passed) less any credit.
+        const k = bh.kontoVon(typ, v.id);
+        const op = k ? bh.offenePostenKonto(k.id) : null;
+        const ueberfaellig = op ? Math.max(0, op.offen.filter((x) => x.verzug >= 1).reduce((s, x) => s + x.offen_ct, 0) - op.guthaben_ct) : 0;
+        return { ...v, ...akt, akt_ust_ct: ust, angepasst, zukuenftig: v.beginn > heute ? 1 : 0, konto_id: k?.id ?? null,
+          saldo_ct: op?.summe_ct ?? 0, ueberfaellig_ct: ueberfaellig, offene_monate: op ? op.offen.filter((x) => x.verzug >= 1).map((x) => x.monat ?? x.datum) : [] };
       });
     },
 
@@ -898,8 +999,17 @@ function api(db) {
   const dl = darlehen({ db, all, get, tx, bh });
   const mw = mieterwechsel({ db, all, get, tx, PERSON_NAME });
   const au = automatik({ db, all, get, tx, PERSON_NAME, bh, ab, vw, einstellungen: basis.einstellungen });
+  const pr = pruefung({ all, get, PERSON_NAME, bh, aw, einstellungen: basis.einstellungen });
   return {
-    ...bh, ...ab, ...vw, ...ar, ...au, ...pj, ...aw, ...ak, ...dl, ...mw, ...basis,
+    ...bh, ...ab, ...vw, ...ar, ...au, ...pj, ...aw, ...ak, ...dl, ...mw, ...pr, ...basis,
+    // Cockpit hints plus one pointing to the data check when it found errors.
+    hinweise: (opt) => {
+      const h = au.hinweise(opt);
+      const fehler = pr.pruefbericht().punkte.filter((p) => p.stufe === 'fehler');
+      if (fehler.length) h.unshift({ schluessel: 'pruefbericht', stufe: 'orange', kategorie: 'Prüfbericht', dauerhaft: true, ziel: 'pruefung',
+        text: `Der Prüfbericht hat ${fehler.length} Fehler in den Daten gefunden, z. B.: ${fehler[0].text}` });
+      return h;
+    },
     zusage: (interessentId, beginn) => {
       const r = mw.zusage(interessentId, beginn);
       bh.syncKonten();

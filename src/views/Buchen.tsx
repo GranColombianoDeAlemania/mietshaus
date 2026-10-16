@@ -3,11 +3,18 @@ import { betrag, call, datum, diesesJahr, fehler, fehlerText, heute, parseCent, 
 import { useLoad } from '../useLoad';
 import { KontoSelect, Tabs, Zeitraum } from '../ui';
 import { useAktion } from '../aktion';
+import { L } from '../navi';
 
 type Art = 'einnahme' | 'ausgabe' | 'frei';
-type Pos = { gegen_id: number | ''; soll_id: number | ''; haben_id: number | ''; betrag: string; text: string };
+type Pos = { gegen_id: number | ''; soll_id: number | ''; haben_id: number | ''; betrag: string; text: string; ust: '' | '19' | '7' };
 
-const leerePos = (): Pos => ({ gegen_id: '', soll_id: '', haben_id: '', betrag: '', text: '' });
+const leerePos = (): Pos => ({ gegen_id: '', soll_id: '', haben_id: '', betrag: '', text: '', ust: '' });
+
+// Input tax contained in a gross amount and the deductible part of it (mixed houses: only the commercial share).
+export const vorsteuerAnteil = (brutto: number, satz: number, quote: number) => {
+  const ust = Math.round(brutto * satz / (100 + satz));
+  return Math.round(ust * quote / 100);
+};
 
 export function Buchen(props: { objekt: Row }) {
   const [konten, ladeKonten] = useLoad<Row[]>(() => call('konten', props.objekt.id), [props.objekt.id]);
@@ -25,7 +32,7 @@ export function Buchen(props: { objekt: Row }) {
   return (
     <section>
       <div className="toolbar">
-        <h1>Buchungen – {props.objekt.bezeichnung}</h1>
+        <h1>Buchungen</h1>
         <span className="spacer" />
         <button className="primary" onClick={() => setOffen(true)}>Neue Buchung</button>
       </div>
@@ -42,13 +49,13 @@ export function Buchen(props: { objekt: Row }) {
         <thead><tr><th>Datum</th><th>Beleg</th><th>Text</th><th>Soll</th><th>Haben</th><th className="num">Betrag</th><th /></tr></thead>
         <tbody>
           {rows?.map((b) => (
-            <tr key={b.id} className={b.gruppe ? 'split' : ''}>
+            <tr key={b.id} className={b.gruppe ? 'split' : ''} data-ziel={`buchung:${b.id}`} title="Rechtsklick für weitere Aktionen; Beleg hierher ziehen, um ihn zuzuordnen">
               <td>{datum(b.datum)}</td>
-              <td>{b.beleg}</td>
-              <td>{b.text}{b.art === 'soll' && <span className="tag">Soll</span>}{b.art === 'bank' && <span className="tag">Bank</span>}
+              <td>{b.dok_id ? <L zu={{ dokument: b.dok_id, datei: b.dok_datei }} title="Beleg öffnen">{b.beleg || 'Beleg'}</L> : b.beleg}</td>
+              <td>{b.text} {b.art === 'soll' && <span className="tag">Soll</span>}{b.art === 'bank' && <span className="tag">Bank</span>}
                 {b.storniert ? <span className="tag fehlertext">storniert</span> : null}{b.festgeschrieben ? <span className="tag" title="festgeschriebener Zeitraum">🔒</span> : null}</td>
-              <td className="klein">{b.soll_nr} {b.soll_bez}</td>
-              <td className="klein">{b.haben_nr} {b.haben_bez}</td>
+              <td className="klein"><L zu={b.soll_vid ? { vertrag: b.soll_vid, typ: b.soll_vtyp } : { konto: b.soll_id }}>{b.soll_nr} {b.soll_bez}</L></td>
+              <td className="klein"><L zu={b.haben_vid ? { vertrag: b.haben_vid, typ: b.haben_vtyp } : { konto: b.haben_id }}>{b.haben_nr} {b.haben_bez}</L></td>
               <td className="num">{betrag(b.betrag_ct)}</td>
               <td className="aktionen">
                 {!b.storniert && b.art !== 'storno' && (
@@ -79,22 +86,36 @@ export function Buchen(props: { objekt: Row }) {
 // Entry form for receipts, expenses (both with optional split) and free double-entry postings.
 function Buchungsmaske(props: { objekt: Row; konten: Row[]; onDone: () => void; onClose: () => void }) {
   const geldStandard = props.konten.find((k) => k.klasse === 'geld')?.id ?? '';
-  const [art, setArt] = useState<Art>('einnahme');
-  const [kopf, setKopf] = useState({ datum: heute(), beleg: '', text: '', geld_id: geldStandard as number | '' });
-  const [pos, setPos] = useState<Pos[]>([leerePos()]);
+  // A page like the contract page can pre-fill the form ("Zahlung buchen").
+  const [vorlage] = useState<Row | null>(() => {
+    try { const v = JSON.parse(sessionStorage.getItem('buchungVorlage') ?? 'null'); sessionStorage.removeItem('buchungVorlage'); return v; } catch { return null; }
+  });
+  const [art, setArt] = useState<Art>(vorlage?.art ?? 'einnahme');
+  const [kopf, setKopf] = useState({ datum: heute(), beleg: '', text: vorlage?.text ?? '', geld_id: geldStandard as number | '' });
+  const [pos, setPos] = useState<Pos[]>([{ ...leerePos(), gegen_id: vorlage?.gegen_id ?? '' }]);
   const [meldung, setMeldung] = useState('');
 
   const setP = (i: number, p: Partial<Pos>) => setPos(pos.map((x, j) => (j === i ? { ...x, ...p } : x)));
   const summe = pos.reduce((s, p) => s + parseCent(p.betrag), 0);
+  // Objects with a VAT-able letting can split input tax off expenses.
+  const vst19 = props.konten.find((k) => k.klasse === 'steuer' && k.kategorie === 'vorsteuer19');
+  const vst7 = props.konten.find((k) => k.klasse === 'steuer' && k.kategorie === 'vorsteuer7');
+  const quote = props.objekt.vorsteuer_quote ?? 100;
+  const vorsteuer = art === 'ausgabe' && vst19 ? pos.reduce((s, p) => s + (p.ust ? vorsteuerAnteil(parseCent(p.betrag), Number(p.ust), quote) : 0), 0) : 0;
 
   async function speichern() {
     try {
-      const positionen = pos.filter((p) => parseCent(p.betrag)).map((p) => {
+      const positionen = pos.filter((p) => parseCent(p.betrag)).flatMap((p) => {
         const betrag_ct = parseCent(p.betrag);
-        if (art === 'frei') return { soll_id: p.soll_id, haben_id: p.haben_id, betrag_ct, text: p.text || undefined };
-        return art === 'einnahme'
-          ? { soll_id: kopf.geld_id, haben_id: p.gegen_id, betrag_ct, text: p.text || undefined }
-          : { soll_id: p.gegen_id, haben_id: kopf.geld_id, betrag_ct, text: p.text || undefined };
+        if (art === 'frei') return [{ soll_id: p.soll_id, haben_id: p.haben_id, betrag_ct, text: p.text || undefined }];
+        if (art === 'einnahme') return [{ soll_id: kopf.geld_id, haben_id: p.gegen_id, betrag_ct, text: p.text || undefined }];
+        // Expense with input tax: the deductible part goes to the input tax account, the rest to the cost account.
+        const vst = p.ust && vst19 ? vorsteuerAnteil(betrag_ct, Number(p.ust), quote) : 0;
+        const konto = p.ust === '7' ? vst7 ?? vst19 : vst19;
+        return [
+          { soll_id: p.gegen_id, haben_id: kopf.geld_id, betrag_ct: betrag_ct - vst, text: p.text || undefined },
+          ...(vst ? [{ soll_id: konto!.id, haben_id: kopf.geld_id, betrag_ct: vst, text: `Vorsteuer ${p.ust} %${p.text ? ` – ${p.text}` : ''}` }] : []),
+        ];
       });
       await call('buchen', { objekt_id: props.objekt.id, datum: kopf.datum, beleg: kopf.beleg, text: kopf.text, positionen });
       setMeldung(`Gebucht: ${betrag(summe)} €`);
@@ -106,7 +127,7 @@ function Buchungsmaske(props: { objekt: Row; konten: Row[]; onDone: () => void; 
     }
   }
 
-  const gegenKlassen = art === 'einnahme' ? ['person', 'einnahme', 'geld', 'ruecklage'] : ['kosten', 'person', 'geld', 'ruecklage'];
+  const gegenKlassen = art === 'einnahme' ? ['person', 'einnahme', 'geld', 'ruecklage', 'steuer'] : ['kosten', 'person', 'geld', 'ruecklage', 'steuer', 'darlehen'];
 
   return (
     <div className="panel">
@@ -129,7 +150,7 @@ function Buchungsmaske(props: { objekt: Row; konten: Row[]; onDone: () => void; 
         <thead>
           <tr>
             {art === 'frei' ? <><th>Soll (Zugang)</th><th>Haben (Abgang)</th></> : <th>{art === 'einnahme' ? 'Von (Mieter, Eigentümer, Einnahme)' : 'Für (Kostenart)'}</th>}
-            <th>Text (optional)</th><th className="num">Betrag €</th><th />
+            <th>Text (optional)</th>{art === 'ausgabe' && vst19 && <th>darin USt</th>}<th className="num">Betrag € (brutto)</th><th />
           </tr>
         </thead>
         <tbody>
@@ -144,6 +165,9 @@ function Buchungsmaske(props: { objekt: Row; konten: Row[]; onDone: () => void; 
                 <td><KontoSelect konten={props.konten} klassen={gegenKlassen} value={p.gegen_id} onChange={(id) => setP(i, { gegen_id: id })} /></td>
               )}
               <td><input value={p.text} onChange={(e) => setP(i, { text: e.target.value })} /></td>
+              {art === 'ausgabe' && vst19 && (
+                <td><select value={p.ust} onChange={(e) => setP(i, { ust: e.target.value as Pos['ust'] })}><option value="">keine</option><option value="19">19 %</option><option value="7">7 %</option></select></td>
+              )}
               <td><input className="num" inputMode="decimal" value={p.betrag} onChange={(e) => setP(i, { betrag: e.target.value })} /></td>
               <td>{pos.length > 1 && <button onClick={() => setPos(pos.filter((_, j) => j !== i))}>×</button>}</td>
             </tr>
@@ -151,7 +175,8 @@ function Buchungsmaske(props: { objekt: Row; konten: Row[]; onDone: () => void; 
         </tbody>
         <tfoot>
           <tr>
-            <td colSpan={art === 'frei' ? 3 : 2}><button onClick={() => setPos([...pos, leerePos()])}>+ Aufteilen (Splitbuchung)</button></td>
+            <td colSpan={art === 'frei' ? 3 : art === 'ausgabe' && vst19 ? 3 : 2}><button onClick={() => setPos([...pos, leerePos()])}>+ Aufteilen (Splitbuchung)</button>
+              {vorsteuer > 0 && <span className="klein hinweis"> · davon abziehbare Vorsteuer {betrag(vorsteuer)} €{quote < 100 ? ` (${quote} % der USt)` : ''}</span>}</td>
             <td className="num"><b>{betrag(summe)}</b></td><td />
           </tr>
         </tfoot>

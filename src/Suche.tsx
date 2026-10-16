@@ -3,13 +3,15 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import * as I from 'lucide-react';
 import { call, datum, euro, type Row } from './api';
+import { useNavi } from './navi';
 
 export type Befehl = { label: string; stichworte?: string; icon?: I.LucideIcon; run: () => void };
 type Eintrag = { key: string; gruppe: string; inhalt: ReactNode; run: () => void };
 
 const norm = (s: string) => s.toLowerCase().replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss');
 
-export function Suche(props: { befehle: Befehl[]; onDokument: (d: Row) => void; onPerson: (id: number) => void; oeffne: (seite: string, objektId?: number) => void }) {
+export function Suche(props: { befehle: Befehl[]; onDokument: (d: Row) => void }) {
+  const navi = useNavi();
   const [q, setQ] = useState('');
   const [r, setR] = useState<Row | null>(null);
   const [offen, setOffen] = useState(false);
@@ -46,17 +48,17 @@ export function Suche(props: { befehle: Befehl[]; onDokument: (d: Row) => void; 
       ...befehle,
       ...r.dokumente.map((d: Row): Eintrag => ({ key: 'd' + d.id, gruppe: 'Dokumente', run: () => props.onDokument(d),
         inhalt: <><b>{d.titel}</b> <span className="klein">{[d.typ, datum(d.datum), d.objekt].filter(Boolean).join(' · ')}</span>{d.treffer && <div className="treffer klein">{markiert(d.treffer)}</div>}</> })),
-      ...r.personen.map((p: Row): Eintrag => ({ key: 'p' + p.id, gruppe: 'Personen', run: () => props.onPerson(p.id),
+      ...r.personen.map((p: Row): Eintrag => ({ key: 'p' + p.id, gruppe: 'Personen', run: () => navi.zu({ person: p.id }),
         inhalt: <><b>{p.name}</b> <span className="klein">{[p.ort, p.telefon, p.email].filter(Boolean).join(' · ')}</span></> })),
-      ...r.objekte.map((o: Row): Eintrag => ({ key: 'o' + o.id, gruppe: 'Objekte', run: () => props.oeffne('steckbrief', o.id), inhalt: <><b>{o.bezeichnung}</b> <span className="klein">{o.ort}</span></> })),
-      ...r.einheiten.map((e: Row): Eintrag => ({ key: 'e' + e.id, gruppe: 'Einheiten', run: () => props.oeffne('einheiten', e.objekt_id), inhalt: <><b>{e.bezeichnung}</b> <span className="klein">{e.objekt}</span></> })),
+      ...r.objekte.map((o: Row): Eintrag => ({ key: 'o' + o.id, gruppe: 'Objekte', run: () => navi.zu({ objekt: o.id }), inhalt: <><b>{o.bezeichnung}</b> <span className="klein">{o.ort}</span></> })),
+      ...r.einheiten.map((e: Row): Eintrag => ({ key: 'e' + e.id, gruppe: 'Einheiten', run: () => navi.zu({ einheit: e.id }), inhalt: <><b>{e.bezeichnung}</b> <span className="klein">{e.objekt}</span></> })),
       ...r.buchungen.map((b: Row): Eintrag => ({ key: 'u' + b.id, gruppe: 'Buchungen',
-        run: () => { sessionStorage.setItem('buchungSuche', b.text ?? b.beleg ?? ''); props.oeffne('buchen', b.objekt_id); },
+        run: () => { sessionStorage.setItem('buchungSuche', b.text ?? b.beleg ?? ''); navi.zu({ seite: 'buchen', objektId: b.objekt_id }); },
         inhalt: <>{datum(b.datum)} <b>{b.text}</b> <span className="klein">{euro(b.betrag_ct)} · {b.objekt}</span></> })),
-      ...(r.dokumente.length ? [{ key: 'mehr', gruppe: 'Dokumente', run: () => { sessionStorage.setItem('archivSuche', q); props.oeffne('archiv'); },
+      ...(r.dokumente.length ? [{ key: 'mehr', gruppe: 'Dokumente', run: () => { sessionStorage.setItem('archivSuche', q); navi.zu({ seite: 'archiv' }); },
         inhalt: <span className="mehr">Alle Dokument-Treffer im Archiv zeigen →</span> }] : []),
     ];
-  }, [q, r, props.befehle]);
+  }, [q, r, props.befehle, navi]);
 
   const waehle = (e?: Eintrag) => { if (!e) return; e.run(); setOffen(false); setQ(''); feld.current?.blur(); };
 

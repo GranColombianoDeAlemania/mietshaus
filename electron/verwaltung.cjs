@@ -2,11 +2,28 @@
 // documents, cases, appointments and the DATEV export.
 const { tageZwischen } = require('./buchhaltung.cjs');
 
+// First of the month n months after the month of iso.
 const plusMonate = (iso, n) => {
   const d = new Date(iso.slice(0, 7) + '-01T00:00:00Z');
   d.setUTCMonth(d.getUTCMonth() + n);
   return d.toISOString().slice(0, 10);
 };
+// Same calendar day n months later (the month's last day when that day does not exist).
+const plusMonateGenau = (iso, n) => {
+  const [y, m, d] = iso.slice(0, 10).split('-').map(Number);
+  const z = new Date(Date.UTC(y, m - 1 + n, 1));
+  const letzter = new Date(Date.UTC(z.getUTCFullYear(), z.getUTCMonth() + 1, 0)).getUTCDate();
+  return `${z.toISOString().slice(0, 8)}${String(Math.min(d, letzter)).padStart(2, '0')}`;
+};
+// First of the month on or after a date.
+const monatsbeginn = (iso) => (iso.slice(8, 10) === '01' ? iso.slice(0, 10) : plusMonate(iso, 1));
+const vortag = (iso) => {
+  const d = new Date(iso.slice(0, 10) + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+};
+// Rent changes that do not count for waiting periods and caps: modernisation (§ 559) and operating costs (§ 560).
+const NICHT_ZAEHLEND = "('modernisierung','nk_anpassung','wirtschaftsplan')";
 
 module.exports = function verwaltung({ db, all, get, tx, PERSON_NAME, bh }) {
   const kautionStand = (kautionId, bis = '9999-12-31') => get(`SELECT
@@ -30,7 +47,7 @@ module.exports = function verwaltung({ db, all, get, tx, PERSON_NAME, bh }) {
 
   return {
     // ---------- deposits ----------
-    kautionen: (objektId) => all(`SELECT m.id AS vertrag_id, m.kaution_ct AS soll_ct, m.beginn, m.ende, e.bezeichnung AS einheit,
+    kautionen: (objektId) => all(`SELECT m.id AS vertrag_id, m.kaution_ct AS soll_ct, m.beginn, m.ende, e.bezeichnung AS einheit, e.id AS einheit_id, m.person_id,
         ${PERSON_NAME} AS name, k.id AS kaution_id, k.art, k.bank, k.iban, k.zinssatz
       FROM mietverhaeltnisse m JOIN einheiten e ON e.id = m.einheit_id JOIN personen p ON p.id = m.person_id
       LEFT JOIN kautionen k ON k.vertrag_id = m.id WHERE e.objekt_id = ? ORDER BY e.nr, m.beginn DESC`, objektId)
@@ -69,7 +86,8 @@ module.exports = function verwaltung({ db, all, get, tx, PERSON_NAME, bh }) {
     },
 
     // § 557b BGB: new rent = base rent × (current index / index at the base month or last adjustment).
-    indexBerechnung: (vertragId, neuMonat) => {
+    // zugang: day the tenant receives the declaration; the new rent applies from the start of the month after next.
+    indexBerechnung: (vertragId, neuMonat, zugang = null) => {
       const m = get('SELECT * FROM mietmodelle WHERE vertrag_id = ?', vertragId);
       if (!m || m.art !== 'index') throw new Error('Für diesen Vertrag ist keine Indexmiete hinterlegt.');
       const letzte = get(`SELECT * FROM anpassungen WHERE vertrag_typ = 'miete' AND vertrag_id = ? AND grund = 'index' ORDER BY gueltig_ab DESC LIMIT 1`, vertragId);
@@ -79,31 +97,73 @@ module.exports = function verwaltung({ db, all, get, tx, PERSON_NAME, bh }) {
       const neu = get('SELECT wert FROM indexwerte WHERE monat = ?', neuM)?.wert;
       if (!alt || !neu) throw new Error(`Indexwert fehlt für ${!alt ? basisMonat : neuM}. Bitte unter „Indexwerte“ ergänzen.`);
       const v = get('SELECT * FROM mietverhaeltnisse WHERE id = ?', vertragId);
-      const seit = letzte?.gueltig_ab ?? v.beginn;
       const heute = new Date().toISOString().slice(0, 10);
+      // Unchanged since the last change of the base rent (modernisation and operating costs aside).
+      const seit = get(`SELECT max(gueltig_ab) AS d FROM anpassungen WHERE vertrag_typ = 'miete' AND vertrag_id = ? AND kaltmiete_ct IS NOT NULL
+        AND grund NOT IN ${NICHT_ZAEHLEND} AND gueltig_ab <= ?`, vertragId, heute).d ?? v.beginn;
       const aktuell = bh.betraege('miete', vertragId, heute);
       const neueMiete = Math.round(aktuell.kaltmiete_ct * neu / alt);
+      const z = zugang ?? heute;
       return {
         basis_monat: basisMonat, basis_wert: alt, neu_monat: neuM, neu_wert: neu,
-        aenderung_prozent: (neu / alt - 1) * 100, alte_miete_ct: aktuell.kaltmiete_ct, neue_miete_ct: neueMiete,
-        // The rent must remain unchanged for at least 12 months; the new rent applies from the month after next following the declaration.
-        frueheste_wirkung: [plusMonate(seit, m.mindestabstand_monate), plusMonate(heute, 2)].sort().pop(),
+        aenderung_prozent: (neu / alt - 1) * 100, alte_miete_ct: aktuell.kaltmiete_ct, neue_miete_ct: neueMiete, erhoehung_ct: neueMiete - aktuell.kaltmiete_ct,
+        unveraendert_seit: seit, zugang: z,
+        // The rent must remain unchanged for at least 12 months (§ 557b Abs. 2); the new rent applies from the start of the month after next (Abs. 3).
+        frueheste_wirkung: [monatsbeginn(plusMonateGenau(seit, m.mindestabstand_monate ?? 12)), plusMonate(z, 2)].sort().pop(),
       };
     },
 
-    // § 558 BGB checks: waiting period of 15 months and the cap of 20 % (15 % in tight markets) within 3 years.
-    mieterhoehungPruefen: (vertragId, neueMieteCt, ab, kappung = 20) => {
+    // § 558 BGB checks for a rent increase up to the local comparative rent:
+    // - the rent has been unchanged for 15 months when the increase takes effect, the request comes at least a year after the last increase (Abs. 1);
+    // - cap of 20 % (15 % where a state ordinance applies) within three years, modernisation increases aside (Abs. 3);
+    // - effect from the start of the third month after receipt, consent due by the end of the second month (§ 558b);
+    // - no § 558 increase during a graduated or indexed rent (§ 557a Abs. 2, § 557b Abs. 2).
+    mieterhoehungPruefen: (vertragId, neueMieteCt, ab, kappung = null, zugang = null) => {
       const v = get('SELECT * FROM mietverhaeltnisse WHERE id = ?', vertragId);
-      const vor3 = plusMonate(ab, -36);
-      const basis = bh.betraege('miete', vertragId, vor3 < v.beginn ? v.beginn : vor3).kaltmiete_ct;
-      const letzte = get(`SELECT gueltig_ab FROM anpassungen WHERE vertrag_typ = 'miete' AND vertrag_id = ? AND kaltmiete_ct IS NOT NULL
-        AND grund IN ('erhoehung','manuell') ORDER BY gueltig_ab DESC LIMIT 1`, vertragId)?.gueltig_ab ?? v.beginn;
-      const grenze = Math.floor(basis * (1 + kappung / 100));
+      const e = get('SELECT e.wohnflaeche, o.kappungsgrenze FROM einheiten e JOIN objekte o ON o.id = e.objekt_id WHERE e.id = ?', v.einheit_id);
+      const k = kappung ?? e?.kappungsgrenze ?? 20;
+      const z = zugang ?? new Date().toISOString().slice(0, 10);
+      const vor3 = plusMonateGenau(ab, -36);
+      const basisDatum = vor3 < v.beginn ? v.beginn : vor3;
+      const basis = bh.betraege('miete', vertragId, basisDatum).kaltmiete_ct;
+      const zuschlaege = all(`SELECT gueltig_ab, kaltmiete_ct FROM anpassungen WHERE vertrag_typ = 'miete' AND vertrag_id = ? AND grund = 'modernisierung'
+        AND kaltmiete_ct IS NOT NULL AND gueltig_ab > ? AND gueltig_ab < ?`, vertragId, basisDatum, ab)
+        .reduce((s, a) => s + a.kaltmiete_ct - bh.betraege('miete', vertragId, vortag(a.gueltig_ab)).kaltmiete_ct, 0);
+      const letzte = get(`SELECT max(gueltig_ab) AS d FROM anpassungen WHERE vertrag_typ = 'miete' AND vertrag_id = ? AND kaltmiete_ct IS NOT NULL
+        AND grund NOT IN ${NICHT_ZAEHLEND} AND gueltig_ab < ?`, vertragId, ab).d ?? v.beginn;
+      const alt = bh.betraege('miete', vertragId, vortag(ab)).kaltmiete_ct;
+      // Integer arithmetic: 50000 × 1.15 would give 57499.99….
+      const grenze = Math.floor(basis * (100 + k) / 100) + zuschlaege;
+      const modell = get('SELECT art FROM mietmodelle WHERE vertrag_id = ?', vertragId)?.art ?? null;
+      const wirkungFrueh = plusMonate(z, 3);
+      const qm = e?.wohnflaeche || null;
       return {
-        basis_ct: basis, grenze_ct: grenze, kappung_ok: neueMieteCt <= grenze,
-        letzte_aenderung: letzte, frist_ok: ab >= plusMonate(letzte, 15),
-        erhoehung_prozent: basis ? (neueMieteCt / basis - 1) * 100 : 0,
+        basis_ct: basis, basis_datum: basisDatum, kappung: k, zuschlaege_ct: zuschlaege, grenze_ct: grenze, kappung_ok: neueMieteCt <= grenze,
+        letzte_aenderung: letzte, frist_ok: ab >= plusMonateGenau(letzte, 15),
+        verlangen_ab: plusMonateGenau(letzte, 12), jahresfrist_ok: z >= plusMonateGenau(letzte, 12),
+        zugang: z, wirkung_frueh: wirkungFrueh, wirkung_ok: ab >= wirkungFrueh, zustimmung_bis: vortag(wirkungFrueh),
+        frueheste_wirkung: [wirkungFrueh, monatsbeginn(plusMonateGenau(letzte, 15))].sort().pop(),
+        modell, modell_ok: modell !== 'staffel' && modell !== 'index',
+        // Increase within the three years against the cap, modernisation surcharges excluded.
+        alt_ct: alt, erhoehung_ct: neueMieteCt - alt, erhoehung_prozent: basis ? ((neueMieteCt - zuschlaege) / basis - 1) * 100 : 0,
+        qm, alt_qm: qm ? alt / 100 / qm : null, neu_qm: qm ? neueMieteCt / 100 / qm : null,
       };
+    },
+
+    // § 559 Abs. 3a BGB: within six years at most 3 €/m² more (2 €/m² when the rent was below 7 €/m²); earlier modernisation increases count.
+    // The increase applies from the start of the third month after receipt (§ 559b Abs. 2).
+    modernisierungPruefen: (vertragId, neueMieteCt, ab, zugang = null) => {
+      const v = get('SELECT * FROM mietverhaeltnisse WHERE id = ?', vertragId);
+      const qm = get('SELECT wohnflaeche FROM einheiten WHERE id = ?', v.einheit_id)?.wohnflaeche || null;
+      const alt = bh.betraege('miete', vertragId, vortag(ab)).kaltmiete_ct;
+      const frueher = all(`SELECT gueltig_ab, kaltmiete_ct FROM anpassungen WHERE vertrag_typ = 'miete' AND vertrag_id = ? AND grund = 'modernisierung'
+        AND kaltmiete_ct IS NOT NULL AND gueltig_ab > ? AND gueltig_ab < ?`, vertragId, plusMonateGenau(ab, -72), ab)
+        .reduce((s, a) => s + a.kaltmiete_ct - bh.betraege('miete', vertragId, vortag(a.gueltig_ab)).kaltmiete_ct, 0);
+      const satz = qm && alt / 100 / qm < 7 ? 2 : 3;
+      const grenze = qm ? Math.round(satz * qm * 100) - frueher : null;
+      const z = zugang ?? new Date().toISOString().slice(0, 10);
+      return { qm, alt_ct: alt, erhoehung_ct: neueMieteCt - alt, frueher_ct: frueher, satz, grenze_ct: grenze,
+        kappung_ok: grenze == null || neueMieteCt - alt <= grenze, zugang: z, wirkung_frueh: plusMonate(z, 3), wirkung_ok: ab >= plusMonate(z, 3) };
     },
 
     // ---------- owners' association ----------

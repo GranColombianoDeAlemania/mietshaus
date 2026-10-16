@@ -3,10 +3,12 @@ import { useState } from 'react';
 import * as I from 'lucide-react';
 import { call, datum, euro, heute, OBJEKT_ART, parseZahl, zahl, type Modus, type Row } from '../api';
 import { useLoad } from '../useLoad';
-import { Dialog } from '../ui';
+import { Chip, DetailKopf, Dialog, Leer } from '../ui';
 import { FormDialog, type Field } from '../Form';
-import { DokumentDialog, dokUrl } from './Archiv';
+import { dokUrl } from './Archiv';
 import { Galerie } from '../Galerie';
+import { L, useNavi } from '../navi';
+import { ROLLEN } from './WegExtras';
 
 export function ObjektKacheln(props: { modus: Modus; oeffne: (seite: string, id?: number) => void }) {
   const [liste] = useLoad<Row[]>(() => call('objektKacheln', props.modus), [props.modus]);
@@ -40,74 +42,92 @@ const Zeitleiste = ({ eintraege }: { eintraege: Row[] }) => (
   </ul>
 );
 
-export function Steckbrief(props: { objekt: Row; oeffne: (seite: string, id?: number) => void }) {
+export function Steckbrief(props: { objekt: Row; oeffne: (seite: string, id?: number) => void; modus: Modus }) {
+  const navi = useNavi();
   const [s, reload] = useLoad<Row>(() => call('objektSteckbrief', props.objekt.id), [props.objekt.id]);
+  const [einheiten] = useLoad<Row[]>(() => call('einheiten', props.objekt.id), [props.objekt.id]);
   const [bilder] = useLoad<Row[]>(() => call('galerie', { objekt_id: props.objekt.id, nur_bilder: true }), [props.objekt.id]);
   const [waehlen, setWaehlen] = useState(false);
-  const [dok, setDok] = useState<Row | null>(null);
   if (!s) return null;
   const o = s.objekt;
-  const fakt = (l: string, w: React.ReactNode) => <div><span>{l}</span><b>{w || '–'}</b></div>;
+  const miete = o.art !== 'weg', weg = o.art !== 'miete';
   return (
-    <section>
-      <div className="toolbar">
-        <h1>{o.bezeichnung}</h1><span className={`tag art-${o.art}`}>{OBJEKT_ART[o.art]}</span>
-        <span className="spacer" />
-        <button className="icon" onClick={() => props.oeffne('objekte')}><I.Pencil size={15} />Stammdaten bearbeiten</button>
+    <section className="detailseite">
+      <DetailKopf
+        bild={<div className="titelbild klickbar" onClick={() => setWaehlen(true)} title="Titelbild wählen"
+          style={o.titelbild ? { backgroundImage: `url("${dokUrl(o.titelbild)}")` } : undefined}>{!o.titelbild && <I.ImagePlus size={22} />}</div>}
+        eyebrow={`Objekt · ${OBJEKT_ART[o.art]}`}
+        titel={o.bezeichnung}
+        chips={<>
+          {(o.strasse || o.ort) && <Chip>{[o.strasse, [o.plz, o.ort].filter(Boolean).join(' ')].filter(Boolean).join(', ')}</Chip>}
+          {o.baujahr && <Chip>Baujahr {o.baujahr}</Chip>}
+          <Chip>{s.einheiten} Einheiten{s.flaeche ? ` · ${zahl(s.flaeche)} m²` : ''}</Chip>
+          {weg && <Chip art="weg">MEA {zahl(s.mea)}</Chip>}
+        </>}
+        aktionen={<button className="icon" onClick={() => props.oeffne('objekte')}><I.Pencil size={15} />Stammdaten</button>}
+      />
+      <div className="kacheln">
+        {miete && <button className="kachel klickbar" onClick={() => navi.zu({ seite: 'op', objektId: o.id, modus: 'miete' })}>
+          <div className={`wert${s.rueckstand_miete_ct > 0 ? ' negativ' : ''}`}>{euro(s.rueckstand_miete_ct)}</div><div className="label">Mietrückstände</div></button>}
+        {weg && <button className="kachel klickbar" onClick={() => navi.zu({ seite: 'op', objektId: o.id, modus: 'weg' })}>
+          <div className={`wert${s.rueckstand_weg_ct > 0 ? ' negativ' : ''}`}>{euro(s.rueckstand_weg_ct)}</div><div className="label">Hausgeldrückstände</div></button>}
+        {miete && <div className="kachel"><div className="wert">{euro(s.kaltmiete_ct)}</div><div className="label">Kaltmiete / Monat ({s.mieter} Mietverhältnisse)</div></div>}
+        {s.geld.filter((g: Row, i: number) => i === 0 || g.saldo_ct !== 0).map((g: Row) => <button key={g.id} className="kachel klickbar" onClick={() => navi.zu({ konto: g.id })}><div className="wert">{euro(g.saldo_ct)}</div><div className="label">{g.bezeichnung}</div></button>)}
       </div>
-      <div className="steckbrief-kopf">
-        <div className="titelbild klickbar" onClick={() => setWaehlen(true)} title="Titelbild wählen"
-          style={o.titelbild ? { backgroundImage: `url("${dokUrl(o.titelbild)}")` } : undefined}>
-          {!o.titelbild && <span><I.ImagePlus size={28} /><br />Titelbild wählen</span>}
-        </div>
-        <div className="fakten">
-          {fakt('Anschrift', [o.strasse, [o.plz, o.ort].filter(Boolean).join(' ')].filter(Boolean).join(', '))}
-          {fakt('Baujahr', o.baujahr)}
-          {fakt('Einheiten', s.einheiten)}
-          {fakt('Fläche', s.flaeche ? `${zahl(s.flaeche)} m²` : null)}
-          {o.art !== 'miete' && fakt('Miteigentumsanteile', zahl(s.mea))}
-          {o.art !== 'weg' && fakt('Mietverhältnisse', s.mieter)}
-          {o.art !== 'weg' && fakt('Kaltmiete / Monat', euro(s.kaltmiete_ct))}
-          {o.art !== 'miete' && fakt('Eigentümer', s.eigentuemer)}
-          <div><span>Rückstände</span><b className={s.rueckstand_ct > 0 ? 'negativ' : ''}>{euro(s.rueckstand_ct)}</b></div>
-          {s.geld.map((g: Row) => <div key={g.id}><span>{g.bezeichnung}</span><b>{euro(g.saldo_ct)}</b></div>)}
-          {fakt('Zähler', s.zaehler)}
-          {o.kaufpreis_ct ? fakt('Kaufpreis', `${euro(o.kaufpreis_ct)}${o.kaufdatum ? ` (${o.kaufdatum.slice(0, 4)})` : ''}`) : null}
-          {o.iban ? fakt('Objektkonto', o.iban) : null}
+      <div className="panel">
+        <div className="panelkopf"><h3>Einheiten</h3><L zu={{ seite: 'einheiten', objektId: o.id }}>Alle Einheiten →</L></div>
+        <div className="einheitenraster">
+          {einheiten?.map((e) => (
+            <div key={e.id} className="einheitkarte klickbar" data-ziel={`einheit:${e.id}`} onClick={() => navi.zu({ einheit: e.id })}>
+              <div className="kopf"><L zu={{ einheit: e.id }}>{e.bezeichnung}</L><span className="klein hinweis">{e.art}{e.wohnflaeche ? ` · ${zahl(e.wohnflaeche)} m²` : ''}</span></div>
+              {miete && <div className="zeile"><span className="klein hinweis">Mieter</span>{e.mieter ? <L zu={{ person: e.mieter_id }}>{e.mieter}</L> : <i className="hinweis">{e.selbstgenutzt ? 'selbst genutzt' : 'leer'}</i>}</div>}
+              {weg && <div className="zeile"><span className="klein hinweis">Eigentum</span>{e.eigentuemer ? <L zu={{ person: e.eigentuemer_id }}>{e.eigentuemer}</L> : <i className="hinweis">–</i>}</div>}
+            </div>
+          ))}
+          {einheiten && !einheiten.length && <Leer text="Noch keine Einheiten." aktion={<button onClick={() => navi.zu({ seite: 'einheiten', objektId: o.id })}>Einheiten anlegen</button>} />}
         </div>
       </div>
-      <div className="cockpit-raster">
-        <div>
+      <div className="raster2">
+        <div className="spalte">
           <div className="panel">
-            <h3>Offene Vorgänge</h3>
-            {s.vorgaenge.length ? <ul className="hinweisliste">{s.vorgaenge.map((v: Row) => (
-              <li key={v.id} className="klickbar" onClick={() => props.oeffne('vorgaenge', o.id)}><div className="inhalt">{v.titel}<div className="klein hinweis">{v.faellig ? `fällig ${datum(v.faellig)}` : v.status}</div></div></li>
-            ))}</ul> : <p className="hinweis">Keine.</p>}
+            <div className="panelkopf"><h3>Offene Vorgänge</h3><L zu={{ seite: 'vorgaenge', objektId: o.id }}>Alle →</L></div>
+            {s.vorgaenge.length ? <ul className="liste">{s.vorgaenge.map((v: Row) => (
+              <li key={v.id}><L zu={{ vorgang: v.id, objektId: o.id }}>{v.titel}</L><span className="klein hinweis">{v.faellig ? `fällig ${datum(v.faellig)}` : v.status}</span></li>
+            ))}</ul> : <p className="hinweis klein">Keine.</p>}
           </div>
           <div className="panel">
-            <h3>Letzte Dokumente</h3>
-            <ul className="hinweisliste">{s.dokumente.map((d: Row) => (
-              <li key={d.id} className="klickbar" onClick={() => setDok(d)}><div className="inhalt">{d.titel}<div className="klein hinweis">{[d.typ, datum(d.datum ?? d.erfasst)].filter(Boolean).join(' · ')}</div></div></li>
+            <div className="panelkopf"><h3>Letzte Dokumente</h3><L zu={{ seite: 'archiv', objektId: o.id }}>Archiv →</L></div>
+            <ul className="liste">{s.dokumente.map((d: Row) => (
+              <li key={d.id}><L zu={{ dokument: d.id, datei: d.datei }}>{d.titel}</L><span className="klein hinweis">{[d.typ, datum(d.datum ?? d.erfasst)].filter(Boolean).join(' · ')}</span></li>
             ))}</ul>
-            <button className="link" onClick={() => props.oeffne('archiv')}>Alle im Archiv →</button>
           </div>
-          <div className="panel">
-            <h3>Zeitleiste</h3>
-            <Zeitleiste eintraege={s.zeitleiste} />
-          </div>
+          <div className="panel"><div className="panelkopf"><h3>Zeitleiste</h3></div><Zeitleiste eintraege={s.zeitleiste} /></div>
         </div>
-        <div>
-          {(s.kontakte.length > 0) && <div className="panel"><h3>Ansprechpartner</h3>
-            <ul className="hinweisliste">{s.kontakte.map((k: Row, i: number) => <li key={i}><div className="inhalt"><b>{k.name}</b> <span className="klein hinweis">{k.rolle}</span>
-              <div className="klein">{[k.telefon || k.mobil, k.email].filter(Boolean).join(' · ')}</div></div></li>)}</ul></div>}
-          {(s.versicherungen.length > 0) && <div className="panel"><h3>Versicherungen & Verträge</h3>
-            <ul className="hinweisliste">{s.versicherungen.map((v: Row, i: number) => <li key={i}><div className="inhalt">{v.art} <span className="klein hinweis">{v.gesellschaft}</span>
-              <div className="klein">{v.beitrag_ct != null ? `${euro(v.beitrag_ct)} / Jahr` : ''}{v.kuendbar_bis ? ` · kündbar bis ${datum(v.kuendbar_bis)}` : ''}</div></div></li>)}</ul></div>}
-          {(s.darlehen.length > 0) && <div className="panel"><h3>Finanzierung</h3>
-            <ul className="hinweisliste">{s.darlehen.map((d: Row) => <li key={d.id} className="klickbar" onClick={() => props.oeffne('darlehen', o.id)}><div className="inhalt">{d.bank} · {euro(d.betrag_ct)} zu {zahl(d.zinssatz)} %
-              <div className="klein hinweis">{d.zinsbindung_bis ? `Zinsbindung bis ${datum(d.zinsbindung_bis)}` : ''}</div></div></li>)}</ul></div>}
-          {(s.projekte.length > 0) && <div className="panel"><h3>Laufende Projekte</h3>
-            <ul className="hinweisliste">{s.projekte.map((p: Row) => <li key={p.id}><div className="inhalt">{p.titel}<div className="klein hinweis">{p.status}</div></div></li>)}</ul></div>}
+        <div className="spalte">
+          <div className="panel">
+            <div className="panelkopf"><h3>Ansprechpartner</h3><L zu={{ seite: 'kontakte', objektId: o.id }}>Bearbeiten →</L></div>
+            {s.kontakte.length ? <ul className="liste">{s.kontakte.map((k: Row, i: number) => (
+              <li key={i}><span><L zu={{ person: k.person_id }}>{k.name}</L> <span className="klein hinweis">{ROLLEN.find(([r]) => r === k.rolle)?.[1] ?? k.rolle}</span></span><span className="klein">{[k.telefon || k.mobil, k.email].filter(Boolean).join(' · ')}</span></li>
+            ))}</ul> : <p className="hinweis klein">Noch keine (z. B. Hausmeister, Beirat, Handwerker).</p>}
+          </div>
+          {s.versicherungen.length > 0 && <div className="panel">
+            <div className="panelkopf"><h3>Versicherungen & Verträge</h3><L zu={{ seite: 'versicherungen', objektId: o.id }}>Alle →</L></div>
+            <ul className="liste">{s.versicherungen.map((v: Row, i: number) => <li key={i}><span>{v.art} <span className="klein hinweis">{v.gesellschaft}</span></span>
+              <span className="klein">{v.beitrag_ct != null ? `${euro(v.beitrag_ct)} / Jahr` : ''}{v.kuendbar_bis ? ` · kündbar bis ${datum(v.kuendbar_bis)}` : ''}</span></li>)}</ul></div>}
+          {s.darlehen.length > 0 && <div className="panel">
+            <div className="panelkopf"><h3>Finanzierung</h3><L zu={{ seite: 'darlehen', objektId: o.id }}>Darlehen →</L></div>
+            <ul className="liste">{s.darlehen.map((d: Row) => <li key={d.id}><span>{d.bank} · {euro(d.betrag_ct)} zu {zahl(d.zinssatz)} %</span>
+              <span className="klein hinweis">{d.zinsbindung_bis ? `Zinsbindung bis ${datum(d.zinsbindung_bis)}` : ''}</span></li>)}</ul></div>}
+          {s.projekte.length > 0 && <div className="panel"><div className="panelkopf"><h3>Laufende Projekte</h3></div>
+            <ul className="liste">{s.projekte.map((p: Row) => <li key={p.id}><L zu={{ projekt: p.id }}>{p.titel}</L><span className="klein hinweis">{p.status}</span></li>)}</ul></div>}
+          <div className="panel"><div className="panelkopf"><h3>Kennzahlen</h3></div>
+            <div className="fakten einspaltig">
+              {s.zaehler ? <div className="fakt"><span>Zähler</span><b><L zu={{ seite: 'zaehler', objektId: o.id }}>{s.zaehler} Zähler</L></b></div> : null}
+              {o.kaufpreis_ct ? <div className="fakt"><span>Kaufpreis</span><b>{euro(o.kaufpreis_ct)}{o.kaufdatum ? ` (${o.kaufdatum.slice(0, 4)})` : ''}</b></div> : null}
+              {o.iban ? <div className="fakt"><span>Objektkonto</span><b>{o.iban}</b></div> : null}
+              {weg && <div className="fakt"><span>Eigentümer</span><b>{s.eigentuemer}</b></div>}
+            </div>
+          </div>
         </div>
       </div>
       <h3>Fotos & Dokumente</h3>
@@ -122,70 +142,7 @@ export function Steckbrief(props: { objekt: Row; oeffne: (seite: string, id?: nu
           ))}</div>
         </Dialog>
       )}
-      {dok && <DokumentDialog id={dok.id} datei={dok.datei} onClose={() => setDok(null)} />}
     </section>
-  );
-}
-
-export function PersonAkte(props: { personId: number; onClose: () => void; oeffne?: (seite: string, id?: number) => void }) {
-  const [a] = useLoad<Row>(() => call('personAkte', props.personId), [props.personId]);
-  const [edit, setEdit] = useState(false);
-  const [dok, setDok] = useState<Row | null>(null);
-  if (!a) return null;
-  const p = a.person;
-  return (
-    <Dialog titel={`Akte: ${p.name}`} onClose={props.onClose} breit aktionen={<>
-      {p.email && <button className="icon" onClick={() => window.hv.extern(`mailto:${p.email}`)}><I.Mail size={15} />E-Mail</button>}
-      <button className="icon" onClick={() => setEdit(true)}><I.Pencil size={15} />Bearbeiten</button></>}>
-      <div className="fakten" style={{ marginBottom: 14 }}>
-        <div><span>Anschrift</span><b>{[p.strasse, [p.plz, p.ort].filter(Boolean).join(' ')].filter(Boolean).join(', ') || '–'}</b></div>
-        <div><span>Telefon</span><b>{p.telefon || p.mobil || '–'}</b></div>
-        <div><span>E-Mail</span><b>{p.email || '–'}</b></div>
-        <div><span>IBAN</span><b>{p.iban || '–'}</b></div>
-        {a.rollen.map((r: Row, i: number) => <div key={i}><span>Rolle</span><b>{r.rolle} · {r.objekt}</b></div>)}
-      </div>
-      <div className="cockpit-raster">
-        <div>
-          <h3>Verträge</h3>
-          <table>
-            <thead><tr><th>Art</th><th>Objekt / Einheit</th><th>Zeitraum</th><th className="num">Monatlich</th><th className="num">Kontostand</th></tr></thead>
-            <tbody>{a.vertraege.map((v: Row) => (
-              <tr key={v.typ + v.id} className={v.ende && v.ende < heute() ? 'inaktiv' : ''}>
-                <td>{v.typ === 'weg' ? 'Eigentum' : 'Miete'}</td><td>{v.objekt} · {v.einheit}</td><td className="klein">{datum(v.beginn)} – {datum(v.ende)}</td>
-                <td className="num">{euro(v.monatlich_ct)}</td>
-                <td className={`num ${v.saldo_ct > 0 ? 'negativ' : ''}`}>{v.saldo_ct > 0 ? `Rückstand ${euro(v.saldo_ct)}` : v.saldo_ct < 0 ? `Guthaben ${euro(-v.saldo_ct)}` : 'ausgeglichen'}</td>
-              </tr>
-            ))}{!a.vertraege.length && <tr><td colSpan={5} className="hinweis">Keine Verträge.</td></tr>}</tbody>
-          </table>
-          {a.zahlungen.length > 0 && <>
-            <h3>Letzte Zahlungen</h3>
-            <table><tbody>{a.zahlungen.map((z: Row, i: number) => <tr key={i}><td>{datum(z.datum)}</td><td className="klein">{z.text}</td>
-              <td className={`num ${z.richtung === 'aus' ? 'negativ' : ''}`}>{z.richtung === 'aus' ? '−' : ''}{euro(z.betrag_ct)}</td></tr>)}</tbody></table>
-          </>}
-          {a.dokumente.length > 0 && <>
-            <h3>Dokumente</h3>
-            <ul className="hinweisliste">{a.dokumente.map((d: Row) => <li key={d.id} className="klickbar" onClick={() => setDok(d)}>
-              <div className="inhalt">{d.titel}<div className="klein hinweis">{[d.typ, datum(d.datum ?? d.erfasst)].filter(Boolean).join(' · ')}</div></div></li>)}</ul>
-          </>}
-        </div>
-        <div>
-          {a.vorgaenge.length > 0 && <><h3>Vorgänge</h3><ul className="hinweisliste">{a.vorgaenge.map((v: Row) => <li key={v.id}>
-            <div className="inhalt">{v.titel}<div className="klein hinweis">{v.status}{v.faellig ? ` · ${datum(v.faellig)}` : ''}{v.objekt ? ` · ${v.objekt}` : ''}</div></div></li>)}</ul></>}
-          {a.schluessel.length > 0 && <><h3>Schlüssel</h3><ul className="hinweisliste">{a.schluessel.map((k: Row, i: number) => <li key={i}>
-            <div className="inhalt">{k.anzahl}× {k.bezeichnung} {k.nummer}<div className="klein hinweis">ausgegeben {datum(k.ausgabe)}{k.rueckgabe ? ` · zurück ${datum(k.rueckgabe)}` : ''}</div></div></li>)}</ul></>}
-          <h3>Zeitleiste</h3>
-          <Zeitleiste eintraege={a.zeitleiste} />
-        </div>
-      </div>
-      {edit && <FormDialog title="Person bearbeiten" row={p} fields={[
-        { key: 'anrede', label: 'Anrede', type: 'select', options: ['Herr', 'Frau', 'Divers', 'Firma', 'Eheleute'].map((x) => [x, x]) },
-        { key: 'titel', label: 'Titel' }, { key: 'vorname', label: 'Vorname' }, { key: 'nachname', label: 'Nachname' }, { key: 'firma', label: 'Firma', wide: true },
-        { key: 'strasse', label: 'Straße', wide: true }, { key: 'plz', label: 'PLZ' }, { key: 'ort', label: 'Ort' },
-        { key: 'telefon', label: 'Telefon' }, { key: 'mobil', label: 'Mobil' }, { key: 'email', label: 'E-Mail', wide: true },
-        { key: 'iban', label: 'IBAN' }, { key: 'bic', label: 'BIC' }, { key: 'notiz', label: 'Notiz', type: 'textarea' }]}
-        onSave={(r) => call('save', 'personen', r)} onClose={() => setEdit(false)} />}
-      {dok && <DokumentDialog id={dok.id} datei={dok.datei} onClose={() => setDok(null)} />}
-    </Dialog>
   );
 }
 
@@ -204,7 +161,7 @@ export function Darlehen(props: { objekt: Row }) {
   const [plan, setPlan] = useState<Row | null>(null);
   return (
     <section>
-      <div className="toolbar"><h1>Darlehen – {props.objekt.bezeichnung}</h1><span className="spacer" />
+      <div className="toolbar"><h1>Darlehen</h1><span className="spacer" />
         <button className="primary" onClick={() => setEdit({ zinssatz: 3.5, tilgung_satz: 2, erste_rate: heute() })}>Neues Darlehen</button></div>
       <p className="hinweis klein">
         Raten, die du im Bankimport dem Darlehenskonto zuordnest, werden automatisch in Zinsen (Werbungskosten, Anlage V) und Tilgung aufgeteilt.

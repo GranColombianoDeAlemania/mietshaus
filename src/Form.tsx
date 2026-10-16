@@ -45,7 +45,8 @@ export function FormDialog(props: {
   onSave: (row: Row) => Promise<unknown>;
   onDelete?: () => Promise<unknown>;
   onClose: () => void;
-  extra?: ReactNode;
+  // Extra content below the fields; a function gets the values as currently entered (as text).
+  extra?: ReactNode | ((current: Row) => ReactNode);
 }) {
   const felderFuer = (r: Row) => (typeof props.fields === 'function' ? props.fields(r) : props.fields);
   const [f, setF] = useState(() => toForm(felderFuer(props.row), props.row));
@@ -118,7 +119,7 @@ export function FormDialog(props: {
             )];
           })}
         </div>
-        {props.extra}
+        {typeof props.extra === 'function' ? props.extra({ ...props.row, ...f }) : props.extra}
         {fehler && <p className="fehler">{fehler}</p>}
         <div className="buttons">
           {props.onDelete && props.row.id && (

@@ -94,10 +94,19 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME }) {
     dokumentTypen: () => TYPEN,
 
     // Stores recognised text and fills empty fields from the rule-based extraction.
-    analyseSpeichern: (id, text, seiten, ocr) => tx(() => {
+    analyseSpeichern: (id, text, seiten, ocr, er = null) => tx(() => {
       const d = get('SELECT * FROM dokumente WHERE id = ?', id);
       const f = felderErkennen(text ?? '');
       const z = zuordnungVorschlagen(text ?? '');
+      // E-invoice data is exact: it replaces what was guessed from the text.
+      if (er) {
+        db.prepare(`UPDATE dokumente SET erechnung = ?, typ = ?, betrag_ct = ?, netto_ct = ?, ust_ct = ?, datum = coalesce(?, datum), faellig = coalesce(?, faellig),
+          absender = coalesce(?, absender), rechnungsnr = coalesce(?, rechnungsnr), iban = coalesce(?, iban) WHERE id = ?`)
+          .run(JSON.stringify(er), er.gutschrift ? 'Gutschrift' : 'Rechnung', er.zahlbetrag_ct ?? er.brutto_ct ?? null, er.netto_ct ?? null, er.ust_ct ?? null,
+            er.datum ?? null, er.faellig ?? null, er.verkaeufer?.name ?? null, er.nummer ?? null, er.iban ?? null, id);
+        if (d && (!d.titel || d.titel === d.name?.replace(/\.[^.]+$/, ''))) db.prepare('UPDATE dokumente SET titel = ? WHERE id = ?')
+          .run(`${er.gutschrift ? 'Gutschrift' : 'Rechnung'} ${er.verkaeufer?.name ?? ''} ${er.nummer ?? ''}`.replace(/\s+/g, ' ').trim(), id);
+      }
       db.prepare(`UPDATE dokumente SET text = ?, seiten = ?, ocr = ?, analyse = 'fertig',
         typ = coalesce(typ, ?), betrag_ct = coalesce(betrag_ct, ?), datum = coalesce(datum, ?), faellig = coalesce(faellig, ?),
         absender = coalesce(absender, ?), rechnungsnr = coalesce(rechnungsnr, ?), iban = coalesce(iban, ?),
@@ -114,16 +123,16 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME }) {
     dokumentNeu: (row) => {
       const vorhanden = row.sha256 ? get('SELECT id, titel, status FROM dokumente WHERE sha256 = ?', row.sha256) : null;
       if (vorhanden) return { id: vorhanden.id, doppelt: true, titel: vorhanden.titel };
-      const id = Number(db.prepare(`INSERT INTO dokumente (objekt_id, einheit_id, projekt_id, typ, titel, datei, name, groesse, sha256, status, quelle, erfasst, analyse)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, date('now'), 'offen')`).run(row.objekt_id ?? null, row.einheit_id ?? null, row.projekt_id ?? null,
-        row.typ ?? null, row.titel, row.datei, row.name, row.groesse, row.sha256 ?? null, row.status ?? 'postfach', row.quelle ?? 'upload').lastInsertRowid);
+      const id = Number(db.prepare(`INSERT INTO dokumente (objekt_id, einheit_id, projekt_id, person_id, buchung_id, typ, titel, datei, name, groesse, sha256, status, quelle, erfasst, analyse)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, date('now'), 'offen')`).run(row.objekt_id ?? null, row.einheit_id ?? null, row.projekt_id ?? null,
+        row.person_id ?? null, row.buchung_id ?? null, row.typ ?? null, row.titel, row.datei, row.name, row.groesse, row.sha256 ?? null, row.status ?? 'postfach', row.quelle ?? 'upload').lastInsertRowid);
       indexieren(id);
       return { id, doppelt: false };
     },
 
     dokumentSpeichern: (row) => {
       const cols = ['objekt_id', 'projekt_id', 'person_id', 'einheit_id', 'titel', 'kategorie', 'datum', 'notiz', 'status', 'typ', 'betrag_ct',
-        'absender', 'rechnungsnr', 'iban', 'faellig', 'zusammenfassung', 'buchung_id'];
+        'absender', 'rechnungsnr', 'iban', 'faellig', 'zusammenfassung', 'buchung_id', 'netto_ct', 'ust_ct'];
       const keys = cols.filter((c) => c in row);
       if (keys.length) db.prepare(`UPDATE dokumente SET ${keys.map((k) => `${k} = ?`).join(', ')} WHERE id = ?`)
         .run(...keys.map((k) => (row[k] === '' || row[k] === undefined ? null : row[k])), row.id);
@@ -131,7 +140,17 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME }) {
       return row.id;
     },
 
-    dokument: (id) => get(`SELECT d.*, o.bezeichnung AS objekt, e.bezeichnung AS einheit, ${PERSON_NAME} AS person
+    // Drag & drop of a filed or inbox document onto a person, unit, contract or posting.
+    dokumentZuordnen: (id, ziel) => {
+      const erlaubt = ['objekt_id', 'einheit_id', 'person_id', 'buchung_id', 'projekt_id'];
+      const werte = Object.fromEntries(Object.entries(ziel).filter(([k, v]) => erlaubt.includes(k) && v != null));
+      const keys = Object.keys(werte);
+      if (keys.length) db.prepare(`UPDATE dokumente SET ${keys.map((k) => `${k} = ?`).join(', ')}, status = 'abgelegt' WHERE id = ?`).run(...keys.map((k) => werte[k]), id);
+      indexieren(id);
+    },
+
+    dokument: (id) => get(`SELECT d.*, o.bezeichnung AS objekt, e.bezeichnung AS einheit, ${PERSON_NAME} AS person,
+        (SELECT b.soll_id FROM buchungen b WHERE b.id = d.buchung_id) AS buchung_konto_id, (SELECT b.datum FROM buchungen b WHERE b.id = d.buchung_id) AS buchung_datum
       FROM dokumente d LEFT JOIN objekte o ON o.id = d.objekt_id LEFT JOIN einheiten e ON e.id = d.einheit_id
       LEFT JOIN personen p ON p.id = d.person_id WHERE d.id = ?`, id),
 
@@ -139,7 +158,7 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME }) {
     dokumentListe: ({ q = '', status = null, objekt_id = null, projekt_id = null, typ = null, jahr = null, limit = 300 } = {}) => {
       const fts = ftsAbfrage(q);
       const sql = `SELECT d.id, d.titel, d.typ, d.kategorie, d.datum, d.erfasst, d.status, d.analyse, d.name, d.datei, d.groesse, d.betrag_ct,
-          d.absender, d.objekt_id, d.buchung_id, d.ocr, d.seiten, o.bezeichnung AS objekt, e.bezeichnung AS einheit, ${PERSON_NAME} AS person,
+          d.absender, d.objekt_id, d.einheit_id, d.person_id, d.buchung_id, d.ocr, d.seiten, o.bezeichnung AS objekt, e.bezeichnung AS einheit, ${PERSON_NAME} AS person,
           (SELECT min(x.id) FROM dokumente x WHERE x.id <> d.id AND x.rechnungsnr IS NOT NULL AND x.rechnungsnr = d.rechnungsnr
           AND coalesce(x.betrag_ct, -1) = coalesce(d.betrag_ct, -1) AND coalesce(x.absender, '') = coalesce(d.absender, '')) AS duplikat_von
           ${fts ? ", snippet(dokumente_fts, 1, '[', ']', ' … ', 12) AS treffer" : ''}
@@ -165,11 +184,12 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME }) {
     }),
 
     // Photos and documents linked to an object, a unit or a project (for the galleries).
-    galerie: ({ objekt_id = null, einheit_id = null, projekt_id = null, nur_bilder = false } = {}) => all(`SELECT d.id, d.titel, d.typ, d.datum, d.erfasst,
+    galerie: ({ objekt_id = null, einheit_id = null, projekt_id = null, person_id = null, nur_bilder = false } = {}) => all(`SELECT d.id, d.titel, d.typ, d.datum, d.erfasst,
         d.datei, d.name, d.einheit_id, d.status, e.bezeichnung AS einheit FROM dokumente d LEFT JOIN einheiten e ON e.id = d.einheit_id
       WHERE d.status <> 'postfach' AND (?1 IS NULL OR d.objekt_id = ?1) AND (?2 IS NULL OR d.einheit_id = ?2) AND (?3 IS NULL OR d.projekt_id = ?3)
+        AND (?5 IS NULL OR d.person_id = ?5)
         AND (?4 = 0 OR lower(d.datei) GLOB '*.png' OR lower(d.datei) GLOB '*.jp*g' OR lower(d.datei) GLOB '*.webp' OR lower(d.datei) GLOB '*.gif')
-      ORDER BY coalesce(d.datum, d.erfasst) DESC, d.id DESC`, objekt_id, einheit_id, projekt_id, nur_bilder ? 1 : 0),
+      ORDER BY coalesce(d.datum, d.erfasst) DESC, d.id DESC`, objekt_id, einheit_id, projekt_id, nur_bilder ? 1 : 0, person_id),
 
     postfachAnzahl: () => get(`SELECT count(*) AS n FROM dokumente WHERE status = 'postfach'`).n,
 
@@ -177,7 +197,7 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME }) {
 
     // Invoices with their booking and payment state.
     rechnungen: ({ objekt_id = null, jahr = null } = {}) => all(`SELECT d.id, d.titel, d.datum, d.faellig, d.betrag_ct, d.absender, d.rechnungsnr,
-        d.iban, d.buchung_id, d.datei, d.status, o.bezeichnung AS objekt, b.datum AS gebucht_am, k.bezeichnung AS konto, g.klasse AS gegen_klasse,
+        d.iban, d.buchung_id, d.datei, d.status, d.objekt_id, o.bezeichnung AS objekt, b.datum AS gebucht_am, k.id AS konto_id, k.bezeichnung AS konto, g.klasse AS gegen_klasse,
         (SELECT min(x.id) FROM dokumente x WHERE x.id <> d.id AND x.rechnungsnr IS NOT NULL AND x.rechnungsnr = d.rechnungsnr
           AND coalesce(x.betrag_ct, -1) = coalesce(d.betrag_ct, -1) AND coalesce(x.absender, '') = coalesce(d.absender, '')) AS duplikat_von
       FROM dokumente d LEFT JOIN objekte o ON o.id = d.objekt_id LEFT JOIN buchungen b ON b.id = d.buchung_id

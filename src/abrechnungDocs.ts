@@ -12,15 +12,16 @@ function p35aTabelle(p: Row) {
   ])}<p class="klein">Bei Handwerkerleistungen ist nur der Lohnanteil begünstigt; bitte prüfen Sie die Rechnungen bei Bedarf bei uns.</p>`;
 }
 
-export function nkBrief(a: Row, e: Row, absender: Absender, objekt: Row, mieter: Row, neu: { bk: number; hk: number; ab: string } | null) {
+export function nkBrief(a: Row, e: Row, absender: Absender, objekt: Row, mieter: Row, neu: { bk: number; hk: number; ab: string } | null, vzOffen = 0) {
   const s = e.segment;
   const zeilen = a.posten.map((p: Row, i: number) => [esc(p.label), `#r${euro(p.gesamt_ct)}`, esc(p.schluessel),
     `#r${p.gesamt_einheiten ? z(p.gesamt_einheiten) : ''}`, `#r${e.anteile[i].einheiten ? z(e.anteile[i].einheiten) : ''}`, `#r${euro(e.anteile[i].ct)}`])
     .filter((_: unknown, i: number) => a.posten[i].gesamt_ct !== 0);
-  const ergebnis = e.ergebnis_ct > 0
-    ? `Aus der Abrechnung ergibt sich eine <b>Nachzahlung von ${euro(e.ergebnis_ct)}</b>. Bitte überweisen Sie den Betrag innerhalb von 30 Tagen nach Zugang dieser Abrechnung auf das unten genannte Konto.`
-    : e.ergebnis_ct < 0
-      ? `Aus der Abrechnung ergibt sich ein <b>Guthaben von ${euro(-e.ergebnis_ct)}</b> zu Ihren Gunsten. Wir überweisen Ihnen den Betrag bzw. verrechnen ihn mit der nächsten Mietzahlung.`
+  const brutto = e.ergebnis_ct + (e.ust_ct ?? 0);
+  const ergebnis = brutto > 0
+    ? `Aus der Abrechnung ergibt sich eine <b>Nachzahlung von ${euro(brutto)}</b>. Bitte überweisen Sie den Betrag innerhalb von 30 Tagen nach Zugang dieser Abrechnung auf das unten genannte Konto.`
+    : brutto < 0
+      ? `Aus der Abrechnung ergibt sich ein <b>Guthaben von ${euro(-brutto)}</b> zu Ihren Gunsten. Wir überweisen Ihnen den Betrag bzw. verrechnen ihn mit der nächsten Mietzahlung.`
       : 'Ihre Vorauszahlungen decken die Kosten genau.';
   const inhalt = `
     <p>${esc(anrede(mieter))}</p>
@@ -30,11 +31,14 @@ export function nkBrief(a: Row, e: Row, absender: Absender, objekt: Row, mieter:
       { summe: ['Summe Ihrer Kosten', '', '', '', '', `#r${euro(e.kosten_ct)}`] })}
     ${tabelle(['Abrechnung', '#rBetrag'], [
       ['Ihre Kosten', `#r${euro(e.kosten_ct)}`],
-      ['abzüglich Betriebskosten-Vorauszahlungen', `#r${euro(-e.bk_vz_ct)}`],
-      ['abzüglich Heizkosten-Vorauszahlungen', `#r${euro(-e.hk_vz_ct)}`],
-    ], { summe: [e.ergebnis_ct > 0 ? 'Nachzahlung' : 'Guthaben', `#r${euro(Math.abs(e.ergebnis_ct))}`] })}
+      [`abzüglich Betriebskosten-Vorauszahlungen${e.ust_ct ? ' (netto)' : ''}`, `#r${euro(-e.bk_vz_ct)}`],
+      [`abzüglich Heizkosten-Vorauszahlungen${e.ust_ct ? ' (netto)' : ''}`, `#r${euro(-e.hk_vz_ct)}`],
+      ...(e.ust_ct ? [[`Ergebnis netto`, `#r${euro(e.ergebnis_ct)}`], [`zuzüglich ${e.ust_satz} % Umsatzsteuer`, `#r${euro(e.ust_ct)}`]] : []),
+    ], { summe: [e.ergebnis_ct > 0 ? 'Nachzahlung' : 'Guthaben', `#r${euro(Math.abs(e.ergebnis_ct + (e.ust_ct ?? 0)))}`] })}
     <p>${ergebnis}</p>
-    ${a.co2 ? `<p class="klein">CO₂-Kostenaufteilung: Das Gebäude verursacht ${a.co2.kg_pro_qm.toFixed(1)} kg CO₂ je m² Wohnfläche und Jahr. Der Vermieter trägt daher ${a.co2.vermieter_prozent} % der CO₂-Kosten (${euro(a.co2.kosten_ct)} gesamt); dieser Anteil ist oben bereits abgezogen.</p>` : ''}
+    ${vzOffen > 0 ? `<p>Bitte beachten Sie: Von den Vorauszahlungen für diesen Zeitraum sind ${euro(vzOffen)} noch nicht bei uns eingegangen. Die Abrechnung berücksichtigt die vereinbarten Vorauszahlungen;
+      ${brutto + vzOffen > 0 ? `insgesamt sind damit noch <b>${euro(brutto + vzOffen)}</b> zu zahlen.` : `nach Verrechnung mit den offenen Vorauszahlungen verbleibt ein Guthaben von <b>${euro(-(brutto + vzOffen))}</b>.`}</p>` : ''}
+    ${a.co2 ? `<p class="klein">CO₂-Kostenaufteilung: Das Gebäude verursacht ${a.co2.kg_pro_qm.toFixed(1).replace('.', ',')} kg CO₂ je m² Wohnfläche und Jahr. Der Vermieter trägt daher ${a.co2.vermieter_prozent} % der CO₂-Kosten (${euro(a.co2.kosten_ct)} gesamt); dieser Anteil ist oben bereits abgezogen.</p>` : ''}
     ${neu ? `<p>Ab dem ${datum(neu.ab)} betragen Ihre monatlichen Vorauszahlungen für Betriebskosten <b>${euro(neu.bk)}</b> und für Heizkosten <b>${euro(neu.hk)}</b>.</p>` : ''}
     ${p35aTabelle(e.p35a)}
     <p class="klein">Die Belege können Sie nach Terminvereinbarung bei uns einsehen. Einwendungen gegen die Abrechnung sind spätestens bis zum Ablauf des zwölften Monats nach Zugang mitzuteilen (§ 556 Abs. 3 BGB).</p>

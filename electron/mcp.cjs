@@ -64,8 +64,9 @@ function starten() {
     { id: z.number().int(), bilder: z.boolean().optional().describe('Seitenbilder mitsenden (Standard: nur wenn per Texterkennung gelesen)') }, ({ id, bilder }) => {
       const d = db.dokument(id);
       if (!d) throw new Error('Dokument nicht gefunden');
-      const { text: inhalt, ...felder } = d;
-      const out = [{ type: 'text', text: JSON.stringify({ ...felder, betrag_eur: eur(d.betrag_ct), text: (inhalt ?? '').slice(0, 60000) }, null, 1) }];
+      const { text: inhalt, erechnung, ...felder } = d;
+      // E-invoices (ZUGFeRD / XRechnung) carry exact data: sender, number, net, VAT, IBAN, line items.
+      const out = [{ type: 'text', text: JSON.stringify({ ...felder, betrag_eur: eur(d.betrag_ct), erechnung: erechnung ? JSON.parse(erechnung) : null, text: (inhalt ?? '').slice(0, 60000) }, null, 1) }];
       if (bilder ?? !!d.ocr) {
         const ext = path.extname(d.datei).toLowerCase();
         const dateien = MIME[ext] ? [path.join(dokumente, d.datei)]
@@ -127,6 +128,9 @@ function starten() {
   werkzeug('hinweise', 'Was das Programm gerade für wichtig hält: Rückstände, Fristen (z. B. Betriebskostenabrechnung), fehlende Unterlagen, Chancen wie mögliche Mieterhöhungen. Gut für ein Tagesbriefing.',
     {}, () => text(db.hinweise().map((h) => ({ dringlichkeit: h.stufe, bereich: h.kategorie, objekt: h.objekt, text: h.text }))), true);
 
+  werkzeug('pruefbericht', 'Prüft alle Daten auf Fehler und Lücken (Stammdaten, Verträge, Buchhaltung, Abrechnung, Dokumente, Steuer) und nennt, was zu tun ist.',
+    {}, () => text(db.pruefbericht({}).punkte.map((p) => ({ stufe: p.stufe, bereich: p.bereich, text: p.text, hilfe: p.hilfe }))), true);
+
   // ---------- writing ----------
   werkzeug('dokument_ablegen', 'Setzt die Angaben eines Dokuments und legt es (standardmäßig) aus dem Postfach ins Archiv ab.', {
     id: z.number().int(), typ: z.string().optional().describe(`Einer von: ${db.dokumentTypen().join(', ')}`), titel: z.string().optional(),
@@ -143,6 +147,7 @@ function starten() {
   werkzeug('rechnung_buchen', 'Bucht eine bezahlte Rechnung (Kostenkonto an Geldkonto) bzw. Gutschrift und verknüpft den Beleg mit der Buchung.', {
     dokument_id: z.number().int(), kosten_konto_id: z.number().int(), geld_konto_id: z.number().int().optional(),
     datum: z.string().optional().describe('Zahlungsdatum, Standard: Rechnungsdatum'), betrag_eur: z.number().optional(), text: z.string().optional(),
+    vorsteuer_abziehen: z.boolean().optional().describe('Bei Objekten mit umsatzsteuerpflichtiger Vermietung: Umsatzsteuer der E-Rechnung als Vorsteuer buchen (Standard: ja, wenn bekannt)'),
   }, (a) => {
     const d = db.dokument(a.dokument_id);
     if (!d) throw new Error('Dokument nicht gefunden');
@@ -152,10 +157,15 @@ function starten() {
     const betrag = cent(a.betrag_eur) ?? d.betrag_ct;
     if (!betrag) throw new Error('Kein Betrag bekannt.');
     const gutschrift = d.typ === 'Gutschrift';
+    // Input tax: only with an exact VAT amount (e-invoice) and a VAT-able letting in the house; mixed houses deduct their share.
+    const vst = db.konten(d.objekt_id).find((k) => k.klasse === 'steuer' && k.kategorie === 'vorsteuer19');
+    const quote = db.get('objekte', d.objekt_id)?.vorsteuer_quote ?? 100;
+    const abziehbar = vst && d.ust_ct && (a.vorsteuer_abziehen ?? true) && betrag === d.betrag_ct ? Math.round(d.ust_ct * quote / 100) : 0;
+    const pos = [{ konto: a.kosten_konto_id, ct: betrag - abziehbar }, ...(abziehbar ? [{ konto: vst.id, ct: abziehbar }] : [])];
     const id = db.buchen({ objekt_id: d.objekt_id, datum: a.datum ?? d.datum, beleg: d.rechnungsnr, text: (a.text ?? [d.absender, d.titel].filter(Boolean).join(' – ')).slice(0, 120),
-      positionen: [gutschrift ? { soll_id: geld, haben_id: a.kosten_konto_id, betrag_ct: betrag } : { soll_id: a.kosten_konto_id, haben_id: geld, betrag_ct: betrag }] });
+      positionen: pos.map((p) => (gutschrift ? { soll_id: geld, haben_id: p.konto, betrag_ct: p.ct } : { soll_id: p.konto, haben_id: geld, betrag_ct: p.ct })) });
     db.dokumentSpeichern({ id: d.id, buchung_id: id, status: 'abgelegt' });
-    return text(`Gebucht (Buchung ${id}) und Beleg verknüpft.`);
+    return text(`Gebucht (Buchung ${id})${abziehbar ? `, davon ${(abziehbar / 100).toFixed(2)} € Vorsteuer` : ''}, Beleg verknüpft.`);
   });
 
   werkzeug('buchen', 'Freie Buchung mit einer oder mehreren Positionen (Soll an Haben).', {

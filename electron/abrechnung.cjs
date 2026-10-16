@@ -33,7 +33,9 @@ module.exports = function abrechnung({ db, all, get, tx, PERSON_NAME, bh }) {
   }
 
   // Value of an allocation key for one segment, and the key's total over the whole period.
-  function schluesselRechner(objektId, von, bis) {
+  // leerPersonen: persons counted for a vacant flat under a per-person key, so the landlord bears the vacancy
+  // (no fixed rule, BGH VIII ZR 180/12; tenants' associations count one person).
+  function schluesselRechner(objektId, von, bis, leerPersonen = 0) {
     const cache = new Map();
     const periodeTage = tage(von, bis);
     return (schluesselId, segmente) => {
@@ -45,15 +47,17 @@ module.exports = function abrechnung({ db, all, get, tx, PERSON_NAME, bh }) {
       let wert, gesamt;
       if (k.typ === 'personen') {
         // Person-days: each tenancy's people weighted by its days in the period.
-        wert = (s) => (s.vertrag ? (s.vertrag.personen_anzahl ?? 0) * s.tage / periodeTage : 0);
+        const leer = (e) => (!e.art || e.art === 'Wohnung' ? leerPersonen : 0);
+        wert = (s) => (s.vertrag ? s.vertrag.personen_anzahl ?? 0 : leer(s.einheit)) * s.tage / periodeTage;
         gesamt = segmente.reduce((sum, s) => sum + wert(s), 0);
       } else if (k.typ === 'zaehler') {
         const zaehler = all(`SELECT * FROM zaehler WHERE objekt_id = ? AND art = ? AND einheit_id IS NOT NULL`, objektId, k.zaehler_art);
         const verbrauchEinheit = (eid, a, b) => zaehler.filter((z) => z.einheit_id === eid).reduce((s, z) => s + bh.verbrauch(z.id, a, b), 0);
-        // Readings mark the start of a day: a segment runs until the next segment starts, the last one until the period end.
-        wert = (s) => verbrauchEinheit(s.einheit.id, s.von, s.bis >= bis ? bis : nachTag(s.bis));
+        // A reading is the meter state at the end of its day, as read that day ("Stand am 31.12."): a segment [von, bis]
+        // runs from the reading of the day before it starts to the reading of its last day. Dates without a reading are interpolated.
+        wert = (s) => verbrauchEinheit(s.einheit.id, vorTag(s.von), s.bis);
         const einheiten = [...new Set(segmente.map((s) => s.einheit.id))];
-        gesamt = einheiten.reduce((sum, eid) => sum + verbrauchEinheit(eid, von, bis), 0);
+        gesamt = einheiten.reduce((sum, eid) => sum + verbrauchEinheit(eid, vorTag(von), bis), 0);
       } else {
         // Area, co-ownership shares and unit count always come straight from the units; only manual keys use stored values.
         const einheitWert = (e) => (k.typ === 'flaeche' ? e.wohnflaeche ?? 0 : k.typ === 'mea' ? e.mea ?? 0 : k.typ === 'einheiten' ? 1 : werte[e.id] ?? 0);
@@ -80,9 +84,9 @@ module.exports = function abrechnung({ db, all, get, tx, PERSON_NAME, bh }) {
 
   // ---------- Service-charge statement (tenants) ----------
   function nkAbrechnung(objektId, von, bis, opt = {}) {
-    const o = { heizung: 'intern', verbrauchsanteil: 70, co2_kg: 0, co2_kosten_ct: 0, extern: {}, ausnahmen: [], ...opt };
+    const o = { heizung: 'intern', verbrauchsanteil: 70, co2_kg: 0, co2_kosten_ct: 0, extern: {}, ausnahmen: [], leerstand_personen: 1, ...opt };
     const segmente = abschnitte(objektId, 'miete', von, bis);
-    const rechner = schluesselRechner(objektId, von, bis);
+    const rechner = schluesselRechner(objektId, von, bis, Number(o.leerstand_personen) || 0);
     const konten = kostenImZeitraum(objektId, von, bis, 'AND k.umlagefaehig = 1');
     const flaecheKey = get(`SELECT id FROM umlageschluessel WHERE objekt_id = ? AND typ = 'flaeche' ORDER BY id LIMIT 1`, objektId)?.id;
     const ausnahme = new Set(o.ausnahmen.map(([v, k]) => `${v}:${k}`));
@@ -140,7 +144,7 @@ module.exports = function abrechnung({ db, all, get, tx, PERSON_NAME, bh }) {
       const heizIdx = posten.map((p, i) => (p.heizung ? i : -1)).filter((i) => i >= 0);
       const heizGesamt = heizIdx.reduce((s, i) => s + posten[i].gesamt_ct, 0) || 1;
       const p = posten.length;
-      posten.push({ label: `CO₂-Kostenanteil Vermieter (${prozent} %, ${kgProQm.toFixed(1)} kg CO₂/m²·a)`, gesamt_ct: -Math.round(o.co2_kosten_ct * prozent / 100), schluessel: 'Heizkostenanteil', einheit: '', gesamt_einheiten: 0, co2: true });
+      posten.push({ label: `CO₂-Kostenanteil Vermieter (${prozent} %, ${kgProQm.toFixed(1).replace('.', ',')} kg CO₂/m²·a)`, gesamt_ct: -Math.round(o.co2_kosten_ct * prozent / 100), schluessel: 'Heizkostenanteil', einheit: '', gesamt_einheiten: 0, co2: true });
       segmente.forEach((s, i) => {
         const heiz = heizIdx.reduce((sum, j) => sum + (anteil.get(i)?.[j]?.ct ?? 0), 0);
         add(i, p, -Math.round(o.co2_kosten_ct * prozent / 100 * heiz / heizGesamt), 0);
@@ -158,10 +162,13 @@ module.exports = function abrechnung({ db, all, get, tx, PERSON_NAME, bh }) {
       a.forEach((x, p) => { if (posten[p].p35a) p35a[posten[p].p35a] += x.ct; });
       // Suggested new monthly advance payments: this year's costs spread over 12 months, rounded up to whole euros.
       const monate = 12 * s.tage / tage(von, bis);
+      // Commercial lettings with VAT: the result is net, VAT is added on top.
+      const ustSatz = s.vertrag ? Number(s.vertrag.ust_satz) || 0 : 0;
+      const ergebnis = kosten - bkVz - hkVz;
       return {
         segment: { von: s.von, bis: s.bis, tage: s.tage, einheit: s.einheit, vertrag: s.vertrag, konto_id: konto?.id ?? null },
         anteile: a, kosten_ct: kosten, heiz_ct: heiz, bk_ct: kosten - heiz, bk_vz_ct: bkVz, hk_vz_ct: hkVz,
-        ergebnis_ct: kosten - bkVz - hkVz, p35a,
+        ergebnis_ct: ergebnis, ust_satz: ustSatz, ust_ct: ustSatz ? Math.round(ergebnis * ustSatz / 100) : 0, p35a,
         neu_bk_vz_ct: Math.ceil((kosten - heiz) / Math.max(1, monate) / 100) * 100,
         neu_hk_vz_ct: Math.ceil(heiz / Math.max(1, monate) / 100) * 100,
       };
@@ -170,6 +177,142 @@ module.exports = function abrechnung({ db, all, get, tx, PERSON_NAME, bh }) {
     return { typ: 'nk', objekt_id: objektId, von, bis, optionen: o, posten, ergebnisse, heizung, co2,
       summe_ct: posten.reduce((s, p) => s + p.gesamt_ct, 0),
       leerstand_ct: ergebnisse.filter((e) => !e.segment.vertrag).reduce((s, e) => s + e.kosten_ct, 0) };
+  }
+
+  // ---------- Checks before a service-charge statement goes out ----------
+  // Each point: stufe 'fehler' (must be fixed), 'warnung' (check), 'info'; text in plain German, with the legal source.
+  function nkPruefung(objektId, von, bis, opt = {}) {
+    const a = nkAbrechnung(objektId, von, bis, opt);
+    const o = a.optionen;
+    const punkte = [];
+    const add = (stufe, text, hilfe = null, extra = {}) => punkte.push({ stufe, text, hilfe, ...extra });
+    const heuteIso = new Date().toISOString().slice(0, 10);
+    const euro = (ct) => new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format((ct ?? 0) / 100);
+    const datumDe = (iso) => iso.split('-').reverse().join('.');
+    const tageP = tage(von, bis);
+
+    // Period and deadline (§ 556 Abs. 3 BGB).
+    if (tageP > 366) add('fehler', `Der Abrechnungszeitraum ist länger als zwölf Monate (${tageP} Tage).`, '§ 556 Abs. 3 Satz 1 BGB: höchstens ein Jahr.');
+    const [by, bm, bd] = bis.split('-').map(Number);
+    const monatsEnde = bd === new Date(Date.UTC(by, bm, 0)).getUTCDate();
+    const frist = monatsEnde ? new Date(Date.UTC(by + 1, bm, 0)).toISOString().slice(0, 10) : `${by + 1}-${String(bm).padStart(2, '0')}-${String(bd).padStart(2, '0')}`;
+    const rest = Math.round((Date.parse(frist) - Date.parse(heuteIso)) / 864e5);
+    if (rest < 0) add('fehler', `Die Abrechnungsfrist ist am ${datumDe(frist)} abgelaufen: Nachzahlungen können nicht mehr verlangt werden, Guthaben müssen trotzdem ausgezahlt werden.`, '§ 556 Abs. 3 Satz 3 BGB (es sei denn, die Verspätung ist nicht vom Vermieter zu vertreten).');
+    else if (rest <= 30) add('warnung', `Die Abrechnung muss bis spätestens ${datumDe(frist)} beim Mieter eingegangen sein – noch ${rest} Tage.`, '§ 556 Abs. 3 Satz 2 BGB. Zugang nachweisbar machen.');
+    else add('info', `Frist: Die Abrechnung muss bis ${datumDe(frist)} beim Mieter eingegangen sein.`, '§ 556 Abs. 3 Satz 2 BGB.');
+
+    const konten = all(`SELECT k.* FROM konten k WHERE k.objekt_id = ? AND k.klasse = 'kosten'`, objektId);
+    const kosten = (k, v = von, b = bis) => get(`SELECT coalesce(sum(betrag_ct), 0) AS s FROM buchungen WHERE soll_id = ? AND datum BETWEEN ? AND ?`, k.id, v, b).s -
+      get(`SELECT coalesce(sum(betrag_ct), 0) AS s FROM buchungen WHERE haben_id = ? AND datum BETWEEN ? AND ?`, k.id, v, b).s;
+    const umlagefaehig = konten.filter((k) => k.umlagefaehig);
+
+    // Costs that are no operating costs.
+    for (const k of umlagefaehig.filter((k) => ['verwaltung', 'instandhaltung', 'bank', 'sonstige', 'kabel_tv'].includes(k.kategorie))) {
+      const b = kosten(k);
+      if (b) add('fehler', `„${k.bezeichnung}“ ist als umlagefähig markiert (${euro(b)}), gehört aber nicht zu den Betriebskosten.`,
+        k.kategorie === 'kabel_tv' ? 'Laufende Kabel-TV-Gebühren sind seit 1.7.2024 nicht mehr umlagefähig (§ 2 Nr. 15 BetrKV, Ende des Nebenkostenprivilegs).'
+          : 'Verwaltungs- und Instandhaltungskosten dürfen nicht umgelegt werden (§ 1 Abs. 2 BetrKV).', { links: [{ text: `„${k.bezeichnung}“`, ziel: { konto: k.id } }] });
+    }
+    for (const k of umlagefaehig.filter((k) => !k.kategorie || !/^bk\d/.test(k.kategorie))) {
+      if (['verwaltung', 'instandhaltung', 'bank', 'sonstige', 'kabel_tv'].includes(k.kategorie)) continue;
+      const b = kosten(k);
+      if (b) add('warnung', `„${k.bezeichnung}“ ist umlagefähig, aber keiner Betriebskostenart nach § 2 BetrKV zugeordnet.`, 'Im Kontenplan die Kostenart setzen – nur die dort genannten Kosten sind umlegbar.',
+        { links: [{ text: `„${k.bezeichnung}“`, ziel: { konto: k.id } }] });
+    }
+    // Cable TV / broadband since 1 July 2024.
+    if (bis >= '2024-07-01') {
+      for (const k of umlagefaehig.filter((k) => k.kategorie === 'bk15')) {
+        const verdaechtig = all(`SELECT DISTINCT text FROM buchungen WHERE soll_id = ? AND datum BETWEEN ? AND ? AND (lower(coalesce(text, '')) LIKE '%kabel%'
+          OR lower(coalesce(text, '')) LIKE '%vodafone%' OR lower(coalesce(text, '')) LIKE '%pyur%' OR lower(coalesce(text, '')) LIKE '%tele columbus%'
+          OR lower(coalesce(text, '')) LIKE '%tv%' OR lower(coalesce(text, '')) LIKE '%fernseh%')`, k.id, von > '2024-07-01' ? von : '2024-07-01', bis).map((x) => x.text);
+        if (verdaechtig.length) add('fehler', `Unter „${k.bezeichnung}“ stehen Buchungen, die nach Kabel-TV aussehen (${verdaechtig.slice(0, 3).join('; ')}).`,
+          'Seit 1.7.2024 sind nur noch Betriebsstrom und Wartung der Antenne bzw. Verteilanlage umlagefähig, keine TV-Gebühren (§ 2 Nr. 15 BetrKV). Solche Rechnungen auf „Kabel-TV-Gebühren (nicht umlagefähig)“ buchen.',
+          { links: [{ text: `„${k.bezeichnung}“`, ziel: { konto: k.id } }] });
+        else if (kosten(k)) add('info', `„${k.bezeichnung}“: Seit 1.7.2024 dürfen hier nur Betriebsstrom und Wartung umgelegt werden.`, '§ 2 Nr. 15 BetrKV.');
+      }
+    }
+    // Fibre provision fee: at most 60 € per flat and year.
+    const wohnungen = get(`SELECT count(*) AS n FROM einheiten WHERE objekt_id = ? AND art IN ('Wohnung', 'Gewerbe')`, objektId).n || 1;
+    for (const k of umlagefaehig.filter((k) => k.kategorie === 'bk15c')) {
+      const b = kosten(k);
+      const jeWohnungJahr = b / wohnungen * 365 / tageP;
+      if (jeWohnungJahr > 6000.5) add('fehler', `Glasfaser-Bereitstellungsentgelt: ${euro(Math.round(jeWohnungJahr))} je Wohnung und Jahr – erlaubt sind höchstens 60 €.`,
+        '§ 2 Nr. 15 c BetrKV i. V. m. § 72 TKG; insgesamt höchstens 540 € je Wohnung, längstens 5 Jahre (in Ausnahmefällen 9).');
+      else if (b) add('info', `Glasfaser-Bereitstellungsentgelt ${euro(Math.round(jeWohnungJahr))} je Wohnung und Jahr (Grenze 60 €).`, 'Nur umlegbar, wenn die Mieter ihren Anbieter frei wählen können; höchstens 5 Jahre (9 in Ausnahmefällen).');
+    }
+    // "Other operating costs" must be named in the lease.
+    for (const k of umlagefaehig.filter((k) => k.kategorie === 'bk17')) {
+      const b = kosten(k);
+      if (b) add('warnung', `„${k.bezeichnung}“ (${euro(b)}): Sonstige Betriebskosten sind nur umlegbar, wenn sie im Mietvertrag einzeln benannt sind.`, '§ 2 Nr. 17 BetrKV.');
+    }
+    // Allocation keys that sum to zero.
+    for (const p of a.posten.filter((p) => p.gesamt_ct && !p.heizung && !p.co2 && p.schluessel !== 'Einzelabrechnung' && !p.gesamt_einheiten)) {
+      add('fehler', `„${p.label}“ (${euro(p.gesamt_ct)}) kann nicht verteilt werden: Der Schlüssel „${p.schluessel}“ ergibt 0.`, 'Fehlende Flächen, Personenzahlen oder Zählerstände ergänzen.');
+    }
+    // Heating (HeizkostenV) and CO2 split.
+    if (o.heizung === 'intern' && a.posten.some((p) => p.heizung)) {
+      if (o.verbrauchsanteil < 50 || o.verbrauchsanteil > 70) add('fehler', `Der Verbrauchsanteil der Heizkosten beträgt ${o.verbrauchsanteil} % – zulässig sind 50 bis 70 %.`, '§§ 7, 8 HeizkostenV.');
+      if (a.heizung?.ohne_zaehler) add('warnung', 'Für die Heizkosten gibt es keine Verbrauchserfassung; sie werden nur nach Fläche verteilt.', 'Der Mieter darf seinen Anteil dann um 15 % kürzen (§ 12 Abs. 1 HeizkostenV).');
+    }
+    if (a.posten.some((p) => p.heizung) && !a.co2) add('warnung', 'Die CO₂-Kostenaufteilung fehlt.',
+      'Bei Heizöl, Erdgas, Flüssiggas oder fossiler Fernwärme trägt der Vermieter je nach Ausstoß einen Teil der CO₂-Kosten (CO2KostAufG). Fehlt die Angabe, darf der Mieter seinen Heizkostenanteil um 3 % kürzen. CO₂-Menge und -Kosten stehen auf der Brennstoff- bzw. Fernwärmerechnung.');
+    // Vacancy, § 35a.
+    if (a.leerstand_ct) add('info', `Auf Leerstand entfallen ${euro(a.leerstand_ct)}; diese Kosten trägt der Vermieter.`);
+    const p35 = a.ergebnisse.reduce((s, e) => s + (e.p35a?.dienstleistung ?? 0) + (e.p35a?.handwerker ?? 0), 0);
+    if (p35) add('info', `Die Anteile für haushaltsnahe Dienstleistungen und Handwerkerleistungen (${euro(p35)}) werden je Mieter ausgewiesen.`, '§ 35a EStG – Mieter können sie in der Steuererklärung geltend machen.');
+    // Parking spaces, garages and cellars bear only what their lease assigns to them; a per-unit key counts them like flats.
+    for (const e of a.ergebnisse.filter((e) => e.segment.vertrag && e.kosten_ct > 0 && !['Wohnung', 'Gewerbe'].includes(e.segment.einheit.art ?? 'Wohnung'))) {
+      add('warnung', `${e.segment.einheit.bezeichnung} (${e.segment.einheit.art}) trägt ${euro(e.kosten_ct)} Betriebskosten.`,
+        'Nur richtig, wenn der Mietvertrag für diese Einheit Betriebskosten vorsieht. Sonst einen Schlüssel ohne sie verwenden (z. B. eigener Schlüssel statt „Einheiten“).',
+        { links: [{ text: e.segment.vertrag.name, ziel: { vertrag: e.segment.vertrag.id, typ: 'miete' } }] });
+    }
+    // People and meter readings.
+    if (a.posten.some((p) => /person/i.test(p.schluessel ?? ''))) {
+      for (const e of a.ergebnisse.filter((e) => e.segment.vertrag && !(e.segment.vertrag.personen_anzahl > 0) && (e.segment.einheit.art ?? 'Wohnung') === 'Wohnung')) {
+        add('warnung', `Bei ${e.segment.vertrag.name} ist keine Personenzahl hinterlegt; nach Personen verteilte Kosten fallen dort mit 0 an.`, null,
+          { links: [{ text: e.segment.vertrag.name, ziel: { vertrag: e.segment.vertrag.id, typ: 'miete' } }] });
+      }
+    }
+    const zaehlerKeys = all(`SELECT DISTINCT zaehler_art FROM umlageschluessel WHERE objekt_id = ? AND typ = 'zaehler'`, objektId).map((x) => x.zaehler_art);
+    if (zaehlerKeys.length) {
+      for (const z of all(`SELECT z.*, e.bezeichnung AS einheit FROM zaehler z LEFT JOIN einheiten e ON e.id = z.einheit_id WHERE z.objekt_id = ? AND z.einheit_id IS NOT NULL
+          AND z.art IN (${zaehlerKeys.map(() => '?').join(',')}) AND (z.ausbau IS NULL OR z.ausbau = '' OR z.ausbau >= ?)`, objektId, ...zaehlerKeys, von)) {
+        for (const [stichtag, wort] of [[von, 'Beginn'], [bis, 'Ende']]) {
+          const nah = get(`SELECT 1 FROM zaehlerstaende WHERE zaehler_id = ? AND abs(julianday(datum) - julianday(?)) <= 31`, z.id, stichtag);
+          if (!nah) add('warnung', `Zähler ${z.nummer ?? z.art} (${z.einheit}): kein Ablesewert zum ${wort} des Zeitraums – der Verbrauch wird zwischen den vorhandenen Ständen geschätzt.`,
+            'Zum Stichtag ablesen (oder bei Mieterwechsel im Übergabeprotokoll festhalten).');
+        }
+      }
+    }
+    // Cost jumps against the previous year (economic efficiency, § 556 Abs. 3 Satz 1 BGB).
+    const vVon = `${Number(von.slice(0, 4)) - 1}${von.slice(4)}`, vBis = `${Number(bis.slice(0, 4)) - 1}${bis.slice(4)}`;
+    for (const k of umlagefaehig) {
+      const jetzt = kosten(k), vorher = kosten(k, vVon, vBis);
+      if (vorher > 0 && jetzt > vorher * 1.1 && jetzt - vorher > 5000) {
+        add('warnung', `„${k.bezeichnung}“ ist gegenüber dem Vorjahr um ${Math.round((jetzt / vorher - 1) * 100)} % gestiegen (${euro(vorher)} → ${euro(jetzt)}).`,
+          'Wirtschaftlichkeitsgebot (§ 556 Abs. 3 Satz 1 BGB): Steigerungen sollten erklärbar sein, z. B. durch neue Tarife oder Nachzahlungen.', { links: [{ text: `„${k.bezeichnung}“`, ziel: { konto: k.id } }] });
+      }
+      if (vorher > 0 && jetzt === 0) add('warnung', `Für „${k.bezeichnung}“ ist im Zeitraum nichts gebucht (Vorjahr ${euro(vorher)}) – fehlt eine Rechnung?`, null,
+        { links: [{ text: `„${k.bezeichnung}“`, ziel: { konto: k.id } }] });
+    }
+    // Unpaid advance payments: the statement deducts the agreed payments; what is still open stays as arrears.
+    for (const e of a.ergebnisse.filter((e) => e.segment.vertrag && e.segment.konto_id)) {
+      const op = bh.offenePostenKonto(e.segment.konto_id);
+      let vzOffen = 0;
+      for (const x of op.offen.filter((x) => x.monat && `${x.monat}-01` >= von.slice(0, 7) + '-01' && x.monat <= bis.slice(0, 7))) {
+        const vzTeil = x.teile.filter((t) => /Vorauszahlung/.test(t.text ?? '')).reduce((s, t) => s + t.betrag_ct, 0);
+        vzOffen += Math.round(x.offen_ct * vzTeil / x.soll_ct);
+      }
+      if (vzOffen > 0) add('warnung', `${e.segment.vertrag.name}: Vorauszahlungen von rund ${euro(vzOffen)} aus dem Zeitraum sind noch nicht bezahlt.`,
+        'Die Abrechnung zieht die vereinbarten Vorauszahlungen ab; der offene Betrag bleibt zusätzlich als Rückstand stehen und wird im Brief genannt. Grundsätzlich sind die tatsächlich gezahlten Vorauszahlungen anzusetzen (BGH VIII ZR 108/02) – in der Summe schuldet der Mieter dasselbe.',
+        { links: [{ text: e.segment.vertrag.name, ziel: { vertrag: e.segment.vertrag.id, typ: 'miete' } }], vz_offen_ct: vzOffen, vertrag_id: e.segment.vertrag.id });
+    }
+    // Statement already saved for the same period.
+    const frueher = get(`SELECT id, erstellt FROM abrechnungen WHERE objekt_id = ? AND typ = 'nk' AND von = ? AND bis = ? ORDER BY id DESC LIMIT 1`, objektId, von, bis);
+    if (frueher) add('info', `Für diesen Zeitraum ist bereits eine Abrechnung gespeichert (${frueher.erstellt.slice(0, 10).split('-').reverse().join('.')}).`);
+    const ordnung = { fehler: 0, warnung: 1, info: 2 };
+    return { frist, punkte: punkte.sort((x, y) => ordnung[x.stufe] - ordnung[y.stufe]),
+      fehler: punkte.filter((x) => x.stufe === 'fehler').length, warnungen: punkte.filter((x) => x.stufe === 'warnung').length };
   }
 
   // ---------- House-money statement (owners), § 28 WEG ----------
@@ -282,8 +425,8 @@ module.exports = function abrechnung({ db, all, get, tx, PERSON_NAME, bh }) {
         WHERE g.einheit_id = ? AND g.beginn <= ? AND (g.ende IS NULL OR g.ende = '' OR g.ende >= ?) ORDER BY g.beginn DESC LIMIT 1`, s.einheit.id, bis, von);
       return {
         einheit: s.einheit, eigentum, anteile, kosten_ct: kosten, ruecklage_ct: rlAnteil,
-        // Monthly amounts rounded up to whole euros.
-        monat_hausgeld_ct: Math.ceil((kosten + rlAnteil) / 12 / 100) * 100,
+        // Monthly amounts rounded up to whole euros, costs and reserve each on their own so both stay covered.
+        monat_hausgeld_ct: Math.ceil(kosten / 12 / 100) * 100 + Math.ceil(rlAnteil / 12 / 100) * 100,
         monat_ruecklage_ct: Math.ceil(rlAnteil / 12 / 100) * 100,
       };
     });
@@ -323,6 +466,13 @@ module.exports = function abrechnung({ db, all, get, tx, PERSON_NAME, bh }) {
         if (!e.konto_id || !e.ergebnis_ct) continue;
         if (e.ergebnis_ct > 0) st.run(objektId, datum, `${text} Nachzahlung`, e.ergebnis_ct, e.konto_id, gegen.id);
         else st.run(objektId, datum, `${text} Guthaben`, -e.ergebnis_ct, gegen.id, e.konto_id);
+        // VAT on the result of a commercial tenant goes to the VAT account.
+        if (e.ust_ct) {
+          const ust = get(`SELECT id FROM konten WHERE objekt_id = ? AND klasse = 'steuer' AND kategorie = ?`, objektId, e.ust_satz === 7 ? 'ust7' : 'ust19');
+          if (!ust) throw new Error('Das Umsatzsteuerkonto fehlt im Kontenplan.');
+          if (e.ust_ct > 0) st.run(objektId, datum, `${text} USt ${e.ust_satz} %`, e.ust_ct, e.konto_id, ust.id);
+          else st.run(objektId, datum, `${text} USt ${e.ust_satz} %`, -e.ust_ct, ust.id, e.konto_id);
+        }
         n++;
       }
       return n;
@@ -347,6 +497,7 @@ module.exports = function abrechnung({ db, all, get, tx, PERSON_NAME, bh }) {
       return out;
     }),
 
+    nkPruefung,
     abrechnungen: (objektId, typ) => all(`SELECT id, typ, von, bis, titel, erstellt, gebucht FROM abrechnungen
       WHERE objekt_id = ? AND (?2 IS NULL OR typ = ?2) ORDER BY erstellt DESC`, objektId, typ ?? null),
     abrechnungLaden: (id) => {

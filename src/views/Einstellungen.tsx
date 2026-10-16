@@ -15,6 +15,7 @@ const FELDER: [string, string][] = [
   ['verwalter_iban', 'IBAN'],
   ['verwalter_bic', 'BIC'],
   ['verwalter_steuernr', 'Steuernummer'],
+  ['verwalter_ustid', 'USt-IdNr. (falls vorhanden)'],
   ['datev_berater', 'DATEV Beraternummer'],
   ['datev_mandant', 'DATEV Mandantennummer'],
 ];
@@ -47,6 +48,7 @@ export function Einstellungen() {
         </div>
       </div>
       <Darstellung />
+      <SteuerKalender />
       <Automatik />
       <Festschreibung />
       <ClaudeVerbindung />
@@ -156,6 +158,39 @@ function Dokumenteneingang() {
         </div>
         {e?.mail_letzter_abruf && <p className="klein hinweis">Letzter Abruf: {new Date(e.mail_letzter_abruf).toLocaleString('de-DE')}{e.mail_letzter_fehler ? ` · Fehler: ${e.mail_letzter_fehler}` : ''}</p>}
       </div>
+    </div>
+  );
+}
+
+const LAENDER: [string, string][] = [['', 'nur bundesweite Feiertage'], ['BW', 'Baden-Württemberg'], ['BY', 'Bayern'], ['BE', 'Berlin'], ['BB', 'Brandenburg'],
+  ['HB', 'Bremen'], ['HH', 'Hamburg'], ['HE', 'Hessen'], ['MV', 'Mecklenburg-Vorpommern'], ['NI', 'Niedersachsen'], ['NW', 'Nordrhein-Westfalen'],
+  ['RP', 'Rheinland-Pfalz'], ['SL', 'Saarland'], ['SN', 'Sachsen'], ['ST', 'Sachsen-Anhalt'], ['SH', 'Schleswig-Holstein'], ['TH', 'Thüringen']];
+
+// State for holidays (due dates on working days, notice periods) and VAT settings for commercial lettings.
+function SteuerKalender() {
+  const [e, reload] = useLoad<Row>(() => call('einstellungen'), []);
+  if (!e) return null;
+  const setzen = async (k: string, v: string) => { await call('setzeEinstellungen', { [k]: v }); reload(); };
+  return (
+    <div className="block">
+      <h3>Kalender und Umsatzsteuer</h3>
+      <div className="maske">
+        <label>Bundesland der Häuser (Feiertage)
+          <select value={e.bundesland ?? ''} onChange={(ev) => setzen('bundesland', ev.target.value)}>{LAENDER.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
+        </label>
+        <label>Umsatzsteuer berechnen nach
+          <select value={e.ust_versteuerung ?? 'soll'} onChange={(ev) => setzen('ust_versteuerung', ev.target.value)}>
+            <option value="soll">vereinbarten Entgelten (Soll)</option><option value="ist">vereinnahmten Entgelten (Ist)</option>
+          </select>
+        </label>
+        <label>Voranmeldung
+          <select value={e.ust_zeitraum ?? 'quartal'} onChange={(ev) => setzen('ust_zeitraum', ev.target.value)}>
+            <option value="quartal">vierteljährlich</option><option value="monat">monatlich</option>
+          </select>
+        </label>
+        <label>Nächste Rechnungsnummer<input defaultValue={e.rechnungsnr_naechste ?? `${new Date().getFullYear()}-001`} onBlur={(ev) => setzen('rechnungsnr_naechste', ev.target.value.trim())} /></label>
+      </div>
+      <p className="klein hinweis">Feiertage verschieben gesetzliche Fälligkeiten („3. Werktag“) und Kündigungsfristen. Umsatzsteuer betrifft nur Gewerbeeinheiten, bei denen du zur Umsatzsteuer optiert hast.</p>
     </div>
   );
 }

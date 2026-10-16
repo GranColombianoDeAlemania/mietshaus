@@ -2,6 +2,7 @@
 import { useState } from 'react';
 import { betrag, call, datum, diesesJahr, euro, fehler, heute, personName, type Row } from '../api';
 import { useLoad } from '../useLoad';
+import { L } from '../navi';
 import { FormDialog, type Field } from '../Form';
 import { Gantt, type GanttZeile } from '../Gantt';
 import { Tabs } from '../ui';
@@ -64,7 +65,7 @@ export function ProjektCockpit(props: { oeffne: (seite: string, id?: number) => 
             <tbody>
               {aktiv.map((p) => (
                 <tr key={p.id} className="klickbar" onClick={() => props.oeffne('zeitplan', p.id)}>
-                  <td><b>{p.titel}</b></td><td>{statusName(p.status)}</td><td>{p.objekt ?? <i>eigenständig</i>}</td>
+                  <td><b>{p.titel}</b></td><td>{statusName(p.status)}</td><td>{p.objekt_id ? <L zu={{ objekt: p.objekt_id }}>{p.objekt}</L> : <i>eigenständig</i>}</td>
                   <td className="klein">{datum(p.plan_beginn ?? p.beginn)} – {datum(p.plan_ende ?? p.ende)}</td>
                   <td className="num">{p.aufgaben ? `${p.fortschritt ?? 0} %` : '–'}</td>
                   <td><BudgetBalken p={p} /></td>
@@ -103,7 +104,7 @@ export function ProjektListe(props: { reload: () => void; oeffne: (seite: string
         <tbody>
           {liste?.map((p) => (
             <tr key={p.id} className={p.status === 'abgeschlossen' ? 'inaktiv' : ''} onDoubleClick={() => setEdit(p)}>
-              <td><b>{p.titel}</b></td><td>{statusName(p.status)}</td><td>{p.objekt ?? 'eigenständig'}</td>
+              <td><b>{p.titel}</b></td><td>{statusName(p.status)}</td><td>{p.objekt_id ? <L zu={{ objekt: p.objekt_id }}>{p.objekt}</L> : "eigenständig"}</td>
               <td className="num">{p.budget_ct != null ? euro(p.budget_ct) : ''}</td><td className="num">{euro(p.rechnungen_ct)}</td>
               <td className={`num ${p.budget_ct && p.prognose_ct > p.budget_ct ? 'fehlertext' : ''}`}>{euro(p.prognose_ct)}</td>
               <td className="aktionen"><button onClick={() => props.oeffne('zeitplan', p.id)}>Öffnen</button><button onClick={() => setEdit(p)}>Bearbeiten</button></td>
@@ -215,7 +216,7 @@ export function ProjektKosten(props: { projekt: Row }) {
   return (
     <section>
       <div className="toolbar">
-        <h1>Kosten & Budget – {p.titel}</h1>
+        <h1>Kosten &amp; Budget</h1>
         <Tabs tabs={[['alle', 'Alle'], ['angebot', 'Angebote'], ['auftrag', 'Aufträge'], ['rechnung', 'Rechnungen']]} value={tab} onChange={setTab} />
         <span className="spacer" />
         <button className="primary" onClick={() => setEdit({ art: tab === 'alle' ? 'rechnung' : tab, datum: heute(), status: 'offen' })}>Neuer Posten</button>
@@ -258,7 +259,7 @@ export function ProjektKosten(props: { projekt: Row }) {
 export function ProjektDokumente(props: { projekt: Row }) {
   return (
     <section>
-      <div className="toolbar"><h1>Fotos & Dokumente – {props.projekt.titel}</h1></div>
+      <div className="toolbar"><h1>Fotos & Dokumente</h1></div>
       <p className="hinweis klein">Baustellenfotos, Angebote, Pläne und Rechnungen. Rechnungen und Angebote zusätzlich unter „Kosten & Budget“ erfassen – oder Claude sagen: „ordne die Rechnung dem Projekt zu“.</p>
       <Galerie filter={{ projekt_id: props.projekt.id }} hinweis={props.projekt.titel} />
     </section>

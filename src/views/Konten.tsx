@@ -4,6 +4,7 @@ import { FormDialog, type Field } from '../Form';
 import { useLoad } from '../useLoad';
 import { Dialog, Saldo, Tabs, Zeitraum } from '../ui';
 import { alsPdf, bericht, esc, tabelle } from '../dokument';
+import { L, useNavi } from '../navi';
 
 const shText = (ct: number) => (ct === 0 ? '0,00' : `${betrag(Math.abs(ct))} ${ct > 0 ? 'S' : 'H'}`);
 
@@ -12,7 +13,8 @@ const KATEGORIEN_KOSTEN: [string, string][] = [
   ['bk04', 'Nr. 4 – Heizung'], ['bk05', 'Nr. 5 – Warmwasser'], ['bk07', 'Nr. 7 – Aufzug'],
   ['bk08', 'Nr. 8 – Straßenreinigung / Müll'], ['bk09', 'Nr. 9 – Gebäudereinigung'], ['bk10', 'Nr. 10 – Gartenpflege'],
   ['bk11', 'Nr. 11 – Beleuchtung'], ['bk12', 'Nr. 12 – Schornsteinreinigung'], ['bk13', 'Nr. 13 – Versicherungen'],
-  ['bk14', 'Nr. 14 – Hauswart'], ['bk15', 'Nr. 15 – Antenne / Kabel'], ['bk16', 'Nr. 16 – Wäschepflege'],
+  ['bk14', 'Nr. 14 – Hauswart'], ['bk15', 'Nr. 15 – Antenne / Breitband (nur Strom & Wartung)'], ['bk15c', 'Nr. 15 – Glasfaser-Bereitstellungsentgelt'],
+  ['kabel_tv', 'Kabel-TV-Gebühren (nicht umlagefähig)'], ['bk16', 'Nr. 16 – Wäschepflege'],
   ['bk17', 'Nr. 17 – Sonstige Betriebskosten'], ['verwaltung', 'Verwaltung'], ['instandhaltung', 'Instandhaltung'],
   ['bank', 'Bankgebühren'], ['sonstige', 'Sonstige Kosten'],
 ];
@@ -24,11 +26,11 @@ const KATEGORIEN_EINNAHME: [string, string][] = [
 ];
 
 export function Konten(props: { objekt: Row; modus: Modus }) {
+  const navi = useNavi();
   const [tab, setTab] = useState<'plan' | 'salden'>('plan');
   const [konten, reload] = useLoad<Row[]>(() => call('konten', props.objekt.id), [props.objekt.id]);
   const [keys] = useLoad<Row[]>(() => call('schluessel', props.objekt.id), [props.objekt.id]);
   const [edit, setEdit] = useState<Row | null>(null);
-  const [auszug, setAuszug] = useState<Row | null>(null);
   const [nurBebucht, setNurBebucht] = useState(false);
   const [von, setVon] = useState(`${diesesJahr()}-01-01`);
   const [bis, setBis] = useState(`${diesesJahr()}-12-31`);
@@ -55,7 +57,7 @@ export function Konten(props: { objekt: Row; modus: Modus }) {
   return (
     <section>
       <div className="toolbar">
-        <h1>Konten – {props.objekt.bezeichnung}</h1>
+        <h1>Konten</h1>
         <Tabs tabs={[['plan', 'Kontenplan'], ['salden', 'Saldenliste']]} value={tab} onChange={setTab} />
         <span className="spacer" />
         {tab === 'plan' ? (
@@ -79,9 +81,9 @@ export function Konten(props: { objekt: Row; modus: Modus }) {
                 <thead><tr><th className="num">Nr.</th><th>Bezeichnung</th><th>Merkmale</th><th className="num">Buchungen</th><th className="num">Saldo</th><th /></tr></thead>
                 <tbody>
                   {ks.map((k) => (
-                    <tr key={k.id} className={k.inaktiv ? 'inaktiv' : ''} onDoubleClick={() => setAuszug(k)}>
+                    <tr key={k.id} className={`klickbar${k.inaktiv ? ' inaktiv' : ''}`} data-ziel={`konto:${k.id}`} onClick={() => navi.zu({ konto: k.id })} title="Kontoauszug öffnen">
                       <td className="num">{k.nr}</td>
-                      <td>{k.bezeichnung}</td>
+                      <td>{k.vertrag_id ? <L zu={{ vertrag: k.vertrag_id, typ: k.vertrag_typ }}>{k.bezeichnung}</L> : <L zu={{ konto: k.id }}>{k.bezeichnung}</L>}</td>
                       <td className="klein">
                         {k.umlagefaehig ? <span className="tag art-miete">umlagefähig</span> : null}
                         {k.heizkosten ? <span className="tag">Heizkosten</span> : null}
@@ -91,8 +93,7 @@ export function Konten(props: { objekt: Row; modus: Modus }) {
                       <td className="num">{k.anzahl}</td>
                       <td className="num"><Saldo ct={k.saldo_ct} /></td>
                       <td className="aktionen">
-                        <button onClick={() => setAuszug(k)}>Kontoauszug</button>
-                        {k.klasse !== 'person' && <button onClick={() => setEdit(k)}>Bearbeiten</button>}
+                        {k.klasse !== 'person' && <button onClick={(e) => { e.stopPropagation(); setEdit(k); }}>Bearbeiten</button>}
                       </td>
                     </tr>
                   ))}
@@ -114,7 +115,6 @@ export function Konten(props: { objekt: Row; modus: Modus }) {
           onClose={() => { setEdit(null); reload(); }}
         />
       )}
-      {auszug && <Kontoauszug konto={auszug} objekt={props.objekt} onClose={() => setAuszug(null)} />}
     </section>
   );
 }
@@ -137,8 +137,8 @@ function Saldenliste(props: { objekt: Row; von: string; bis: string }) {
         <thead><tr><th className="num">Nr.</th><th>Konto</th><th className="num">Anfangssaldo</th><th className="num">Soll</th><th className="num">Haben</th><th className="num">Endsaldo</th></tr></thead>
         <tbody>
           {rows?.map((r) => (
-            <tr key={r.id}>
-              <td className="num">{r.nr}</td><td>{r.bezeichnung}</td>
+            <tr key={r.id} data-ziel={`konto:${r.id}`}>
+              <td className="num">{r.nr}</td><td><L zu={{ konto: r.id }}>{r.bezeichnung}</L></td>
               <td className="num">{betrag(r.anfang_ct)}</td><td className="num">{betrag(r.soll_ct)}</td>
               <td className="num">{betrag(r.haben_ct)}</td><td className="num"><Saldo ct={r.ende_ct} /></td>
             </tr>
@@ -157,20 +157,22 @@ function Saldenliste(props: { objekt: Row; von: string; bis: string }) {
   );
 }
 
+// Statement of an account as PDF.
+export async function kontoauszugPdf(konto: Row, objektName: string, von: string, bis: string) {
+  const a = await call('kontoauszug', konto.id, von, bis);
+  const z = a.zeilen.map((r: Row) => [datum(r.datum), esc(r.beleg ?? ''), esc(r.text ?? ''), esc(r.gegen),
+    `#r${r.soll_ct ? betrag(r.soll_ct) : ''}`, `#r${r.haben_ct ? betrag(r.haben_ct) : ''}`, `#r${shText(r.saldo_ct)}`]);
+  return alsPdf([bericht(`Kontoauszug ${kontoLabel(konto)}`, `${objektName} · ${datum(von)} – ${datum(bis)}`,
+    `<p>Anfangssaldo: <b>${shText(a.anfang_ct)}</b></p>` +
+    tabelle(['Datum', 'Beleg', 'Text', 'Gegenkonto', '#rSoll', '#rHaben', '#rSaldo'], z) +
+    `<p class="hervor">Endsaldo: ${shText(a.ende_ct)}</p>`)], `Kontoauszug ${konto.nr}`);
+}
+
 export function Kontoauszug(props: { konto: Row; objekt: Row; onClose: () => void }) {
   const [von, setVon] = useState(`${diesesJahr()}-01-01`);
   const [bis, setBis] = useState(`${diesesJahr()}-12-31`);
   const [a] = useLoad<Row>(() => call('kontoauszug', props.konto.id, von, bis), [props.konto.id, von, bis]);
-
-  function drucken() {
-    if (!a) return;
-    const z = a.zeilen.map((r: Row) => [datum(r.datum), esc(r.beleg ?? ''), esc(r.text ?? ''), esc(r.gegen),
-      `#r${r.soll_ct ? betrag(r.soll_ct) : ''}`, `#r${r.haben_ct ? betrag(r.haben_ct) : ''}`, `#r${shText(r.saldo_ct)}`]);
-    alsPdf([bericht(`Kontoauszug ${kontoLabel(props.konto)}`, `${props.objekt.bezeichnung} · ${datum(von)} – ${datum(bis)}`,
-      `<p>Anfangssaldo: <b>${shText(a.anfang_ct)}</b></p>` +
-      tabelle(['Datum', 'Beleg', 'Text', 'Gegenkonto', '#rSoll', '#rHaben', '#rSaldo'], z) +
-      `<p class="hervor">Endsaldo: ${shText(a.ende_ct)}</p>`)], `Kontoauszug ${props.konto.nr}`);
-  }
+  const drucken = () => kontoauszugPdf(props.konto, props.objekt.bezeichnung, von, bis);
 
   return (
     <Dialog titel={`Kontoauszug ${kontoLabel(props.konto)}`} onClose={props.onClose} breit aktionen={<button onClick={drucken}>Als PDF</button>}>

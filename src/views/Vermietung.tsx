@@ -18,7 +18,7 @@ export function Vermietung(props: { objekt: Row; oeffne: (seite: string, id?: nu
   const e = einheiten?.find((x) => x.id === eid);
   return (
     <section>
-      <div className="toolbar"><h1>Vermietung – {props.objekt.bezeichnung}</h1></div>
+      <div className="toolbar"><h1>Vermietung</h1></div>
       {einheiten && !einheiten.length && <p className="hinweis">Keine Einheit ist frei oder wird in den nächsten 4 Monaten frei.</p>}
       {einheiten && einheiten.length > 0 && (
         <div className="tabs" style={{ marginBottom: 14 }}>

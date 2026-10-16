@@ -22,6 +22,9 @@ const FELDER: Field[] = [
   { key: 'kaufdatum', label: 'Kaufdatum', type: 'date' },
   { key: 'gebaeudeanteil', label: 'Gebäudeanteil am Kaufpreis (%)', type: 'number' },
   { key: 'afa_satz', label: 'AfA-Satz (% pro Jahr, z. B. 2 / 2,5 / 3)', type: 'number' },
+  { key: 'vorsteuer_quote', label: 'Abziehbare Vorsteuer in % (nur bei Gewerbe mit Umsatzsteuer)', type: 'number' },
+  { key: 'kappungsgrenze', label: 'Kappungsgrenze für Mieterhöhungen (§ 558 BGB)', type: 'select', section: 'Mietrecht',
+    options: [['20', '20 % in drei Jahren (Regelfall)'], ['15', '15 % – Gemeinde mit Kappungsgrenzen-Verordnung']] },
   { key: 'notiz', label: 'Notiz', type: 'textarea', section: 'Sonstiges' },
 ];
 

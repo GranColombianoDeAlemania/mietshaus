@@ -1,27 +1,79 @@
 // Hand-over protocols and the tenant change assistant.
 const STANDARDRAEUME = ['Flur / Diele', 'Wohnzimmer', 'Schlafzimmer', 'Kinderzimmer', 'Küche', 'Bad', 'Gäste-WC', 'Balkon / Terrasse', 'Keller', 'Fenster & Türen'];
 
+const kalender = require('./kalender.cjs');
+const datumDe = (iso) => (iso ? iso.split('-').reverse().join('.') : '');
+const minusTage = (iso, n) => new Date(Date.parse(iso) - n * 864e5).toISOString().slice(0, 10);
+
 // Statutory notice for a tenant (§ 573c BGB): notice received by the 3rd working day of a month ends the
-// tenancy at the end of the month after next. Saturdays count as working days, Sundays do not (BGH).
-function mieterKuendigungsende(eingang) {
-  const d = new Date(eingang + 'T00:00:00Z');
-  let werktag = 0, tag = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1));
-  while (werktag < 3) {
-    if (tag.getUTCDay() !== 0) werktag++;
-    if (werktag < 3) tag.setUTCDate(tag.getUTCDate() + 1);
-  }
-  const zusatz = d <= tag ? 3 : 4;
-  const ende = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + zusatz, 0));
-  return ende.toISOString().slice(0, 10);
+// tenancy at the end of the month after next (Saturdays count unless the 3rd working day is a Saturday, BGH).
+function mieterKuendigungsende(eingang, land = null) {
+  return kalender.ordentlicheKuendigung({ zugang: eingang, durch: 'mieter', land }).zum;
 }
 
 module.exports = function mieterwechsel({ db, all, get, tx, PERSON_NAME }) {
   const parse = (u) => (u ? { ...u, raeume: JSON.parse(u.raeume), zaehler: JSON.parse(u.zaehler), schluessel: JSON.parse(u.schluessel) } : null);
 
-  return {
-    mieterKuendigungsende,
+  const land = () => get(`SELECT wert FROM einstellungen WHERE schluessel = 'bundesland'`)?.wert || null;
 
-    uebergabenListe: (objektId) => all(`SELECT u.id, u.art, u.datum, u.abgeschlossen, u.dokument_id, e.bezeichnung AS einheit, e.id AS einheit_id,
+  return {
+    mieterKuendigungsende: (eingang) => mieterKuendigungsende(eingang, land()),
+
+    // Notice assistant: when does the tenancy end, and what should the letter mention.
+    kuendigungBerechnen: ({ vertrag_id, durch = 'mieter', art = 'ordentlich', zugang }) => {
+      const v = get('SELECT * FROM mietverhaeltnisse WHERE id = ?', vertrag_id);
+      if (!v) throw new Error('Vertrag nicht gefunden.');
+      if (!zugang) throw new Error('Bitte das Datum angeben, an dem die Kündigung zugegangen ist.');
+      const hinweise = [];
+      if (art === 'fristlos') {
+        hinweise.push('Eine fristlose Kündigung beendet das Mietverhältnis mit Zugang beim Mieter (§ 543 BGB); der Grund muss im Schreiben stehen (§ 569 Abs. 4 BGB).');
+        if (durch === 'vermieter') hinweise.push('Bei Zahlungsverzug wird sie unwirksam, wenn der Mieter spätestens zwei Monate nach Zustellung der Räumungsklage alle Rückstände zahlt (Schonfrist, § 569 Abs. 3 Nr. 2 BGB). Lass eine fristlose Kündigung vorher rechtlich prüfen.');
+        return { zum: zugang, art, durch, rechtzeitig: true, hinweise };
+      }
+      if (art === 'aufhebung') {
+        hinweise.push('Beim Aufhebungsvertrag legt ihr das Ende gemeinsam fest; es gelten keine Kündigungsfristen. Beide unterschreiben.');
+        return { zum: null, art, durch, rechtzeitig: true, hinweise };
+      }
+      const r = kalender.ordentlicheKuendigung({ zugang, durch, ueberlassung: v.beginn, land: land() });
+      if (!r.rechtzeitig) hinweise.push(`Die Kündigung ist nach dem 3. Werktag (${datumDe(r.karenz_bis)}) zugegangen und wirkt deshalb erst zum ${datumDe(r.zum)}.`);
+      else hinweise.push(`Zugegangen bis zum 3. Werktag (${datumDe(r.karenz_bis)}): Der laufende Monat zählt mit.`);
+      if (durch === 'vermieter') {
+        hinweise.push(`Kündigungsfrist für den Vermieter: ${r.frist_monate} Monate (${r.jahre} Jahre seit Überlassung, § 573c Abs. 1 BGB).`);
+        hinweise.push('Der Vermieter braucht ein berechtigtes Interesse (§ 573 BGB), z. B. Eigenbedarf oder eine erhebliche Pflichtverletzung; die Gründe müssen im Schreiben stehen. Auf das Widerspruchsrecht des Mieters (§§ 574–574b BGB) soll hingewiesen werden.');
+      } else hinweise.push('Für Mieter gilt immer eine Frist von drei Monaten, egal wie lange das Mietverhältnis besteht.');
+      if (v.ende && v.ende < r.zum) hinweise.push(`Der Vertrag endet bereits am ${datumDe(v.ende)}.`);
+      return { ...r, art, durch, hinweise };
+    },
+
+    // Records the notice: end of the tenancy, the tenant change entry and a case with the next steps.
+    kuendigungErfassen: ({ vertrag_id, durch, art, zugang, zum, notiz = null }) => tx(() => {
+      if (!zum) throw new Error('Bitte das Vertragsende angeben.');
+      const v = get(`SELECT m.*, e.bezeichnung AS einheit, e.objekt_id, ${PERSON_NAME} AS name FROM mietverhaeltnisse m JOIN einheiten e ON e.id = m.einheit_id
+        JOIN personen p ON p.id = m.person_id WHERE m.id = ?`, vertrag_id);
+      if (!v) throw new Error('Vertrag nicht gefunden.');
+      if (zum < v.beginn) throw new Error('Das Vertragsende liegt vor dem Beginn.');
+      db.prepare(`INSERT INTO mieterwechsel (vertrag_id, kuendigung_eingang, kuendigung_durch, kuendigung_art, kuendigung_zum, notiz) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT (vertrag_id) DO UPDATE SET kuendigung_eingang = excluded.kuendigung_eingang, kuendigung_durch = excluded.kuendigung_durch,
+          kuendigung_art = excluded.kuendigung_art, kuendigung_zum = excluded.kuendigung_zum, notiz = coalesce(excluded.notiz, mieterwechsel.notiz)`)
+        .run(vertrag_id, zugang ?? null, durch, art, zum, notiz);
+      db.prepare('UPDATE mietverhaeltnisse SET ende = ? WHERE id = ?').run(zum, vertrag_id);
+      const schritte = [
+        'Kündigung schriftlich bestätigen.',
+        'Termin für Vorabnahme und Wohnungsübergabe vereinbaren.',
+        'Zählerstände am Auszugstag im Übergabeprotokoll festhalten.',
+        'Alle Schlüssel zurücknehmen.',
+        'Kaution abrechnen, sobald feststeht, dass keine Ansprüche mehr bestehen; für die noch ausstehende Betriebskostenabrechnung darf ein angemessener Teil einbehalten werden.',
+        'Nachmieter suchen (Seite „Vermietung“).',
+      ];
+      const vorgang = Number(db.prepare(`INSERT INTO vorgaenge (objekt_id, person_id, einheit_id, titel, kategorie, status, prioritaet, faellig, beschreibung)
+        VALUES (?, ?, ?, ?, 'Mieterwechsel', 'offen', 1, ?, ?)`).run(v.objekt_id, v.person_id, v.einheit_id,
+        `Mieterwechsel ${v.einheit}: Auszug ${v.name} zum ${datumDe(zum)}`, minusTage(zum, 30) < zugang ? zum : minusTage(zum, 30),
+        schritte.map((x, i) => `${i + 1}. ${x}`).join('\n')).lastInsertRowid);
+      return { vorgang_id: vorgang };
+    }),
+    kuendigungDokument: (vertragId, dokumentId) => db.prepare('UPDATE mieterwechsel SET dokument_id = ? WHERE vertrag_id = ?').run(dokumentId, vertragId),
+
+    uebergabenListe: (objektId) => all(`SELECT u.id, u.art, u.datum, u.abgeschlossen, u.dokument_id, u.vertrag_id, m.person_id, e.bezeichnung AS einheit, e.id AS einheit_id,
         ${PERSON_NAME} AS name FROM uebergaben u JOIN einheiten e ON e.id = u.einheit_id
         LEFT JOIN mietverhaeltnisse m ON m.id = u.vertrag_id LEFT JOIN personen p ON p.id = m.person_id
       WHERE e.objekt_id = ? ORDER BY u.datum DESC`, objektId),

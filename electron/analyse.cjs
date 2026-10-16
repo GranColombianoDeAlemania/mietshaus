@@ -6,6 +6,8 @@ const path = require('node:path');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
 
+const erechnung = require('./erechnung.cjs');
+
 const BILDER = new Set(['.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp', '.webp', '.gif']);
 const TEXT = new Set(['.txt', '.csv', '.md', '.xml', '.json', '.eml', '.html', '.htm']);
 
@@ -70,9 +72,16 @@ module.exports = function analyse({ db, dokumentOrdner, vorschauOrdner, analyseU
           seiten.push(await ocr(png));
         } else seiten.push(s.text);
       }
-      return { text: seiten.join('\n\f\n'), seiten: r.seiten.length, ocr: ocrNoetig };
+      // An embedded e-invoice gives the exact invoice data.
+      const e = r.xml ? erechnung.lesen(r.xml) : null;
+      return { text: seiten.join('\n\f\n') + (e ? `\n\f\n${erechnung.alsText(e)}` : ''), seiten: r.seiten.length, ocr: ocrNoetig, erechnung: e };
     }
     if (BILDER.has(ext)) return { text: await ocr(fs.readFileSync(voll)), seiten: 1, ocr: true };
+    if (ext === '.xml') {
+      const xml = fs.readFileSync(voll, 'utf8');
+      const e = erechnung.lesen(xml);
+      if (e) return { text: erechnung.alsText(e), seiten: 1, ocr: false, erechnung: e };
+    }
     if (TEXT.has(ext)) return { text: fs.readFileSync(voll, 'utf8').slice(0, 2_000_000), seiten: 1, ocr: false };
     return { text: '', seiten: null, ocr: false };
   }
@@ -88,7 +97,7 @@ module.exports = function analyse({ db, dokumentOrdner, vorschauOrdner, analyseU
         for (const d of offen) {
           try {
             const r = await lesen(d.datei);
-            db.analyseSpeichern(d.id, r.text, r.seiten, r.ocr);
+            db.analyseSpeichern(d.id, r.text, r.seiten, r.ocr, r.erechnung ?? null);
           } catch (e) {
             db.analyseFehler(d.id, String(e?.message ?? e));
           }
@@ -101,7 +110,7 @@ module.exports = function analyse({ db, dokumentOrdner, vorschauOrdner, analyseU
   }
 
   // Copies files into the archive; identical files (same SHA-256) are only stored once.
-  function importieren(pfade, { objekt_id = null, einheit_id = null, projekt_id = null, typ = null, quelle = 'upload', status = 'postfach' } = {}) {
+  function importieren(pfade, { objekt_id = null, einheit_id = null, projekt_id = null, person_id = null, buchung_id = null, typ = null, quelle = 'upload', status = 'postfach' } = {}) {
     fs.mkdirSync(dokumentOrdner(), { recursive: true });
     const out = [];
     for (const p of pfade) {
@@ -119,7 +128,7 @@ module.exports = function analyse({ db, dokumentOrdner, vorschauOrdner, analyseU
       }
       const datei = `${crypto.randomUUID()}${ext}`;
       const name = path.basename(p);
-      const r = db.dokumentNeu({ objekt_id, einheit_id, projekt_id, typ, titel: name.replace(/\.[^.]+$/, ''), datei, name, groesse: daten.length, sha256, quelle, status });
+      const r = db.dokumentNeu({ objekt_id, einheit_id, projekt_id, person_id, buchung_id, typ, titel: name.replace(/\.[^.]+$/, ''), datei, name, groesse: daten.length, sha256, quelle, status });
       if (!r.doppelt) fs.writeFileSync(path.join(dokumentOrdner(), datei), daten);
       out.push({ ...r, name });
     }

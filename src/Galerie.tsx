@@ -7,7 +7,8 @@ import { DokumentDialog, dokUrl } from './views/Archiv';
 const istBild = (datei: string) => /\.(png|jpe?g|gif|webp)$/i.test(datei);
 const symbol = (d: Row) => (/\.pdf$/i.test(d.datei) ? '📄' : /\.(docx?|odt|txt)$/i.test(d.datei) ? '📝' : /\.(xlsx?|ods|csv)$/i.test(d.datei) ? '📊' : '📎');
 
-export function Galerie(props: { filter: { objekt_id?: number; einheit_id?: number; projekt_id?: number }; hinweis?: string }) {
+export function Galerie(props: { filter: { objekt_id?: number; einheit_id?: number; projekt_id?: number; person_id?: number };
+  hinweis?: string; ablage?: Record<string, unknown> }) {
   const [nurBilder, setNurBilder] = useState(false);
   const [liste, reload] = useLoad<Row[]>(() => call('galerie', { ...props.filter, nur_bilder: nurBilder }), [JSON.stringify(props.filter), nurBilder]);
   const [zone, setZone] = useState(false);
@@ -17,9 +18,10 @@ export function Galerie(props: { filter: { objekt_id?: number; einheit_id?: numb
 
   // Files added here are filed directly with this object/unit/project; images are typed as photos.
   async function hinzufuegen(files?: FileList) {
-    const opt = { ...props.filter, status: 'abgelegt' };
+    const ziel = props.ablage ?? props.filter;
+    const opt = { ...ziel, status: 'abgelegt' };
     const r = files ? await window.hv.importieren(files, opt) : await window.hv.dateienImportieren(opt);
-    for (const x of r) if (/\.(png|jpe?g|gif|webp|heic|heif)$/i.test(x.name)) await call('dokumentSpeichern', { id: x.id, typ: 'Foto', ...props.filter });
+    for (const x of r) if (/\.(png|jpe?g|gif|webp|heic|heif)$/i.test(x.name)) await call('dokumentSpeichern', { id: x.id, typ: 'Foto', ...ziel });
     reload();
   }
 
@@ -47,7 +49,8 @@ export function Galerie(props: { filter: { objekt_id?: number; einheit_id?: numb
       {liste && !liste.length && <p className="hinweis">Noch nichts abgelegt.</p>}
       <div className="galerie">
         {liste?.map((d) => (
-          <div key={d.id} className="kachelbild" title={d.name}
+          <div key={d.id} className="kachelbild" title={d.name} draggable data-ziel={`dokument:${d.id}`}
+            onDragStart={(e) => { e.dataTransfer.setData('application/x-hv-dokument', String(d.id)); e.dataTransfer.effectAllowed = 'link'; }}
             onClick={() => (istBild(d.datei) ? setGross(bilder.findIndex((b) => b.id === d.id)) : setMeta(d))}>
             <div className="bild" style={istBild(d.datei) ? { backgroundImage: `url("${dokUrl(d.datei)}")` } : undefined}>{istBild(d.datei) ? '' : symbol(d)}</div>
             <div className="titel">{d.titel}<span className="klein">{[d.einheit, d.typ, datum(d.datum ?? d.erfasst)].filter(Boolean).join(' · ')}</span></div>

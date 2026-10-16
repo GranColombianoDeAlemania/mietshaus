@@ -2,10 +2,12 @@
 import { useState } from 'react';
 import { anrede, call, datum, euro, fehler, heute, parseZahl, personName, zahl, type Row } from '../api';
 import { useLoad } from '../useLoad';
+import { L } from '../navi';
 import { Liste } from '../Liste';
 import { Dialog, Tabs } from '../ui';
 import { FormDialog, type Field } from '../Form';
-import { absaetze, absenderAus, alsPdf, brief, esc, tabelle } from '../dokument';
+import { AnpassungBrief } from './Mietbriefe';
+import { absaetze, absenderAus, alsPdf, brief, esc, tabelle, empfaengerVon } from '../dokument';
 
 const KAUTION_ARTEN: [string, string][] = [['konto', 'Kautionskonto (Sparbuch)'], ['bar', 'Barkaution'], ['buergschaft', 'Bankbürgschaft'], ['verpfaendung', 'Verpfändetes Konto']];
 const BEWEGUNGEN: [string, string][] = [['einzahlung', 'Einzahlung'], ['zinsen', 'Zinsen'], ['verrechnung', 'Verrechnung mit Forderungen'], ['auszahlung', 'Auszahlung an Mieter']];
@@ -15,14 +17,14 @@ export function Kautionen(props: { objekt: Row }) {
   const [offen, setOffen] = useState<Row | null>(null);
   return (
     <section>
-      <div className="toolbar"><h1>Kautionen – {props.objekt.bezeichnung}</h1></div>
+      <div className="toolbar"><h1>Kautionen</h1></div>
       <p className="hinweis klein">Die vereinbarte Kaution steht im Mietverhältnis. Hier werden Anlage, Einzahlungen, Zinsen und die Abrechnung beim Auszug geführt.</p>
       <table>
         <thead><tr><th>Einheit</th><th>Mieter</th><th>Mietzeit</th><th>Anlage</th><th className="num">Vereinbart</th><th className="num">Bestand</th><th /></tr></thead>
         <tbody>
           {rows?.map((r) => (
-            <tr key={r.vertrag_id} className={r.ende && r.ende < heute() && !r.ist_ct ? 'inaktiv' : ''}>
-              <td>{r.einheit}</td><td>{r.name}</td><td>{datum(r.beginn)} – {datum(r.ende)}</td>
+            <tr key={r.vertrag_id} className={r.ende && r.ende < heute() && !r.ist_ct ? 'inaktiv' : ''} data-ziel={`vertrag:miete:${r.vertrag_id}`}>
+              <td><L zu={{ einheit: r.einheit_id }}>{r.einheit}</L></td><td><L zu={{ vertrag: r.vertrag_id, typ: 'miete' }}>{r.name}</L></td><td>{datum(r.beginn)} – {datum(r.ende)}</td>
               <td>{KAUTION_ARTEN.find(([k]) => k === r.art)?.[1] ?? '–'}</td>
               <td className="num">{euro(r.soll_ct)}</td>
               <td className={`num ${r.ist_ct < r.soll_ct && (!r.ende || r.ende >= heute()) ? 'fehlertext' : ''}`}>{euro(r.ist_ct)}</td>
@@ -46,7 +48,7 @@ function KautionDetail(props: { k: Row; objekt: Row; onClose: () => void }) {
   async function abrechnung() {
     const einst = await call('einstellungen');
     const v = await call('get', 'mietverhaeltnisse', props.k.vertrag_id);
-    const p = await call('get', 'personen', v.person_id);
+    const p = await empfaengerVon(v);
     const z = (bew ?? []).map((b) => [datum(b.datum), esc(BEWEGUNGEN.find(([a]) => a === b.art)?.[1] ?? b.art), esc(b.text ?? ''),
       `#r${euro(['einzahlung', 'zinsen'].includes(b.art) ? b.betrag_ct : -b.betrag_ct)}`]);
     await alsPdf([brief({ absender: absenderAus(einst), empfaenger: p, betreff: `Kautionsabrechnung – ${props.objekt.bezeichnung}, ${props.k.einheit}`,
@@ -101,7 +103,7 @@ export function Mietanpassung(props: { objekt: Row }) {
   return (
     <section>
       <div className="toolbar">
-        <h1>Mietanpassungen – {props.objekt.bezeichnung}</h1>
+        <h1>Mietanpassungen</h1>
         <Tabs tabs={[['vertraege', 'Mietverhältnisse'], ['index', 'Verbraucherpreisindex']]} value={tab} onChange={setTab} />
       </div>
       {tab === 'index' ? <Indexwerte /> : (
@@ -111,7 +113,7 @@ export function Mietanpassung(props: { objekt: Row }) {
             <thead><tr><th>Einheit</th><th>Mieter</th><th>Beginn</th><th className="num">Kaltmiete bei Vertragsbeginn</th><th className="num">Kaltmiete heute</th><th /></tr></thead>
             <tbody>
               {vertraege?.filter((v) => v.aktuell).map((v) => (
-                <tr key={v.id}><td>{v.einheit}</td><td>{v.name}</td><td>{datum(v.beginn)}</td><td className="num">{euro(v.kaltmiete_ct)}</td><td className="num"><b>{euro(v.akt_kaltmiete_ct)}</b></td>
+                <tr key={v.id} data-ziel={`vertrag:miete:${v.id}`}><td><L zu={{ einheit: v.einheit_id }}>{v.einheit}</L></td><td><L zu={{ vertrag: v.id, typ: 'miete' }}>{v.name}</L></td><td>{datum(v.beginn)}</td><td className="num">{euro(v.kaltmiete_ct)}</td><td className="num"><b>{euro(v.akt_kaltmiete_ct)}</b></td>
                   <td className="aktionen"><button onClick={() => setOffen(v)}>Anpassungen</button></td></tr>
               ))}
             </tbody>
@@ -130,6 +132,7 @@ function Anpassungen(props: { vertrag: Row; objekt: Row; onClose: () => void }) 
   const [edit, setEdit] = useState<Row | null>(null);
   const [index, setIndex] = useState<Row | null>(null);
   const [pruefung, setPruefung] = useState<Row | null>(null);
+  const [briefFuer, setBriefFuer] = useState<Row | null>(null);
 
   const felder: Field[] = [
     { key: 'gueltig_ab', label: 'Gültig ab', type: 'date', required: true },
@@ -143,22 +146,6 @@ function Anpassungen(props: { vertrag: Row; objekt: Row; onClose: () => void }) 
 
   async function indexPruefen() {
     try { setIndex(await call('indexBerechnung', v.id)); } catch (e) { fehler(e); }
-  }
-
-  async function erhoehungsbrief(a: Row) {
-    const einst = await call('einstellungen');
-    const p = await call('get', 'personen', v.person_id);
-    const alt = (await call('betraege', 'miete', v.id, prevDay(a.gueltig_ab))).kaltmiete_ct;
-    const text = a.grund === 'index'
-      ? `gemäß der in Ihrem Mietvertrag vereinbarten Indexmiete (§ 557b BGB) passen wir die Nettokaltmiete an die Entwicklung des Verbraucherpreisindex für Deutschland an. ${a.notiz ?? ''}`
-      : a.grund === 'staffel' ? 'gemäß der in Ihrem Mietvertrag vereinbarten Staffelmiete erhöht sich die Nettokaltmiete wie folgt.'
-        : 'wir bitten Sie um Zustimmung zur Erhöhung der Nettokaltmiete auf die ortsübliche Vergleichsmiete (§ 558 BGB). Die Begründung entnehmen Sie bitte der Anlage (Mietspiegel / Vergleichswohnungen).';
-    await alsPdf([brief({ absender: absenderAus(einst), empfaenger: p, betreff: `Anpassung der Miete – ${props.objekt.bezeichnung}, ${v.einheit}`,
-      info: [['Objekt', props.objekt.bezeichnung], ['Einheit', v.einheit]],
-      inhalt: `<p>${esc(anrede(p))}</p>${absaetze(text)}${tabelle(['', '#rBetrag'], [['Bisherige Nettokaltmiete', `#r${euro(alt)}`], ['Neue Nettokaltmiete', `#r${euro(a.kaltmiete_ct)}`]],
-        { summe: ['Erhöhung monatlich', `#r${euro(a.kaltmiete_ct - alt)}`] })}
-        <p>Die neue Miete ist ab dem <b>${datum(a.gueltig_ab)}</b> zu zahlen.${a.grund === 'erhoehung' ? ' Bitte erteilen Sie Ihre Zustimmung bis zum Ablauf des zweiten Kalendermonats nach Zugang dieses Schreibens.' : ''}</p>
-        <p class="unterschrift">Mit freundlichen Grüßen<br><br>${esc(einst.verwalter_name ?? '')}</p>` })], `Mietanpassung ${v.name}`);
   }
 
   return (
@@ -202,11 +189,12 @@ function Anpassungen(props: { vertrag: Row; objekt: Row; onClose: () => void }) 
               <td>{datum(a.gueltig_ab)}</td><td>{GRUENDE[a.grund] ?? a.grund}</td>
               <td className="num">{a.kaltmiete_ct != null ? euro(a.kaltmiete_ct) : ''}</td><td className="num">{a.bk_vz_ct != null ? euro(a.bk_vz_ct) : ''}</td>
               <td className="num">{a.hk_vz_ct != null ? euro(a.hk_vz_ct) : ''}</td><td className="klein">{a.notiz}</td>
-              <td className="aktionen">{a.kaltmiete_ct != null && <button onClick={() => erhoehungsbrief(a)}>Brief</button>}</td>
+              <td className="aktionen">{(a.kaltmiete_ct != null || a.bk_vz_ct != null || a.hk_vz_ct != null) && <button onClick={() => setBriefFuer(a)}>Brief</button>}</td>
             </tr>
           ))}
         </tbody>
       </table>
+      {briefFuer && <AnpassungBrief v={v} a={briefFuer} objekt={props.objekt} anpassungen={liste ?? []} onClose={() => setBriefFuer(null)} onGeaendert={reload} />}
       {edit && <FormDialog title="Anpassung" row={edit} fields={felder}
         onSave={async (r) => {
           if (r.grund === 'erhoehung' && r.kaltmiete_ct) {
@@ -220,11 +208,6 @@ function Anpassungen(props: { vertrag: Row; objekt: Row; onClose: () => void }) 
   );
 }
 
-const prevDay = (iso: string) => {
-  const d = new Date(iso + 'T00:00:00Z');
-  d.setUTCDate(d.getUTCDate() - 1);
-  return d.toISOString().slice(0, 10);
-};
 
 function Indexwerte() {
   const [rows, reload] = useLoad<Row[]>(() => call('indexwerte'), []);
@@ -263,7 +246,7 @@ export function Schluesselverwaltung(props: { objekt: Row }) {
   const [offen, setOffen] = useState<Row | null>(null);
   return (
     <>
-      <Liste titel={`Schlüssel – ${props.objekt.bezeichnung}`} table="schluessel" filter={{ objekt_id: props.objekt.id }}
+      <Liste titel="Schlüssel" table="schluessel" filter={{ objekt_id: props.objekt.id }}
         laden={() => call('schluesselListe', props.objekt.id)} neuLabel="Neuer Schlüssel"
         spalten={[['Bezeichnung', (r) => r.bezeichnung], ['Nummer', (r) => r.nummer], ['Bestand', (r) => r.anzahl, 'num'],
           ['Ausgegeben', (r) => r.ausgegeben, 'num'], ['Verfügbar', (r) => r.anzahl - r.ausgegeben, 'num']]}
@@ -282,7 +265,7 @@ function Schluesselausgaben(props: { schluessel: Row; onClose: () => void }) {
       <Liste titel="" table="schluesselausgaben" filter={{ schluessel_id: props.schluessel.id }} laden={() => call('schluesselausgabenListe', props.schluessel.id)}
         neuLabel="Schlüssel ausgeben" neu={{ ausgabe: heute(), anzahl: 1 }}
         zeilenKlasse={(r) => (r.rueckgabe ? 'inaktiv' : '')}
-        spalten={[['Empfänger', (r) => r.name], ['Anzahl', (r) => r.anzahl, 'num'], ['Ausgabe', (r) => datum(r.ausgabe)], ['Rückgabe', (r) => datum(r.rueckgabe)], ['Notiz', (r) => r.notiz]]}
+        spalten={[['Empfänger', (r) => <L zu={{ person: r.person_id }}>{r.name}</L>], ['Anzahl', (r) => r.anzahl, 'num'], ['Ausgabe', (r) => datum(r.ausgabe)], ['Rückgabe', (r) => datum(r.rueckgabe)], ['Notiz', (r) => r.notiz]]}
         fields={[{ key: 'person_id', label: 'Empfänger', type: 'select', required: true, options: (personen ?? []).map((p) => [p.id, personName(p)]) },
           { key: 'anzahl', label: 'Anzahl', type: 'number', required: true }, { key: 'ausgabe', label: 'Ausgegeben am', type: 'date', required: true },
           { key: 'rueckgabe', label: 'Zurückgegeben am', type: 'date' }, { key: 'notiz', label: 'Notiz', type: 'textarea' }]} />
@@ -293,7 +276,7 @@ function Schluesselausgaben(props: { schluessel: Row; onClose: () => void }) {
 export function Versicherungen(props: { objekt: Row }) {
   const bald = (d?: string) => d && d <= new Date(Date.now() + 60 * 864e5).toISOString().slice(0, 10) && d >= heute();
   return (
-    <Liste titel={`Versicherungen & Verträge – ${props.objekt.bezeichnung}`} table="versicherungen" filter={{ objekt_id: props.objekt.id }} order="art"
+    <Liste titel="Versicherungen & Verträge" table="versicherungen" filter={{ objekt_id: props.objekt.id }} order="art"
       neuLabel="Neuer Vertrag"
       spalten={[['Art', (r) => r.art], ['Gesellschaft', (r) => r.gesellschaft], ['Police', (r) => r.police], ['Beitrag/Jahr', (r) => (r.beitrag_ct != null ? euro(r.beitrag_ct) : ''), 'num'],
         ['Fällig', (r) => datum(r.faellig)], ['Kündbar bis', (r) => <span className={bald(r.kuendbar_bis) ? 'fehlertext' : ''}>{datum(r.kuendbar_bis)}</span>], ['Ablauf', (r) => datum(r.ablauf)]]}

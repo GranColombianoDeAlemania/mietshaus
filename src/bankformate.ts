@@ -115,10 +115,10 @@ function csv(text: string): Umsatz[] {
 }
 
 const x = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[c]!);
-// SEPA only allows a restricted Latin character set.
+// SEPA only allows a restricted Latin character set (EPC): umlauts are spelled out, "&" becomes "+", the rest a space.
 const sepaText = (s: string, max: number) =>
-  x(s.replace(/[ä]/g, 'ae').replace(/[ö]/g, 'oe').replace(/[ü]/g, 'ue').replace(/[Ä]/g, 'Ae').replace(/[Ö]/g, 'Oe').replace(/[Ü]/g, 'Ue').replace(/ß/g, 'ss')
-    .replace(/[^A-Za-z0-9 /\-?:().,'+]/g, ' ').slice(0, max));
+  x((s ?? '').replace(/[ä]/g, 'ae').replace(/[ö]/g, 'oe').replace(/[ü]/g, 'ue').replace(/[Ä]/g, 'Ae').replace(/[Ö]/g, 'Oe').replace(/[Ü]/g, 'Ue').replace(/ß/g, 'ss')
+    .replace(/&/g, '+').replace(/[^A-Za-z0-9 /\-?:().,'+]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max).trim());
 const ibanNorm = (s: string) => (s ?? '').replace(/\s/g, '').toUpperCase();
 const betragStr = (ct: number) => (ct / 100).toFixed(2);
 

@@ -11,7 +11,7 @@ export function Bank(props: { objekt: Row; modus: Modus }) {
   return (
     <section>
       <div className="toolbar">
-        <h1>Bank – {props.objekt.bezeichnung}</h1>
+        <h1>Bank</h1>
         <Tabs tabs={[['import', 'Kontoauszug importieren'], ['lastschrift', 'SEPA-Lastschrift'], ['regeln', 'Gelernte Zuordnungen']]} value={tab} onChange={setTab} />
       </div>
       {tab === 'import' ? <Import objekt={props.objekt} /> : tab === 'lastschrift' ? <Lastschriften objekt={props.objekt} modus={props.modus} /> : <Regeln objekt={props.objekt} />}

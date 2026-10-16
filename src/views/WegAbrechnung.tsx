@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { call, datum, diesesJahr, euro, fehler, heute, zahl, type Row } from '../api';
 import { useLoad } from '../useLoad';
-import { absenderAus, alsPdf } from '../dokument';
+import { L } from '../navi';
+import { absenderAus, alsPdf, empfaengerVon } from '../dokument';
 import { wegEinzel, wegGesamt } from '../abrechnungDocs';
 import { Gespeichert } from './NkAbrechnung';
 
@@ -28,7 +29,7 @@ export function WegAbrechnung(props: { objekt: Row }) {
     const einst = await call('einstellungen');
     const absender = { ...absenderAus(einst), iban: props.objekt.iban || einst.verwalter_iban, bank: props.objekt.bank || einst.verwalter_bank, bic: props.objekt.bic || einst.verwalter_bic };
     const seiten = [wegGesamt(a, props.objekt)];
-    for (const e of a.ergebnisse) seiten.push(wegEinzel(a, e, absender, props.objekt, await call('get', 'personen', e.segment.vertrag.person_id)));
+    for (const e of a.ergebnisse) seiten.push(wegEinzel(a, e, absender, props.objekt, await empfaengerVon(e.segment.vertrag)));
     await alsPdf(seiten, `Jahresabrechnung ${props.objekt.bezeichnung} ${von.slice(0, 4)}`);
   }
 
@@ -47,7 +48,7 @@ export function WegAbrechnung(props: { objekt: Row }) {
   const r = a?.ruecklage;
   return (
     <section>
-      <div className="toolbar"><h1>Jahresabrechnung (Hausgeld) – {props.objekt.bezeichnung}</h1></div>
+      <div className="toolbar"><h1>Jahresabrechnung (Hausgeld)</h1></div>
       <div className="panel">
         <div className="maske">
           <label>Wirtschaftsjahr von<input type="date" value={von} onChange={(e) => setVon(e.target.value)} /></label>
@@ -87,8 +88,8 @@ export function WegAbrechnung(props: { objekt: Row }) {
               <thead><tr><th>Einheit</th><th>Eigentümer</th><th>Zeitraum</th><th className="num">Kostenanteil</th><th className="num">davon umlegbar</th><th className="num">Hausgeld-Soll</th><th className="num">Rücklage-Soll</th><th className="num">Abrechnungsspitze</th></tr></thead>
               <tbody>
                 {a.ergebnisse.map((e: Row, i: number) => (
-                  <tr key={i}>
-                    <td>{e.segment.einheit.bezeichnung}</td><td>{e.segment.vertrag.name}</td>
+                  <tr key={i} data-ziel={`vertrag:weg:${e.segment.vertrag.id}`}>
+                    <td><L zu={{ einheit: e.segment.einheit.id }}>{e.segment.einheit.bezeichnung}</L></td><td><L zu={{ vertrag: e.segment.vertrag.id, typ: 'weg' }}>{e.segment.vertrag.name}</L></td>
                     <td>{datum(e.segment.von)} – {datum(e.segment.bis)}</td>
                     <td className="num">{euro(e.kosten_ct)}</td><td className="num">{euro(e.umlagefaehig_ct)}</td>
                     <td className="num">{euro(e.hausgeld_soll_ct)}</td><td className="num">{euro(e.ruecklage_soll_ct)}</td>

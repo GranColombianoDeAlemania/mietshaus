@@ -3,8 +3,10 @@ import { call, personName, type Row } from '../api';
 import { FormDialog, type Field } from '../Form';
 import { useLoad } from '../useLoad';
 import { useAktion } from '../aktion';
+import { L, useNavi } from '../navi';
+import { Chip, Leer, SortTh, sortiere, type Sortierung } from '../ui';
 
-const FELDER: Field[] = [
+export const PERSON_FELDER: Field[] = [
   { key: 'anrede', label: 'Anrede', type: 'select', options: ['Herr', 'Frau', 'Divers', 'Firma', 'Eheleute'].map((a) => [a, a]) },
   { key: 'titel', label: 'Titel' },
   { key: 'vorname', label: 'Vorname' },
@@ -24,9 +26,11 @@ const FELDER: Field[] = [
   { key: 'notiz', label: 'Notiz', type: 'textarea', section: 'Sonstiges' },
 ];
 
-export function Personen(props: { onAkte?: (id: number) => void }) {
+export function Personen() {
+  const navi = useNavi();
   const [rows, reload] = useLoad<Row[]>(() => call('personen'), []);
   const [edit, setEdit] = useState<Row | null>(null);
+  const [sort, setSort] = useState<Sortierung>({ key: 'name', ab: false });
   useAktion('neue-person', () => setEdit({ land: 'Deutschland' }));
   const [suche, setSuche] = useState(() => {
     // Set by the global search when it opens a person.
@@ -36,8 +40,9 @@ export function Personen(props: { onAkte?: (id: number) => void }) {
   });
 
   const q = suche.trim().toLowerCase();
-  const treffer = rows?.filter((p) =>
-    !q || [p.vorname, p.nachname, p.firma, p.ort, p.email, p.telefon].some((v) => v?.toLowerCase().includes(q)));
+  const treffer = sortiere(rows?.filter((p) =>
+    !q || [p.vorname, p.nachname, p.firma, p.ort, p.email, p.telefon].some((v) => v?.toLowerCase().includes(q))), sort,
+  (p, k) => (k === 'name' ? personName(p) : k === 'anschrift' ? p.ort : p[k]));
 
   return (
     <section>
@@ -48,30 +53,31 @@ export function Personen(props: { onAkte?: (id: number) => void }) {
         <button className="primary" onClick={() => setEdit({ land: 'Deutschland' })}>Neue Person</button>
       </div>
       <p className="hinweis klein">Das Adressbuch ist für Miet- und WEG-Verwaltung gemeinsam – eine Person kann Mieter und Eigentümer zugleich sein.</p>
-      <table>
+      {rows && !rows.length && <Leer text="Noch keine Personen. Mieter, Eigentümer, Handwerker und Ansprechpartner stehen alle hier." aktion={<button className="primary" onClick={() => setEdit({ land: 'Deutschland' })}>Erste Person anlegen</button>} />}
+      {!!rows?.length && <table>
         <thead>
-          <tr><th>Name</th><th>Anschrift</th><th>Telefon</th><th>E-Mail</th><th>Rolle</th><th /></tr>
+          <tr><SortTh k="name" s={sort} set={setSort}>Name</SortTh><SortTh k="anschrift" s={sort} set={setSort}>Anschrift</SortTh><th>Telefon</th><SortTh k="email" s={sort} set={setSort}>E-Mail</SortTh><th>Rolle</th><th /></tr>
         </thead>
         <tbody>
           {treffer?.map((p) => (
-            <tr key={p.id} className="klickbar" onClick={() => props.onAkte?.(p.id)} title="Akte öffnen">
-              <td>{personName(p)}</td>
+            <tr key={p.id} className="klickbar" data-ziel={`person:${p.id}`} onClick={() => navi.zu({ person: p.id })} title="Steckbrief öffnen">
+              <td><L zu={{ person: p.id }}>{personName(p)}</L></td>
               <td>{[p.strasse, [p.plz, p.ort].filter(Boolean).join(' ')].filter(Boolean).join(', ')}</td>
               <td>{p.telefon || p.mobil}</td>
               <td>{p.email}</td>
               <td>
-                {p.anz_miete > 0 && <span className="tag art-miete">Mieter</span>}
-                {p.anz_eigentum > 0 && <span className="tag art-weg">Eigentümer</span>}
+                {p.anz_miete > 0 && <Chip art="miete">Mieter</Chip>}{' '}
+                {p.anz_eigentum > 0 && <Chip art="weg">Eigentümer</Chip>}
               </td>
               <td className="aktionen"><button onClick={(e) => { e.stopPropagation(); setEdit(p); }}>Bearbeiten</button></td>
             </tr>
           ))}
         </tbody>
-      </table>
+      </table>}
       {edit && (
         <FormDialog
           title={edit.id ? 'Person bearbeiten' : 'Neue Person'}
-          fields={FELDER}
+          fields={PERSON_FELDER}
           row={edit}
           onSave={async (r) => {
             if (!r.nachname && !r.firma) throw new Error('Bitte Nachname oder Firma angeben.');

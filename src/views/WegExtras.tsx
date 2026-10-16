@@ -2,6 +2,7 @@
 import { useState } from 'react';
 import { anrede, call, datum, fehler, heute, personName, zahl, type Row } from '../api';
 import { useLoad } from '../useLoad';
+import { L } from '../navi';
 import { Liste } from '../Liste';
 import { Dialog } from '../ui';
 import { FormDialog, type Field } from '../Form';
@@ -13,7 +14,7 @@ export function Versammlungen(props: { objekt: Row }) {
   const [offen, setOffen] = useState<number | null>(null);
   return (
     <>
-      <Liste titel={`Eigentümerversammlungen – ${props.objekt.bezeichnung}`} table="versammlungen" filter={{ objekt_id: props.objekt.id }} order="datum DESC"
+      <Liste titel="Eigentümerversammlungen" table="versammlungen" filter={{ objekt_id: props.objekt.id }} order="datum DESC"
         neuLabel="Neue Versammlung" neu={{ art: 'ordentlich', uhrzeit: '18:00' }}
         spalten={[['Datum', (r) => `${datum(r.datum)} ${r.uhrzeit ?? ''}`], ['Art', (r) => (r.art === 'ordentlich' ? 'ordentlich' : 'außerordentlich')], ['Ort', (r) => r.ort],
           ['Einladung', (r) => datum(r.einladung_am)]]}
@@ -146,7 +147,7 @@ export function Beschluesse(props: { objekt: Row }) {
       `Beschlusssammlung ${props.objekt.bezeichnung}`);
   }
   return (
-    <Liste titel={`Beschluss-Sammlung – ${props.objekt.bezeichnung}`} table="beschluesse" filter={{ objekt_id: props.objekt.id }} order="nr DESC"
+    <Liste titel="Beschluss-Sammlung" table="beschluesse" filter={{ objekt_id: props.objekt.id }} order="nr DESC"
       neuLabel="Beschluss eintragen" neu={{ datum: heute(), art: 'versammlung', status: 'gueltig', ergebnis: 'angenommen' }}
       hinweis="Beschlüsse aus Versammlungen werden beim Abstimmen automatisch eingetragen. Umlaufbeschlüsse und Gerichtsentscheidungen hier von Hand erfassen."
       kopf={(rows) => <button onClick={() => drucken(rows)}>Als PDF</button>}
@@ -161,16 +162,16 @@ export function Beschluesse(props: { objekt: Row }) {
   );
 }
 
-const ROLLEN: [string, string][] = [['beirat', 'Verwaltungsbeirat'], ['beiratsvorsitz', 'Beiratsvorsitz'], ['hausmeister', 'Hausmeister'],
+export const ROLLEN: [string, string][] = [['beirat', 'Verwaltungsbeirat'], ['beiratsvorsitz', 'Beiratsvorsitz'], ['hausmeister', 'Hausmeister'],
   ['handwerker', 'Handwerker'], ['dienstleister', 'Dienstleister'], ['versorger', 'Versorger'], ['notfall', 'Notdienst'], ['sonstige', 'Sonstige']];
 
 export function Kontakte(props: { objekt: Row; titel: string }) {
   const [personen] = useLoad<Row[]>(() => call('personen'), []);
   return (
-    <Liste titel={`${props.titel} – ${props.objekt.bezeichnung}`} table="rollen" filter={{ objekt_id: props.objekt.id }}
+    <Liste titel={props.titel} table="rollen" filter={{ objekt_id: props.objekt.id }}
       laden={() => call('rollenListe', props.objekt.id)} neuLabel="Ansprechpartner hinzufügen"
       zeilenKlasse={(r) => (r.bis && r.bis < heute() ? 'inaktiv' : '')}
-      spalten={[['Rolle', (r) => ROLLEN.find(([k]) => k === r.rolle)?.[1] ?? r.rolle], ['Name', (r) => r.name], ['Telefon', (r) => r.telefon || r.mobil],
+      spalten={[['Rolle', (r) => ROLLEN.find(([k]) => k === r.rolle)?.[1] ?? r.rolle], ['Name', (r) => <L zu={{ person: r.person_id }}>{r.name}</L>], ['Telefon', (r) => r.telefon || r.mobil],
         ['E-Mail', (r) => r.email ? <a href="#" onClick={(e) => { e.preventDefault(); window.hv.extern(`mailto:${r.email}`); }}>{r.email}</a> : ''], ['Seit', (r) => datum(r.von)], ['Bis', (r) => datum(r.bis)]]}
       fields={[{ key: 'rolle', label: 'Rolle', type: 'select', required: true, options: ROLLEN },
         { key: 'person_id', label: 'Person (aus dem Adressbuch)', type: 'select', required: true, options: (personen ?? []).map((p) => [p.id, personName(p)]) },

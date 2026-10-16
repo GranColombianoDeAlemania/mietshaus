@@ -3,8 +3,9 @@ import { useEffect, useRef, useState } from 'react';
 import * as I from 'lucide-react';
 import { anrede, call, datum, euro, fehler, heute, parseZahl, zahl, type Row } from '../api';
 import { useLoad } from '../useLoad';
+import { L } from '../navi';
 import { Dialog } from '../ui';
-import { absenderAus, alsPdfAblegen, bericht, brief, esc, tabelle, absaetze, alsPdf } from '../dokument';
+import { absenderAus, alsPdfAblegen, bericht, brief, esc, tabelle, absaetze, alsPdf, empfaengerVon } from '../dokument';
 import { dokUrl } from './Archiv';
 import { ZAEHLER_ARTEN } from './Zaehler';
 
@@ -155,7 +156,7 @@ export function Uebergaben(props: { objekt: Row }) {
   const [neu, setNeu] = useState<Row | null>(null);
   return (
     <section>
-      <div className="toolbar"><h1>Übergaben & Mieterwechsel – {props.objekt.bezeichnung}</h1><span className="spacer" />
+      <div className="toolbar"><h1>Übergaben & Mieterwechsel</h1><span className="spacer" />
         <button className="primary" onClick={() => setNeu({ art: 'einzug', datum: heute() })}>Neue Übergabe</button></div>
       <h3>Mieterwechsel</h3>
       <p className="hinweis klein">Kündigung erhalten? Wähle den Mieter – der Assistent führt durch Vertragsende, Übergabe, Zählerstände, Kaution und Nachmieter.</p>
@@ -179,7 +180,8 @@ export function Uebergaben(props: { objekt: Row }) {
         <tbody>
           {liste?.map((u) => (
             <tr key={u.id} className="klickbar" onClick={() => setOffen(u.id)}>
-              <td>{datum(u.datum)}</td><td>{u.art === 'einzug' ? 'Einzug' : 'Auszug'}</td><td>{u.einheit}</td><td>{u.name}</td>
+              <td>{datum(u.datum)}</td><td>{u.art === 'einzug' ? 'Einzug' : 'Auszug'}</td><td><L zu={{ einheit: u.einheit_id }}>{u.einheit}</L></td>
+              <td>{u.vertrag_id ? <L zu={{ vertrag: u.vertrag_id, typ: 'miete' }}>{u.name}</L> : u.name}</td>
               <td>{u.abgeschlossen ? <span className="tag art-weg">abgeschlossen</span> : <span className="tag">in Bearbeitung</span>}</td>
               <td className="aktionen"><button onClick={(e) => { e.stopPropagation(); setOffen(u.id); }}>Öffnen</button></td>
             </tr>
@@ -238,7 +240,7 @@ function Mieterwechsel(props: { vertragId: number; objekt: Row; onClose: () => v
 
   async function bestaetigung() {
     const einst = await call('einstellungen');
-    const p = await call('get', 'personen', v.person_id);
+    const p = await empfaengerVon(v);
     await alsPdf([brief({ absender: absenderAus(einst), empfaenger: p, betreff: `Bestätigung Ihrer Kündigung – ${props.objekt.bezeichnung}, ${v.einheit}`,
       info: [['Objekt', props.objekt.bezeichnung], ['Einheit', v.einheit]],
       inhalt: `<p>${esc(anrede(p))}</p>${absaetze(`wir bestätigen den Eingang Ihrer Kündigung vom ${datum(w!.kuendigung_eingang)}. Das Mietverhältnis endet zum ${datum(v.ende)}.\n\nFür die Wohnungsübergabe melden wir uns mit einem Terminvorschlag. Bitte denken Sie an die Rückgabe aller Schlüssel. Die Kaution rechnen wir nach der Übergabe ab.`)}
