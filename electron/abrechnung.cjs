@@ -15,16 +15,17 @@ module.exports = function abrechnung({ db, all, get, tx, PERSON_NAME, bh }) {
   const vertragTabelle = (typ) => (typ === 'weg' ? 'eigentum' : 'mietverhaeltnisse');
 
   // Days a contract counts for in a statement. Rent and house money are monthly amounts, so by default these are the
-  // rent months it is charged for: moving in on the 15th with a full month counts from the 1st, moving out on the
-  // 15th up to the end of that month, a rent month from the 15th from the 15th on. A tenancy can instead be settled by
-  // the days from moving in to moving out (bk_abrechnung 'wohntage'); tagesgenau does that for every contract.
+  // days it is charged for: moving in on the 15th with a full month counts from the 1st, moving out on the 15th up to
+  // the end of that month, a rent month from the 15th from the 15th on, a part month from or up to its day. A tenancy
+  // can instead be settled by the days from moving in to moving out (bk_abrechnung 'wohntage'); tagesgenau does that
+  // for every contract.
   function zeitraum(typ, v, tagesgenau = false) {
     const tageweise = { von: v.beginn, bis: v.ende || '9999-12-31' };
     if (tagesgenau || (typ === 'miete' && v.bk_abrechnung === 'wohntage')) return tageweise;
     const m = v.beginn.slice(0, 7);
     const erste = bh.periode(v, m) ?? bh.periode(v, monatPlus(m, 1));
     if (!erste) return tageweise;
-    const z = { von: erste.von, bis: v.ende ? bh.periodeAm(v, v.ende).bis : '9999-12-31' };
+    const z = { von: erste.von, bis: v.ende ? bh.letztePeriode(v)?.bis ?? v.ende : '9999-12-31' };
     return z.von <= z.bis ? z : tageweise;
   }
 

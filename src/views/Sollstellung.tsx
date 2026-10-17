@@ -111,7 +111,8 @@ export function Sollstellung(props: { objekt: Row; modus: Modus }) {
               <td>{datum(z.datum)}</td>
               <td><L zu={{ vertrag: z.vertrag_id, typ: z.typ }}>{z.name}</L></td>
               <td><L zu={{ einheit: z.einheit_id }}>{z.einheit}</L></td>
-              <td>{z.posten} {z.anker > 1 && <span className="tag" title="Mietmonat ab dem Einzugstag">{datum(z.periode_von)} – {datum(z.periode_bis)}</span>}</td>
+              <td>{z.posten} {(z.anker > 1 || z.teil) && <span className="tag" title={z.teil ? `anteilig: ${z.teil.tage} von ${z.teil.tage_periode} Tagen (im Vertrag so vereinbart)` : 'Mietmonat ab dem Einzugstag'}>
+                {datum(z.periode_von)} – {datum(z.periode_bis)}</span>}</td>
               <td className="num">{betrag(z.betrag_ct)}</td>
               <td>{z.abweichend ? <span className="negativ" title="Der gebuchte Betrag passt nicht zum Vertrag">gebucht {euro(z.vorhanden_ct)}</span> : z.vorhanden ? 'bereits gebucht' : 'neu'}</td>
             </tr>

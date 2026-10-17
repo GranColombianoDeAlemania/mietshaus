@@ -1,6 +1,6 @@
 {
   "name": "hausverwalter",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "Persönliche Hausverwaltung (Miete & WEG)",
   "main": "electron/main.cjs",
   "scripts": {

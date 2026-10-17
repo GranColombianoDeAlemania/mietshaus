@@ -93,6 +93,13 @@ Einzug am 10. oder 15., 3 V1“.
 | Kennzahlen | Vacancy costs whole months without any rent charge; „as if let“ counts whole months of self-use | done |
 | Tests | Calculation test section 17: Julian's case with every start and end, rent month from the 15th and the 31st, tenant change, statements by months and days, flat fee and inclusive rent, conversion of a 0.7 database | done |
 
+### 0.8.1 – part months as an option
+
+From the pick „1 ja 2 ok aber als option“: a tenancy can say „anteilig bis Monatsende“ for the month of moving in (by days from the move-in day,
+or an agreed amount split like the monthly amounts) and „anteilig bis zum Auszugstag“ for the month of moving out; the standard stays the full
+month. Charges name the days („Miete 10/2026 (20.10.–31.10.)“), arrears stay per charge, statements count from / up to those days, a vacancy
+counts the unpaid days of such a month; the form shows the first and last amount. Calculation test: 441 checks.
+
 ## Development
 
 ```

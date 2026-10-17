@@ -13,6 +13,12 @@ const FAELLIG: [number, string][] = [[0, '3. Werktag (gesetzlich, § 556b BGB)']
 export const BK_ART: [string, string][] = [['vorauszahlung', 'Vorauszahlung (wird jährlich abgerechnet)'], ['pauschale', 'Pauschale (keine Abrechnung)'],
   ['inklusiv', 'in der Kaltmiete enthalten (Bruttokaltmiete)']];
 const mitteImMonat = (f: Row) => /^\d{4}-\d{2}-\d{2}$/.test(f.beginn ?? '') && !String(f.beginn).endsWith('-01');
+// Moving out before the end of a month (a rent month from another day ends on other days, so it is always offered there).
+const endeImMonat = (f: Row) => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(f.ende ?? '')) return false;
+  const [y, m, d] = String(f.ende).split('-').map(Number);
+  return f.mietmonat_ab === 'einzug' || d < new Date(Date.UTC(y, m, 0)).getUTCDate();
+};
 
 // One screen for both contract kinds: tenancies (Miete) and ownership (WEG). Rent and house money are monthly
 // amounts: a month of moving in or out is charged in full, never by day. The fields depend on what is entered.
@@ -32,12 +38,16 @@ const ART = {
       { key: 'faelligkeitstag', label: 'Fällig', type: 'select', required: true, options: FAELLIG },
       { key: 'ust_satz', label: 'Umsatzsteuer (nur Gewerbe mit Option)', type: 'select', required: true, options: [[0, 'keine'], [19, 'zzgl. 19 %'], [7, 'zzgl. 7 %']] },
       ...(mitteImMonat(f) ? [
-        { key: 'mietmonat_ab', label: 'Mietmonat läuft', type: 'select', required: true, section: 'Einzug mitten im Monat – die Miete ist immer ein voller Monatsbetrag',
+        { key: 'mietmonat_ab', label: 'Mietmonat läuft', type: 'select', required: true, section: 'Ein- und Auszug mitten im Monat – die Miete ist ein voller Monatsbetrag, außer du wählst „anteilig“',
           options: [['erster', 'vom 1. bis zum Monatsende'], ['einzug', `vom ${Number(String(f.beginn).slice(8, 10))}. bis zum ${Number(String(f.beginn).slice(8, 10)) - 1}. des Folgemonats`]] } as Field,
         ...(f.mietmonat_ab === 'einzug' ? [] : [{ key: 'teilmonat_beginn', label: 'Einzugsmonat', type: 'select', required: true,
-          options: [['voll', 'voller Monat'], ['folgemonat', 'erst ab dem Folgemonat']] } as Field]),
+          options: [['voll', 'voller Monat'], ['teilbetrag', 'anteilig bis Monatsende'], ['folgemonat', 'erst ab dem Folgemonat']] } as Field]),
+        ...(f.mietmonat_ab !== 'einzug' && f.teilmonat_beginn === 'teilbetrag'
+          ? [{ key: 'teilbetrag_beginn_ct', label: 'Vereinbarter Betrag Einzugsmonat (leer = nach Tagen)', type: 'money' } as Field] : []),
       ] : []),
-      { key: 'bk_abrechnung', label: 'Betriebskostenabrechnung', type: 'select', required: true, section: mitteImMonat(f) ? undefined : 'Betriebskostenabrechnung',
+      ...(endeImMonat(f) ? [{ key: 'teilmonat_ende', label: 'Auszugsmonat', type: 'select', required: true, section: mitteImMonat(f) ? undefined : 'Auszug mitten im Monat',
+        options: [['voll', 'voller Monat'], ['teilbetrag', 'anteilig bis zum Auszugstag']] } as Field] : []),
+      { key: 'bk_abrechnung', label: 'Betriebskostenabrechnung', type: 'select', required: true, section: mitteImMonat(f) || endeImMonat(f) ? undefined : 'Betriebskostenabrechnung',
         options: [['mietmonate', 'nach Mietmonaten (Standard)'], ['wohntage', 'nach Wohntagen (ab Einzugstag, bis Auszugstag)']] },
       { key: 'kaution_ct', label: 'Kaution', type: 'money', section: 'Weitere Angaben' },
       { key: 'personen_anzahl', label: 'Personen im Haushalt', type: 'number' },
@@ -100,7 +110,7 @@ export function Vertraege(props: { modus: Modus; objekt: Row }) {
 
   const sichtbar = sortiere(rows?.filter((v) => !nurAktuell || v.aktuell || v.zukuenftig), sort, (v, k) => (k === 'monatlich' ? a.summe(v) : k === 'saldo' ? v.ueberfaellig_ct : v[k]));
   const gesamt = sichtbar.filter((v) => v.aktuell).reduce((s, v) => s + a.summe(v), 0);
-  const neu = () => setEdit({ beginn: ersterNaechsterMonat(), faelligkeitstag: typ === 'weg' ? 1 : 0, personen_anzahl: 1, teilmonat_beginn: 'voll', ust_satz: 0,
+  const neu = () => setEdit({ beginn: ersterNaechsterMonat(), faelligkeitstag: typ === 'weg' ? 1 : 0, personen_anzahl: 1, teilmonat_beginn: 'voll', teilmonat_ende: 'voll', ust_satz: 0,
     ...(typ === 'miete' ? { mietmonat_ab: 'erster', bk_abrechnung: 'mietmonate', bk_art: 'vorauszahlung' } : {}) });
 
   return (

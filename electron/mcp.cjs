@@ -197,18 +197,21 @@ function starten() {
     (a) => text(`Person ${db.save('personen', a)} aktualisiert.`));
 
   werkzeug('mietvertrag_anlegen', 'Legt ein Mietverhältnis an. Miete ist immer ein Monatsbetrag: der Ein- und Auszugsmonat wird voll gefordert '
-    + '(beim Einzug mitten im Monat wahlweise erst ab dem Folgemonat), nie tageweise. betriebskosten: vorauszahlung (wird abgerechnet), pauschale '
+    + '(beim Einzug mitten im Monat wahlweise erst ab dem Folgemonat); tageweise nur, wenn es ausdrücklich vereinbart ist (einzugsmonat/auszugsmonat '
+    + '„teilbetrag“, beim Einzug optional mit teilbetrag_eur). betriebskosten: vorauszahlung (wird abgerechnet), pauschale '
     + '(bk_vz_eur ist dann die Pauschale) oder inklusiv (in der Kaltmiete enthalten). mietmonat_ab einzug: Mietmonat vom Einzugstag bis zum Tag davor im Folgemonat.', {
     einheit_id: z.number().int(), person_id: z.number().int(), person2_id: z.number().int().optional(), beginn: z.string(), ende: z.string().optional(),
     kaltmiete_eur: z.number(), bk_vz_eur: z.number().optional(), hk_vz_eur: z.number().optional(), sonstiges_eur: z.number().optional(),
     kaution_eur: z.number().optional(), personen_anzahl: z.number().optional(), faelligkeitstag: z.number().int().optional(),
     betriebskosten: z.enum(['vorauszahlung', 'pauschale', 'inklusiv']).optional(), mietmonat_ab: z.enum(['erster', 'einzug']).optional(),
-    einzugsmonat: z.enum(['voll', 'folgemonat']).optional(), abrechnung_nach: z.enum(['mietmonate', 'wohntage']).optional(),
+    einzugsmonat: z.enum(['voll', 'teilbetrag', 'folgemonat']).optional(), auszugsmonat: z.enum(['voll', 'teilbetrag']).optional(),
+    teilbetrag_eur: z.number().optional(), abrechnung_nach: z.enum(['mietmonate', 'wohntage']).optional(),
   }, (a) => text(`Mietverhältnis angelegt, id ${db.save('mietverhaeltnisse', {
     einheit_id: a.einheit_id, person_id: a.person_id, person2_id: a.person2_id, beginn: a.beginn, ende: a.ende,
     kaltmiete_ct: cent(a.kaltmiete_eur), bk_vz_ct: cent(a.bk_vz_eur ?? 0), hk_vz_ct: cent(a.hk_vz_eur ?? 0), sonstiges_ct: cent(a.sonstiges_eur ?? 0),
     kaution_ct: cent(a.kaution_eur ?? 0), personen_anzahl: a.personen_anzahl ?? 1, faelligkeitstag: a.faelligkeitstag ?? 3,
-    bk_art: a.betriebskosten ?? 'vorauszahlung', mietmonat_ab: a.mietmonat_ab ?? 'erster', teilmonat_beginn: a.einzugsmonat ?? 'voll', bk_abrechnung: a.abrechnung_nach ?? 'mietmonate' })}.`));
+    bk_art: a.betriebskosten ?? 'vorauszahlung', mietmonat_ab: a.mietmonat_ab ?? 'erster', teilmonat_beginn: a.einzugsmonat ?? 'voll', teilmonat_ende: a.auszugsmonat ?? 'voll',
+    teilbetrag_beginn_ct: a.teilbetrag_eur ? cent(a.teilbetrag_eur) : null, bk_abrechnung: a.abrechnung_nach ?? 'mietmonate' })}.`));
 
   werkzeug('eigentum_anlegen', 'Legt ein Eigentumsverhältnis (WEG) an.', {
     einheit_id: z.number().int(), person_id: z.number().int(), beginn: z.string(), ende: z.string().optional(),

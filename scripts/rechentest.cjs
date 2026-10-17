@@ -1019,6 +1019,57 @@ const wa = db.wegAbrechnung(w, '2025-01-01', '2025-12-31');
   gleich('... September jetzt voll, August unverändert', [U.monate17(vu1)['2026-09'], U.monate17(vu2)['2026-08'][0]], [[80000, '2026-09-16'], Math.round(60000 * 17 / 31) + Math.round(12000 * 17 / 31) + Math.round(8000 * 17 / 31)]);
   gleich('... Hinweis im Cockpit, nur einmal', [U.t.hinweise().some((h) => h.schluessel === 'umstellung:monatlich' && /400,00\s€ → 800,00\s€/.test(h.text)), U.t.umstellungMonatlich()], [true, null]);
 
+  // ----- Optional part months (pick of 17.10.2026: "1 ja 2 ok aber als option") -----
+  // Only where a tenancy says so: the month of moving in for its days (or an agreed amount), the month of moving out up
+  // to its day. Arrears stay per charge; statements and vacancy follow the days charged.
+  const T = haus();
+  const teil = (tage, T0) => Math.round(60000 * tage / T0) + Math.round(12000 * tage / T0) + Math.round(8000 * tage / T0);
+  const t1 = T.vertrag(T.einheit(), '2026-10-20', { teilmonat_beginn: 'teilbetrag' });
+  const t2 = T.vertrag(T.einheit(), '2026-10-20', { teilmonat_beginn: 'teilbetrag', teilbetrag_beginn_ct: 30000 });
+  const t3 = T.vertrag(T.einheit(), '2026-09-01', { ende: '2026-10-20', teilmonat_ende: 'teilbetrag' });
+  const t4 = T.vertrag(T.einheit(), '2026-10-10', { ende: '2026-10-20', teilmonat_beginn: 'teilbetrag', teilmonat_ende: 'teilbetrag' });
+  T.t.sollstellung(T.ob, '2026-01', '2026-12');
+  gleich('Einzug 20.10. anteilig: 12/31 je Betrag, fällig am Einzug, ab November voll', T.monate17(t1, '2026-11'),
+    { '2026-10': [teil(12, 31), '2026-10-20'], '2026-11': [80000, '2026-11-04'] });
+  gleich('... Text nennt die Tage', [...new Set(T.lasten(t1).filter((b) => b.monat === '2026-10').map((b) => b.text))].sort(),
+    ['BK-Vorauszahlung 10/2026 (20.10.–31.10.)', 'HK-Vorauszahlung 10/2026 (20.10.–31.10.)', 'Miete 10/2026 (20.10.–31.10.)']);
+  gleich('Einzug 20.10. mit vereinbarten 300 €: aufgeteilt wie die Monatsbeträge', T.lasten(t2).filter((b) => b.monat === '2026-10').map((b) => [b.text.split(' ')[0], b.betrag_ct]).sort(),
+    [['BK-Vorauszahlung', 4500], ['HK-Vorauszahlung', 3000], ['Miete', 22500]]);
+  gleich('Auszug 20.10. anteilig: 20/31, normal fällig', T.monate17(t3)['2026-10'], [teil(20, 31), '2026-10-05']);
+  gleich('Ein- und Auszug im selben Monat (10.–20.10.): 11/31', T.monate17(t4)['2026-10'][0], teil(11, 31));
+  T.zahle(t1, '2026-10-22', 20000);
+  gleich('Teilbetrag 309,68 €, 200 € gezahlt: 109,68 € offen', T.t.kontoStatus(T.konto(t1), '2026-10-25').ueberfaellig_ct, teil(12, 31) - 20000);
+  const fi = T.t.mietbeginnInfo('miete', { beginn: '2026-10-20', ende: '', teilmonat_beginn: 'teilbetrag', mietmonat_ab: 'erster', faelligkeitstag: 0, kaltmiete_ct: 60000, bk_vz_ct: 12000, hk_vz_ct: 8000 });
+  gleich('... Formular zeigt Teilbetrag, Tage und Fälligkeit', [fi.erste.von, fi.erste.bis, fi.erste.betrag_ct, fi.erste.datum, fi.erste.teil.tage, fi.erste.teil.tage_periode],
+    ['2026-10-20', '2026-10-31', teil(12, 31), '2026-10-20', 12, 31]);
+  const fe = T.t.mietbeginnInfo('miete', { beginn: '2026-09-01', ende: '2026-10-20', teilmonat_ende: 'teilbetrag', faelligkeitstag: 0, kaltmiete_ct: 60000, bk_vz_ct: 12000, hk_vz_ct: 8000 });
+  gleich('... und den letzten Teilmonat', [fe.letzte.von, fe.letzte.bis, fe.letzte.betrag_ct], ['2026-10-01', '2026-10-20', teil(20, 31)]);
+  gleich('Teilbetrag nur bei Mietverhältnissen, „anteilig“ bleibt voll', (() => {
+    const g = T.t.save('eigentum', { einheit_id: T.einheit(), person_id: T.t.save('personen', { nachname: 'Eig' }), beginn: '2026-10-20', hausgeld_ct: 30000, teilmonat_beginn: 'teilbetrag', teilmonat_ende: 'teilbetrag' });
+    const m = T.t.save('mietverhaeltnisse', { id: t1, teilmonat_beginn: 'anteilig' });
+    return [T.t.get('eigentum', g).teilmonat_beginn, T.t.get('eigentum', g).teilmonat_ende, T.t.get('mietverhaeltnisse', m).teilmonat_beginn];
+  })(), ['voll', 'voll', 'voll']);
+
+  const T2 = haus();
+  const [ta, tb, tc] = [T2.einheit(), T2.einheit(), T2.einheit()];
+  const ta1 = T2.vertrag(ta, '2024-01-01', { ende: '2025-06-15', teilmonat_ende: 'teilbetrag' });
+  const ta2 = T2.vertrag(ta, '2025-06-16', { teilmonat_beginn: 'teilbetrag' });
+  const tb1 = T2.vertrag(tb, '2024-01-01', { ende: '2025-06-15' });
+  const tb2 = T2.vertrag(tb, '2025-08-20', { teilmonat_beginn: 'teilbetrag' });
+  const tc1 = T2.vertrag(tc, '2024-01-01', { ende: '2025-06-15' });
+  const tc2 = T2.vertrag(tc, '2025-06-20', { teilmonat_beginn: 'teilbetrag' });
+  T2.t.sollstellung(T2.ob, '2024-01', '2025-12');
+  gleich('NK mit Teilmonaten: ab dem Einzugstag, bis zum Auszugstag', T2.t.nkAbrechnung(T2.ob, '2025-01-01', '2025-12-31').ergebnisse
+    .map((e) => [e.segment.einheit.id, e.segment.vertrag?.id ?? null, e.segment.von, e.segment.bis]), [
+    [ta, ta1, '2025-01-01', '2025-06-15'], [ta, ta2, '2025-06-16', '2025-12-31'],
+    [tb, tb1, '2025-01-01', '2025-06-30'], [tb, null, '2025-07-01', '2025-08-19'], [tb, tb2, '2025-08-20', '2025-12-31'],
+    [tc, tc1, '2025-01-01', '2025-06-19'], [tc, tc2, '2025-06-20', '2025-12-31']]);
+  gleich('Wechsel 15./16.06. beide anteilig: nichts doppelt; voll bis 30.06. und anteilig ab 20.06.: 20.–30.06. doppelt',
+    T2.t.pruefbericht().punkte.filter((p) => p.schluessel.startsWith('doppelmonat:')).map((p) => p.schluessel), [`doppelmonat:miete:${tc1}:${tc2}`]);
+  const lb = T2.t.einheitKennzahlen(tb, '2025-12-31').belegung.segmente.find((x) => x.art === 'leer');
+  gleich('Leerstand 16.06.–19.08. (Juni voll bezahlt, ab 20.08. anteilig): Juli und 19/31 August', [lb.von, lb.bis, +lb.monate.toFixed(9), lb.entgangen_ct],
+    ['2025-06-16', '2025-08-19', +(1 + 19 / 31).toFixed(9), Math.round(60000 * (1 + 19 / 31))]);
+
   // ----- WEG: house money of the month of an owner change once; a special levy on a date goes to the owner then -----
   const G = haus();
   const wo = G.t.neuesObjekt({ bezeichnung: 'WEG Monatsplatz', art: 'weg', strasse: 'Monatsplatz 2', plz: '10115', ort: 'Berlin' });

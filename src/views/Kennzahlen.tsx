@@ -10,6 +10,9 @@ import {
   Zahlungskalender, Zeitstrahl, ZONEN_KAUTION, ZONEN_QUOTE, ZONEN_SCORE, type Zonen,
 } from '../zeiger';
 
+// Rent months as a number: whole months as they are, a part month with one decimal ("1,6 Monate").
+const monateText = (n: number) => { const r = Math.round(n * 10) / 10; return `${zahl(r)} ${r === 1 ? 'Monat' : 'Monate'}`; };
+
 const nachname = (name: string | null | undefined) => (name ?? '').split(',')[0].trim();
 const MONAT_LANG = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
 const ZONEN_BELEGUNG: Zonen = [[89.999, 'rot'], [96.999, 'gelb'], [100, 'gruen']];
@@ -44,7 +47,7 @@ export function CockpitKpis(props: { c: Row; weg: boolean }) {
             <div className="kz-text">{[v.selbst ? `${v.selbst} selbst genutzt` : '', v.leer ? `${v.leer} leer` : 'keine leer'].filter(Boolean).join(' · ')}</div>
           </RingZeile>
           <div className="kz-text">{v.leerstand_ct > 0
-            ? <>Leerstand kostete <b>{euro0(v.leerstand_ct)}</b> Kaltmiete ({v.luecken.filter((l: Row) => l.monate).slice(0, 2).map((l: Row) => `${l.einheit}, ${l.monate} ${l.monate === 1 ? 'Monat' : 'Monate'} ohne Miete`).join('; ')}).</>
+            ? <>Leerstand kostete <b>{euro0(v.leerstand_ct)}</b> Kaltmiete ({v.luecken.filter((l: Row) => l.monate).slice(0, 2).map((l: Row) => `${l.einheit}, ${monateText(l.monate)} ohne Miete`).join('; ')}).</>
             : 'Kein Leerstand in den letzten 12 Monaten.'}{v.selbst ? ' Selbst genutzt zählt nicht als Leerstand.' : ''}</div>
         </Kennzahl>
       )}
@@ -299,7 +302,7 @@ export function EinheitKennzahlen(props: { einheit: Row; selbstnutzung: Row[]; r
         <div className="kz-text">{b.seit ? <>Belegt {prozent((b.quote ?? 0) * 100, 1)} seit {datum(b.seit)} · {b.wechsel} Mieterwechsel · Leerstand {b.jahr}: {b.leer_jahr} Tage</> : 'Noch kein Mietverhältnis und keine Selbstnutzung erfasst.'}</div>
         {b.segmente.filter((x: Row) => x.art === 'leer').slice(-3).reverse().map((x: Row) => (
           <div key={x.von} className="kz-text"><span className="chip rot">leer</span> {datum(x.von)} – {datum(x.bis)}: {x.tage} Tage{x.monate
-            ? `, ${x.monate} ${x.monate === 1 ? 'Monat' : 'Monate'} ohne Miete = ${euro0(x.entgangen_ct)} Kaltmiete entgangen` : ', jeder Monat bezahlt'}</div>
+            ? `, ${monateText(x.monate)} ohne Miete = ${euro0(x.entgangen_ct)} Kaltmiete entgangen` : ', jeder Monat bezahlt'}</div>
         ))}
       </Kennzahl>
       {!s && (

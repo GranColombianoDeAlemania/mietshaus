@@ -344,12 +344,10 @@ module.exports = function kennzahlen({ all, get, PERSON_NAME, bh, aw, ab, vw, dl
     const vgl = aw.vergleichsmieteQm(einheitId);
     return vgl?.ct && e?.wohnflaeche ? Math.round(vgl.ct * e.wohnflaeche) : 0;
   }
-  // Rent lost to a vacancy: the reference rent for every calendar month in it without any rent charge and without the
-  // landlord's own use (whole months only – a month a tenant pays for counts as let).
-  function leerMonate(einheitId, von, bis) {
-    const selbst = all(`SELECT beginn, ende FROM selbstnutzung WHERE einheit_id = ?1 UNION ALL SELECT beginn, ende FROM eigentum WHERE einheit_id = ?1 AND selbstnutzer = 1`, einheitId);
-    return bh.monateOhneMiete(einheitId, von, bis).filter((m) => !selbst.some((x) => x.beginn <= monatsEnde(m) && (!x.ende || x.ende >= `${m}-01`))).length;
-  }
+  // Rent months a vacancy costs: a whole month without any rent counts 1, a month a tenant pays in full nothing (even if
+  // he moved in or out during it); only of a part month agreed in the contract its unpaid days count.
+  const leerMonate = (einheitId, von, bis) => bh.fehlendeMietmonate(einheitId, von, bis);
+  const monateDe = (n) => { const r = Math.round(n * 10) / 10; return `${String(r).replace('.', ',')} ${r === 1 ? 'Monat' : 'Monate'}`; };
 
   // ---------- the unit page ----------
   function einheitKennzahlen(einheitId, stichtag = heute()) {
@@ -366,7 +364,7 @@ module.exports = function kennzahlen({ all, get, PERSON_NAME, bh, aw, ab, vw, dl
     const leerJahr = segmente.filter((x) => x.art === 'leer').reduce((s, x) => s + Math.max(0, tageZwischen(maxD(x.von, jahrVon), x.bis) + 1), 0);
     for (const x of segmente.filter((s) => s.art === 'leer')) {
       x.monate = leerMonate(einheitId, x.von, x.bis);
-      x.entgangen_ct = x.monate ? referenzmiete(einheitId, x.von, x.bis) * x.monate : 0;
+      x.entgangen_ct = x.monate ? Math.round(referenzmiete(einheitId, x.von, x.bis) * x.monate) : 0;
     }
     const mieten = segmente.filter((x) => x.art === 'miete');
     const belegungInfo = { seit: erst ?? null, bis: stichtag, segmente, quote: gesamt ? belegt / gesamt : null, wechsel: Math.max(0, mieten.length - 1), leer_jahr: leerJahr, jahr };
@@ -449,7 +447,7 @@ module.exports = function kennzahlen({ all, get, PERSON_NAME, bh, aw, ab, vw, dl
       const makler = kosten.filter((k) => /makler/i.test(`${k.text ?? ''} ${k.bezeichnung}`)).reduce((s, k) => s + k.ct, 0);
       const rest = kosten.reduce((s, k) => s + k.ct, 0) - makler;
       return [
-        { label: `Leerstand ${leerTage} Tage (${leerMonate} ${leerMonate === 1 ? 'Monat' : 'Monate'} ohne Miete)`, ct: leerCt },
+        { label: `Leerstand ${leerTage} Tage (${monateDe(leerMonate)} ohne Miete)`, ct: leerCt },
         ...(rest ? [{ label: 'Renovierung und Reparaturen', ct: rest }] : []),
         ...(makler ? [{ label: 'Makler', ct: makler }] : []),
       ];
@@ -600,7 +598,7 @@ module.exports = function kennzahlen({ all, get, PERSON_NAME, bh, aw, ab, vw, dl
         if (s.art !== 'selbst') basis += f * s.tage;
         if (s.art === 'leer') {
           const monate = leerMonate(e.id, s.von, s.bis);
-          const ct = monate ? referenzmiete(e.id, s.von, s.bis) * monate : 0;
+          const ct = monate ? Math.round(referenzmiete(e.id, s.von, s.bis) * monate) : 0;
           leerCt += ct;
           luecken.push({ einheit_id: e.id, einheit: e.bezeichnung, tage: s.tage, monate, ct, von: s.von, bis: s.bis });
         }

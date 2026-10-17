@@ -715,6 +715,12 @@ const MIGRATIONS = [
   -- or included in the rent ('inklusiv').
   ALTER TABLE mietverhaeltnisse ADD COLUMN bk_art TEXT NOT NULL DEFAULT 'vorauszahlung';
   `,
+  `
+  -- Only where a tenancy says so: the month of moving in charged for its days from the move-in day
+  -- (teilmonat_beginn 'teilbetrag', optionally with an agreed amount) and the month of moving out up to the move-out
+  -- day (teilmonat_ende 'teilbetrag'). Agreed amount in cents, without VAT; empty means by days.
+  ALTER TABLE mietverhaeltnisse ADD COLUMN teilbetrag_beginn_ct INTEGER;
+  `,
 ];
 
 // Columns the renderer may write, per table. Everything else is rejected.
@@ -728,7 +734,7 @@ const TABLES = {
     'mobil', 'email', 'iban', 'bic', 'kontoinhaber', 'geburtsdatum', 'notiz'],
   mietverhaeltnisse: ['einheit_id', 'person_id', 'person2_id', 'beginn', 'ende', 'kaltmiete_ct', 'bk_vz_ct',
     'hk_vz_ct', 'sonstiges_ct', 'kaution_ct', 'personen_anzahl', 'faelligkeitstag', 'lastschrift', 'sepa_mandat', 'notiz',
-    'teilmonat_beginn', 'teilmonat_ende', 'ust_satz', 'mietmonat_ab', 'bk_abrechnung', 'bk_art'],
+    'teilmonat_beginn', 'teilmonat_ende', 'ust_satz', 'mietmonat_ab', 'bk_abrechnung', 'bk_art', 'teilbetrag_beginn_ct'],
   eigentum: ['einheit_id', 'person_id', 'person2_id', 'beginn', 'ende', 'hausgeld_ct', 'ruecklage_ct',
     'selbstnutzer', 'faelligkeitstag', 'lastschrift', 'sepa_mandat', 'notiz', 'teilmonat_beginn', 'teilmonat_ende'],
   umlageschluessel: ['objekt_id', 'bezeichnung', 'einheit', 'typ', 'zaehler_art'],
@@ -848,13 +854,15 @@ function api(db) {
     }
   };
 
-  // Contract settings: a month of moving in or out is never charged by day ('anteilig' from older versions or other
-  // callers becomes the full month); a rent including operating costs has no separate operating cost amount.
+  // Contract settings: a month of moving in or out is charged in full unless a tenancy explicitly says 'teilbetrag'
+  // ('anteilig' from older versions or other callers becomes the full month); a rent including operating costs has
+  // no separate operating cost amount.
   function vertragNormalisieren(table, row) {
     if (table !== 'mietverhaeltnisse' && table !== 'eigentum') return row;
     const r = { ...row };
-    if (!r.id || 'teilmonat_beginn' in r) r.teilmonat_beginn = r.teilmonat_beginn === 'folgemonat' ? 'folgemonat' : 'voll';
-    if (!r.id || 'teilmonat_ende' in r) r.teilmonat_ende = 'voll';
+    const erlaubt = table === 'mietverhaeltnisse' ? ['folgemonat', 'teilbetrag'] : ['folgemonat'];
+    if (!r.id || 'teilmonat_beginn' in r) r.teilmonat_beginn = erlaubt.includes(r.teilmonat_beginn) ? r.teilmonat_beginn : 'voll';
+    if (!r.id || 'teilmonat_ende' in r) r.teilmonat_ende = table === 'mietverhaeltnisse' && r.teilmonat_ende === 'teilbetrag' ? 'teilbetrag' : 'voll';
     if (table === 'mietverhaeltnisse') {
       if ('mietmonat_ab' in r && r.mietmonat_ab !== 'einzug') r.mietmonat_ab = 'erster';
       if ('bk_abrechnung' in r && r.bk_abrechnung !== 'wohntage') r.bk_abrechnung = 'mietmonate';
