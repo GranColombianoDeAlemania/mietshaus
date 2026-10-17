@@ -171,8 +171,8 @@ export function AnpassungBrief(props: { v: Row; a: Row; objekt: Row; anpassungen
     const gruss = `<p class="unterschrift">Mit freundlichen Grüßen<br><br><br>${esc(absender.name)}</p>`;
     const zahlweise = v.lastschrift ? `Wir ziehen den neuen Betrag ab dem ${datum(a.gueltig_ab)} per Lastschrift ein.` : 'Bitte passen Sie Ihren Dauerauftrag rechtzeitig an.';
     const mieteTabelle = tabelle(['', '#rbisher', '#rkünftig'], [
-      ['Nettokaltmiete', `#r${euro(alt.kaltmiete_ct)}`, `#r${euro(neu.kaltmiete_ct)}`],
-      ['Vorauszahlung Betriebskosten', `#r${euro(alt.bk_vz_ct)}`, `#r${euro(neu.bk_vz_ct)}`],
+      [v.bk_art === 'inklusiv' ? 'Kaltmiete inkl. Betriebskosten' : 'Nettokaltmiete', `#r${euro(alt.kaltmiete_ct)}`, `#r${euro(neu.kaltmiete_ct)}`],
+      ...(v.bk_art === 'inklusiv' ? [] : [[v.bk_art === 'pauschale' ? 'Betriebskostenpauschale' : 'Vorauszahlung Betriebskosten', `#r${euro(alt.bk_vz_ct)}`, `#r${euro(neu.bk_vz_ct)}`]]),
       ['Vorauszahlung Heizkosten', `#r${euro(alt.hk_vz_ct)}`, `#r${euro(neu.hk_vz_ct)}`],
       ...((alt.sonstiges_ct || neu.sonstiges_ct) ? [['Sonstiges', `#r${euro(alt.sonstiges_ct)}`, `#r${euro(neu.sonstiges_ct)}`]] : []),
     ], { summe: ['Monatliche Gesamtmiete', `#r${euro(summe(alt))}`, `#r${euro(summe(neu))}`] });

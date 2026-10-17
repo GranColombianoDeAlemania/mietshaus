@@ -92,7 +92,8 @@ function starten() {
   werkzeug('objekt_details', 'Einheiten, Mieter, Eigentümer und Umlageschlüssel eines Objekts.', { objekt_id: z.number().int() }, ({ objekt_id }) => text({
     einheiten: db.einheiten(objekt_id).map((e) => ({ id: e.id, nr: e.nr, bezeichnung: e.bezeichnung, art: e.art, lage: e.lage, flaeche: e.wohnflaeche, mea: e.mea, mieter: e.mieter, eigentuemer: e.eigentuemer,
       selbst_genutzt: !!e.selbstgenutzt })),
-    mietverhaeltnisse: db.vertraege('mietverhaeltnisse', objekt_id).map((v) => ({ id: v.id, einheit: v.einheit, einheit_id: v.einheit_id, name: v.name, person_id: v.person_id, beginn: v.beginn, ende: v.ende, aktuell: !!v.aktuell, kaltmiete_eur: eur(v.kaltmiete_ct), bk_vz_eur: eur(v.bk_vz_ct), hk_vz_eur: eur(v.hk_vz_ct) })),
+    mietverhaeltnisse: db.vertraege('mietverhaeltnisse', objekt_id).map((v) => ({ id: v.id, einheit: v.einheit, einheit_id: v.einheit_id, name: v.name, person_id: v.person_id, beginn: v.beginn, ende: v.ende, aktuell: !!v.aktuell, kaltmiete_eur: eur(v.kaltmiete_ct), bk_vz_eur: eur(v.bk_vz_ct), hk_vz_eur: eur(v.hk_vz_ct),
+      betriebskosten: v.bk_art, mietmonat_ab: v.mietmonat_ab === 'einzug' ? 'Einzugstag' : '1. des Monats' })),
     eigentum: db.vertraege('eigentum', objekt_id).map((v) => ({ id: v.id, einheit: v.einheit, einheit_id: v.einheit_id, name: v.name, person_id: v.person_id, beginn: v.beginn, ende: v.ende, aktuell: !!v.aktuell, hausgeld_eur: eur(v.hausgeld_ct) })),
     umlageschluessel: db.schluessel(objekt_id).map((k) => ({ id: k.id, bezeichnung: k.bezeichnung, typ: k.typ })),
     zaehler: db.zaehler(objekt_id).map((z) => ({ id: z.id, art: z.art, nummer: z.nummer, einheit: z.einheit_bez, letzter_stand: z.letzter_stand, am: z.letztes_datum })),
@@ -195,14 +196,19 @@ function starten() {
   werkzeug('person_aendern', 'Ändert Angaben einer Person (nur die übergebenen Felder).', { id: z.number().int(), ...personFelder },
     (a) => text(`Person ${db.save('personen', a)} aktualisiert.`));
 
-  werkzeug('mietvertrag_anlegen', 'Legt ein Mietverhältnis an.', {
+  werkzeug('mietvertrag_anlegen', 'Legt ein Mietverhältnis an. Miete ist immer ein Monatsbetrag: der Ein- und Auszugsmonat wird voll gefordert '
+    + '(beim Einzug mitten im Monat wahlweise erst ab dem Folgemonat), nie tageweise. betriebskosten: vorauszahlung (wird abgerechnet), pauschale '
+    + '(bk_vz_eur ist dann die Pauschale) oder inklusiv (in der Kaltmiete enthalten). mietmonat_ab einzug: Mietmonat vom Einzugstag bis zum Tag davor im Folgemonat.', {
     einheit_id: z.number().int(), person_id: z.number().int(), person2_id: z.number().int().optional(), beginn: z.string(), ende: z.string().optional(),
     kaltmiete_eur: z.number(), bk_vz_eur: z.number().optional(), hk_vz_eur: z.number().optional(), sonstiges_eur: z.number().optional(),
     kaution_eur: z.number().optional(), personen_anzahl: z.number().optional(), faelligkeitstag: z.number().int().optional(),
+    betriebskosten: z.enum(['vorauszahlung', 'pauschale', 'inklusiv']).optional(), mietmonat_ab: z.enum(['erster', 'einzug']).optional(),
+    einzugsmonat: z.enum(['voll', 'folgemonat']).optional(), abrechnung_nach: z.enum(['mietmonate', 'wohntage']).optional(),
   }, (a) => text(`Mietverhältnis angelegt, id ${db.save('mietverhaeltnisse', {
     einheit_id: a.einheit_id, person_id: a.person_id, person2_id: a.person2_id, beginn: a.beginn, ende: a.ende,
     kaltmiete_ct: cent(a.kaltmiete_eur), bk_vz_ct: cent(a.bk_vz_eur ?? 0), hk_vz_ct: cent(a.hk_vz_eur ?? 0), sonstiges_ct: cent(a.sonstiges_eur ?? 0),
-    kaution_ct: cent(a.kaution_eur ?? 0), personen_anzahl: a.personen_anzahl ?? 1, faelligkeitstag: a.faelligkeitstag ?? 3 })}.`));
+    kaution_ct: cent(a.kaution_eur ?? 0), personen_anzahl: a.personen_anzahl ?? 1, faelligkeitstag: a.faelligkeitstag ?? 3,
+    bk_art: a.betriebskosten ?? 'vorauszahlung', mietmonat_ab: a.mietmonat_ab ?? 'erster', teilmonat_beginn: a.einzugsmonat ?? 'voll', bk_abrechnung: a.abrechnung_nach ?? 'mietmonate' })}.`));
 
   werkzeug('eigentum_anlegen', 'Legt ein Eigentumsverhältnis (WEG) an.', {
     einheit_id: z.number().int(), person_id: z.number().int(), beginn: z.string(), ende: z.string().optional(),

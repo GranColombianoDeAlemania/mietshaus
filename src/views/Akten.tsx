@@ -292,7 +292,8 @@ export function EinheitSeite(props: { id: number }) {
                 {b ? (
                   <div className="fakten">
                     <Fakt l="Kaltmiete">{euro(b.kaltmiete_ct)}{e.wohnflaeche ? <span className="klein hinweis"> · {betrag(Math.round((b.kaltmiete_ct ?? 0) / e.wohnflaeche))} €/m²</span> : null}</Fakt>
-                    <Fakt l="BK-Vorauszahlung">{euro(b.bk_vz_ct)}</Fakt>
+                    {mieter.bk_art === 'inklusiv' ? <Fakt l="Betriebskosten">in der Kaltmiete enthalten</Fakt>
+                      : <Fakt l={mieter.bk_art === 'pauschale' ? 'BK-Pauschale' : 'BK-Vorauszahlung'}>{euro(b.bk_vz_ct)}</Fakt>}
                     <Fakt l="HK-Vorauszahlung">{euro(b.hk_vz_ct)}</Fakt>
                     {b.sonstiges_ct ? <Fakt l="Sonstiges">{euro(b.sonstiges_ct)}</Fakt> : null}
                     {mieter.ust_ct ? <Fakt l={`USt ${zahl(mieter.ust_satz)} %`}>{euro(mieter.ust_ct)}</Fakt> : null}
@@ -408,7 +409,9 @@ export function VertragSeite(props: { typ: 'miete' | 'weg'; id: number }) {
   const op = a.op;
   const offen = op?.offen.filter((o: Row) => o.verzug >= 1) ?? [];
   const nochNicht = op?.offen.filter((o: Row) => o.verzug < 1) ?? [];
-  const felder = weg ? [['hausgeld_ct', 'Hausgeld'], ['ruecklage_ct', 'davon Rücklage']] : [['kaltmiete_ct', 'Kaltmiete'], ['bk_vz_ct', 'BK-VZ'], ['hk_vz_ct', 'HK-VZ'], ['sonstiges_ct', 'Sonstiges']];
+  const felder = weg ? [['hausgeld_ct', 'Hausgeld'], ['ruecklage_ct', 'davon Rücklage']]
+    : [['kaltmiete_ct', v.bk_art === 'inklusiv' ? 'Kaltmiete inkl. BK' : 'Kaltmiete'], ...(v.bk_art === 'inklusiv' ? [] : [['bk_vz_ct', v.bk_art === 'pauschale' ? 'BK-Pauschale' : 'BK-VZ']]),
+      ['hk_vz_ct', 'HK-VZ'], ['sonstiges_ct', 'Sonstiges']];
   const aktivePlaene = a.ratenplaene.filter((r: Row) => r.status === 'aktiv');
 
   return (
@@ -483,8 +486,10 @@ export function VertragSeite(props: { typ: 'miete' | 'weg'; id: number }) {
               <p className="klein hinweis">
                 {weg ? `Hausgeld heute ${euro(v.monatlich_ct)}, fällig ${faelligText(v.faelligkeitstag)}.`
                   : `Heute zu zahlen: ${euro(v.monatlich_ct)}${v.ust_ct ? ` (inkl. ${euro(v.ust_ct)} USt)` : ''}, fällig ${faelligText(v.faelligkeitstag)}.`}
-                {' '}Ein- und Auszugsmonat: {TEILMONAT_TEXT[v.teilmonat_beginn] ?? 'tagegenau'} / {v.teilmonat_ende === 'voll' ? 'voller Monat' : 'tagegenau'}.
+                {' '}{mietmonatText(v, weg ? 'weg' : 'miete', a.mietmonat?.erste)}
               </p>
+              {a.mietmonat?.doppelt && <p className="klein fehlertext">{datum(a.mietmonat.doppelt.von)} bis {datum(a.mietmonat.doppelt.bis)} wird doppelt gefordert – auch {a.mietmonat.doppelt.name} zahlt diesen Monat voll
+                (Auszug {datum(a.mietmonat.doppelt.ende)}). Unter „Bearbeiten“ „erst ab dem Folgemonat“ wählen, wenn das nicht vereinbart ist.</p>}
             </Panel>
             {a.abrechnungen.length > 0 && (
               <Panel titel={weg ? 'Jahresabrechnungen' : 'Betriebskostenabrechnungen'}>
@@ -551,8 +556,8 @@ export function VertragSeite(props: { typ: 'miete' | 'weg'; id: number }) {
         <div className="buttons"><button className="icon" onClick={() => ablegen({ person_id: v.person_id, objekt_id: e.objekt_id, einheit_id: e.id })}><I.FilePlus2 size={15} />Dokument ablegen</button></div></Panel>}
 
       {edit && einheiten && personen && (
-        <FormDialog title={weg ? 'Eigentum bearbeiten' : 'Mietverhältnis bearbeiten'} row={v} fields={vertragFelder(weg ? 'weg' : 'miete', einheiten, personen)}
-          extra={(f) => <TeilmonatHinweis f={f} modus={weg ? 'weg' : 'miete'} />}
+        <FormDialog title={weg ? 'Eigentum bearbeiten' : 'Mietverhältnis bearbeiten'} row={v} fields={(f) => vertragFelder(weg ? 'weg' : 'miete', einheiten, personen, f)}
+          extra={(f, setze) => <MietbeginnHinweis f={f} modus={weg ? 'weg' : 'miete'} setze={setze} />}
           onSave={async (r) => {
             const id = await call('save', weg ? 'eigentum' : 'mietverhaeltnisse', r);
             setTimeout(() => sollNachfrage(props.typ, id, { fruehereMonate: r.beginn !== v.beginn }).then(reload), 0);
@@ -565,25 +570,54 @@ export function VertragSeite(props: { typ: 'miete' | 'weg'; id: number }) {
   );
 }
 
-export const TEILMONAT_TEXT: Record<string, string> = { anteilig: 'tagegenau', voll: 'voller Monat', folgemonat: 'erst ab Folgemonat' };
+const monatName = (monat: string) => new Date(Date.UTC(Number(monat.slice(0, 4)), Number(monat.slice(5, 7)) - 1, 1))
+  .toLocaleDateString('de-DE', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+const BK_TEXT: Record<string, string> = { vorauszahlung: 'Vorauszahlung', pauschale: 'Pauschale (keine Abrechnung)', inklusiv: 'in der Kaltmiete enthalten' };
 
-// Live note in the contract form: what the month of moving in costs with the chosen setting.
-export function TeilmonatHinweis(props: { f: Row; modus: 'miete' | 'weg' }) {
+// How a contract is charged, in one sentence for its page: rent month, month of moving in, operating costs.
+export function mietmonatText(v: Row, typ: 'miete' | 'weg', erste?: Row | null) {
+  const mitte = !String(v.beginn ?? '').endsWith('-01');
+  const tag = Number(String(v.beginn ?? '').slice(8, 10));
+  if (typ === 'weg') return `Hausgeld immer für volle Monate${mitte && v.teilmonat_beginn === 'folgemonat' ? ', erster Monat erst ab dem Folgemonat' : ''}.`;
+  const mietmonat = v.mietmonat_ab === 'einzug' && tag > 1 ? `Mietmonat vom ${tag}. bis zum ${tag - 1}. des Folgemonats` : 'Mietmonat = Kalendermonat';
+  const einzug = mitte && v.mietmonat_ab !== 'einzug' ? (v.teilmonat_beginn === 'folgemonat' ? ', Einzugsmonat erst ab dem Folgemonat' : ', Ein- und Auszugsmonat voll') : ', Auszugsmonat voll';
+  const bk = `Betriebskosten: ${BK_TEXT[v.bk_art] ?? BK_TEXT.vorauszahlung}${v.bk_art === 'vorauszahlung' || !v.bk_art
+    ? `, abgerechnet ${v.bk_abrechnung === 'wohntage' ? 'nach Wohntagen' : `nach Mietmonaten${erste ? ` (ab ${datum(erste.von)})` : ''}`}` : ''}.`;
+  return `${mietmonat}${einzug}. ${bk}`;
+}
+
+// Live note in the contract form: what the first payment is and when it is due (rent is a monthly amount, never a
+// share by day), from when operating costs are settled, and whether the previous contract pays the same month.
+export function MietbeginnHinweis(props: { f: Row; modus: 'miete' | 'weg'; setze?: (werte: Row) => void }) {
   const f = props.f;
-  if (!f.beginn || !/^\d{4}-\d{2}-\d{2}$/.test(f.beginn) || f.beginn.endsWith('-01')) return null;
-  const [y, m, d] = f.beginn.split('-').map(Number);
-  const tage = new Date(Date.UTC(y, m, 0)).getUTCDate();
-  const rest = tage - d + 1;
+  const gueltig = /^\d{4}-\d{2}-\d{2}$/.test(f.beginn ?? '');
+  const eingabe = { id: f.id ?? null, einheit_id: f.einheit_id || null, beginn: f.beginn, ende: /^\d{4}-\d{2}-\d{2}$/.test(f.ende ?? '') ? f.ende : null,
+    mietmonat_ab: f.mietmonat_ab || 'erster', teilmonat_beginn: f.teilmonat_beginn || 'voll', faelligkeitstag: f.faelligkeitstag === '' || f.faelligkeitstag == null ? 0 : Number(f.faelligkeitstag) };
+  const [info] = useLoad<Row | null>(() => (gueltig ? call('mietbeginnInfo', props.modus, eingabe) : Promise.resolve(null)), [props.modus, JSON.stringify(eingabe)]);
+  if (!gueltig || !info?.erste) return null;
   const ct = (k: string) => Math.round((Number(String(f[k] ?? '').replace(/\./g, '').replace(',', '.')) || 0) * 100);
-  const monat = props.modus === 'weg' ? ct('hausgeld_ct') : ct('kaltmiete_ct') + ct('bk_vz_ct') + ct('hk_vz_ct') + ct('sonstiges_ct');
-  const modus = f.teilmonat_beginn || 'anteilig';
-  const name = new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString('de-DE', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+  const monat = props.modus === 'weg' ? ct('hausgeld_ct') : ct('kaltmiete_ct') + (f.bk_art === 'inklusiv' ? 0 : ct('bk_vz_ct')) + ct('hk_vz_ct') + ct('sonstiges_ct');
+  const e = info.erste, d = info.doppelt;
+  const mitte = !f.beginn.endsWith('-01');
+  const zeitraum = e.anker > 1 ? `${datum(e.von)} – ${datum(e.bis)}` : monatName(e.monat);
+  const naechster = (m: string) => new Date(Date.UTC(Number(m.slice(0, 4)), Number(m.slice(5, 7)), 1)).toISOString().slice(0, 7);
   return (
-    <p className="hinweisbox">
-      Beginn mitten im Monat. Für {name} wird {modus === 'folgemonat' ? 'nichts gefordert – die erste Zahlung ist für den Folgemonat fällig'
-        : modus === 'voll' ? <>der volle Monat gefordert: <b>{euro(monat)}</b>, fällig am {datum(f.beginn)}</>
-          : <>tagegenau gefordert: {rest} von {tage} Tagen = <b>{euro(Math.round(monat * rest / tage))}</b> statt {euro(monat)}, fällig am {datum(f.beginn)}</>}.
-    </p>
+    <div className="hinweisbox">
+      <p>Erste {props.modus === 'weg' ? 'Hausgeldzahlung' : 'Miete'}: <b>{euro(monat)}</b> für {zeitraum}, fällig am {datum(e.datum)}.
+        {mitte && e.anker === 1 && e.monat === f.beginn.slice(0, 7) ? ` ${props.modus === 'weg' ? 'Das Hausgeld' : 'Die Miete'} ist ein Monatsbetrag: auch bei Beginn am ${datum(f.beginn)} wird der volle Monat gefordert.` : ''}
+        {mitte && e.monat !== f.beginn.slice(0, 7) ? ` Für ${monatName(f.beginn.slice(0, 7))} wird nichts gefordert.` : ''}</p>
+      {props.modus === 'miete' && f.bk_art !== 'pauschale' && f.bk_art !== 'inklusiv' && (
+        <p>Betriebskosten werden ab {datum(f.bk_abrechnung === 'wohntage' ? f.beginn : e.von)} abgerechnet{f.bk_abrechnung === 'wohntage' ? ' (nach Wohntagen)' : ' (nach Mietmonaten)'}.</p>
+      )}
+      {props.modus === 'miete' && (f.bk_art === 'pauschale' || f.bk_art === 'inklusiv') && (
+        <p>Keine Betriebskostenabrechnung für diesen Vertrag – abgerechnet werden nur Heizung und Warmwasser (Heizkostenverordnung).</p>
+      )}
+      {d && (
+        <p className="fehlertext">{d.name} zieht am {datum(d.ende)} aus und zahlt {d.von.slice(0, 7) === d.bis.slice(0, 7) && d.von.endsWith('-01') ? monatName(d.monat) : `bis ${datum(d.bis)}`} voll –
+          {' '}{datum(d.von)} bis {datum(d.bis)} würde doppelt gefordert.{' '}
+          {d.folgemonat && props.setze && <button type="button" className="link" onClick={() => props.setze!({ teilmonat_beginn: 'folgemonat' })}>Erst ab {monatName(naechster(f.beginn.slice(0, 7)))} fordern</button>}</p>
+      )}
+    </div>
   );
 }
 

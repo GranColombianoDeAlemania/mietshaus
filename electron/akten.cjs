@@ -215,6 +215,8 @@ module.exports = function akten({ db, all, get, PERSON_NAME, bh }) {
         vertrag: info, einheit: e, eigentuemer: eigentuemer ?? null, verlauf,
         op: k ? bh.offenePostenKonto(k) : null,
         naechste: bh.naechsteFaelligkeit(typ, vertragId),
+        // First and last rent month (moving in or out mid-month means a full month) and a month charged twice.
+        mietmonat: { erste: bh.erstePeriode(v), letzte: bh.letztePeriode(v), doppelt: bh.mietbeginnInfo(typ, v)?.doppelt ?? null },
         soll_abweichend: bh.sollAbgleich(typ, vertragId).aenderungen.filter((x) => !x.manuell).length,
         kontoauszug: k ? bh.kontoauszug(k, auszugVon, '9999-12-31') : null,
         kaution: typ === 'miete' ? get(`SELECT k.*, coalesce((SELECT sum(CASE WHEN art IN ('einzahlung','zinsen') THEN betrag_ct ELSE -betrag_ct END)

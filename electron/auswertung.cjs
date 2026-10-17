@@ -14,6 +14,7 @@ const WK_GRUPPEN = [
 const { tageZwischen, einheitVonSql } = require('./buchhaltung.cjs');
 const maxD = (a, b) => (a > b ? a : b);
 const minD = (a, b) => (a < b ? a : b);
+const monatsEnde = (monat) => new Date(Date.UTC(Number(monat.slice(0, 4)), Number(monat.slice(5, 7)), 0)).toISOString().slice(0, 10);
 
 module.exports = function auswertung({ db, all, get, tx, bh, ab }) {
   // ---------- self-use: which part of the house is rented ----------
@@ -159,7 +160,7 @@ module.exports = function auswertung({ db, all, get, tx, bh, ab }) {
     const fa = steuer(['ust_fa'], 'soll');
     const einnahmenZeilen = [
       ['Mieteinnahmen für Wohnungen und andere Räume (ohne Umlagen)', (ein.miete ?? 0) + (ein.sonst ?? 0)],
-      ['Umlagen, verrechnet mit Erstattungen (Betriebs-/Heizkosten)', (ein.bk ?? 0) + (ein.hk ?? 0) + (ein.nk_ergebnis ?? 0)],
+      ['Umlagen, verrechnet mit Erstattungen (Betriebs-/Heizkosten)', (ein.bk ?? 0) + (ein.bk_pauschale ?? 0) + (ein.hk ?? 0) + (ein.nk_ergebnis ?? 0)],
       ['Sonstige Einnahmen (z. B. Mahngebühren, Zinsen)', (ein.mahngebuehr ?? 0) + (ein.zins ?? 0) + (ein.sonstige ?? 0)],
       ['Vereinnahmte Umsatzsteuer', (ein.ust19 ?? 0) + (ein.ust7 ?? 0)],
       ['Vom Finanzamt erstattete Umsatzsteuer', fa < 0 ? -fa : 0],
@@ -211,7 +212,8 @@ module.exports = function auswertung({ db, all, get, tx, bh, ab }) {
   function hausDurchschnittQm(objektId, art = 'Wohnung', stichtag = new Date().toISOString().slice(0, 10)) {
     let kalt = 0, qm = 0;
     for (const m of all(`SELECT m.id, e.wohnflaeche FROM mietverhaeltnisse m JOIN einheiten e ON e.id = m.einheit_id WHERE e.objekt_id = ?1
-        AND coalesce(e.art, 'Wohnung') = ?2 AND e.wohnflaeche > 0 AND m.beginn <= ?3 AND (m.ende IS NULL OR m.ende = '' OR m.ende >= ?3)`, objektId, art ?? 'Wohnung', stichtag)) {
+        AND coalesce(e.art, 'Wohnung') = ?2 AND e.wohnflaeche > 0 AND m.beginn <= ?3 AND (m.ende IS NULL OR m.ende = '' OR m.ende >= ?3)
+        AND m.bk_art <> 'inklusiv'`, objektId, art ?? 'Wohnung', stichtag)) {
       kalt += bh.betraege('miete', m.id, stichtag).kaltmiete_ct ?? 0;
       qm += m.wohnflaeche;
     }
@@ -234,7 +236,7 @@ module.exports = function auswertung({ db, all, get, tx, bh, ab }) {
       const nichtUml = ks.filter((k) => !k.umlagefaehig).reduce((s, k) => s + k.betrag_ct, 0);
       const uml = ks.filter((k) => k.umlagefaehig).reduce((s, k) => s + k.betrag_ct, 0);
       const ist = (ein.miete ?? 0) + (ein.sonst ?? 0);
-      const umlagen = (ein.bk ?? 0) + (ein.hk ?? 0) + (ein.nk_ergebnis ?? 0);
+      const umlagen = (ein.bk ?? 0) + (ein.bk_pauschale ?? 0) + (ein.hk ?? 0) + (ein.nk_ergebnis ?? 0);
       // Net operating result before financing and depreciation.
       const netto = ist + umlagen - nichtUml - uml;
       if (!soll && !ist && !ks.length) continue;
@@ -245,9 +247,12 @@ module.exports = function auswertung({ db, all, get, tx, bh, ab }) {
       if (va.selbst.length) {
         const zuordenbar = kostenAufgeteilt(objektId, von, bis, va.anteil, va.anteil, perioden).reduce((s, k) => s + k.absetzbar_ct, 0);
         const nettoTeil = ist + umlagen - zuordenbar;
+        // As if let: the comparative rent for every whole month the landlord lives there and no tenant pays.
         const fiktiv = va.selbst.reduce((s, x) => {
           const qm = vergleichsmieteQm(x.einheit_id)?.ct ?? 0;
-          return s + Math.round(qm * x.flaeche * 12 * x.tage / va.tage);
+          const monate = bh.monateOhneMiete(x.einheit_id, von, bis)
+            .filter((m) => perioden.some((p) => p.einheit_id === x.einheit_id && p.beginn <= monatsEnde(m) && (!p.ende || p.ende >= `${m}-01`))).length;
+          return s + Math.round(qm * x.flaeche) * monate;
         }, 0);
         const eigenanteil = ab ? ab.nkAbrechnung(objektId, von, bis).eigenanteil_ct : 0;
         const nettoFiktiv = netto + fiktiv + eigenanteil;

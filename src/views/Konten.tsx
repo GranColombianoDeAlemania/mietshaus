@@ -19,7 +19,7 @@ const KATEGORIEN_KOSTEN: [string, string][] = [
   ['bank', 'Bankgebühren'], ['sonstige', 'Sonstige Kosten'],
 ];
 const KATEGORIEN_EINNAHME: [string, string][] = [
-  ['miete', 'Kaltmiete'], ['sonst', 'Sonstige Miete'], ['bk', 'BK-Vorauszahlung'], ['hk', 'HK-Vorauszahlung'],
+  ['miete', 'Kaltmiete'], ['sonst', 'Sonstige Miete'], ['bk', 'BK-Vorauszahlung'], ['bk_pauschale', 'BK-Pauschale'], ['hk', 'HK-Vorauszahlung'],
   ['kaution', 'Kaution'], ['nk_ergebnis', 'Ergebnis NK-Abrechnung'], ['hausgeld', 'Hausgeld'], ['ruecklage', 'Rücklagenzuführung'],
   ['sonderumlage', 'Sonderumlage'], ['weg_ergebnis', 'Ergebnis Hausgeldabrechnung'], ['mahngebuehr', 'Mahngebühren'], ['zins', 'Zinsen'],
   ['sonstige', 'Sonstige Einnahmen'],

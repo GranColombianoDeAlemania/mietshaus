@@ -12,11 +12,16 @@ function p35aTabelle(p: Row) {
   ])}<p class="klein">Bei Handwerkerleistungen ist nur der Lohnanteil begünstigt; bitte prüfen Sie die Rechnungen bei Bedarf bei uns.</p>`;
 }
 
-export function nkBrief(a: Row, e: Row, absender: Absender, objekt: Row, mieter: Row, neu: { bk: number; hk: number; ab: string } | null, vzOffen = 0) {
+// A tenancy whose operating costs are a flat fee or part of the rent: only heating and hot water are settled.
+export const nurHeizung = (e: Row) => !!e.segment?.vertrag && !!e.bk_art && e.bk_art !== 'vorauszahlung';
+
+export function nkBrief(a: Row, e: Row, absender: Absender, objekt: Row, mieter: Row, neu: { bk: number | null; hk: number; ab: string } | null, vzOffen = 0) {
   const s = e.segment;
+  const nurHz = nurHeizung(e);
+  const kosten = e.umgelegt_ct ?? e.kosten_ct;
   const zeilen = a.posten.map((p: Row, i: number) => [esc(p.label), `#r${euro(p.gesamt_ct)}`, esc(p.schluessel),
     `#r${p.gesamt_einheiten ? z(p.gesamt_einheiten) : ''}`, `#r${e.anteile[i].einheiten ? z(e.anteile[i].einheiten) : ''}`, `#r${euro(e.anteile[i].ct)}`])
-    .filter((_: unknown, i: number) => a.posten[i].gesamt_ct !== 0);
+    .filter((_: unknown, i: number) => a.posten[i].gesamt_ct !== 0 && (!nurHz || a.posten[i].heizung || a.posten[i].co2));
   const brutto = e.ergebnis_ct + (e.ust_ct ?? 0);
   const ergebnis = brutto > 0
     ? `Aus der Abrechnung ergibt sich eine <b>Nachzahlung von ${euro(brutto)}</b>. Bitte überweisen Sie den Betrag innerhalb von 30 Tagen nach Zugang dieser Abrechnung auf das unten genannte Konto.`
@@ -25,13 +30,15 @@ export function nkBrief(a: Row, e: Row, absender: Absender, objekt: Row, mieter:
       : 'Ihre Vorauszahlungen decken die Kosten genau.';
   const inhalt = `
     <p>${esc(anrede(mieter))}</p>
-    <p>hiermit erhalten Sie die Betriebs- und Heizkostenabrechnung für den Zeitraum ${datum(a.von)} bis ${datum(a.bis)}.
+    <p>hiermit erhalten Sie die ${nurHz ? 'Heizkostenabrechnung' : 'Betriebs- und Heizkostenabrechnung'} für den Zeitraum ${datum(a.von)} bis ${datum(a.bis)}.
     Ihr Nutzungszeitraum: ${datum(s.von)} bis ${datum(s.bis)} (${s.tage} Tage).</p>
+    ${nurHz ? `<p>Ihre Betriebskosten sind ${e.bk_art === 'inklusiv' ? 'in der Miete enthalten' : 'mit der vereinbarten Pauschale abgegolten'} und werden nicht abgerechnet;
+      abgerechnet werden nur Heizung und Warmwasser nach der Heizkostenverordnung.</p>` : ''}
     ${tabelle(['Kostenart', '#rGesamtkosten', 'Verteilung nach', '#rGesamt', '#rIhr Anteil', '#rIhre Kosten'], zeilen,
-      { summe: ['Summe Ihrer Kosten', '', '', '', '', `#r${euro(e.kosten_ct)}`] })}
+      { summe: ['Summe Ihrer Kosten', '', '', '', '', `#r${euro(kosten)}`] })}
     ${tabelle(['Abrechnung', '#rBetrag'], [
-      ['Ihre Kosten', `#r${euro(e.kosten_ct)}`],
-      [`abzüglich Betriebskosten-Vorauszahlungen${e.ust_ct ? ' (netto)' : ''}`, `#r${euro(-e.bk_vz_ct)}`],
+      ['Ihre Kosten', `#r${euro(kosten)}`],
+      ...(nurHz ? [] : [[`abzüglich Betriebskosten-Vorauszahlungen${e.ust_ct ? ' (netto)' : ''}`, `#r${euro(-e.bk_vz_ct)}`]]),
       [`abzüglich Heizkosten-Vorauszahlungen${e.ust_ct ? ' (netto)' : ''}`, `#r${euro(-e.hk_vz_ct)}`],
       ...(e.ust_ct ? [[`Ergebnis netto`, `#r${euro(e.ergebnis_ct)}`], [`zuzüglich ${e.ust_satz} % Umsatzsteuer`, `#r${euro(e.ust_ct)}`]] : []),
     ], { summe: [e.ergebnis_ct > 0 ? 'Nachzahlung' : 'Guthaben', `#r${euro(Math.abs(e.ergebnis_ct + (e.ust_ct ?? 0)))}`] })}
@@ -39,11 +46,12 @@ export function nkBrief(a: Row, e: Row, absender: Absender, objekt: Row, mieter:
     ${vzOffen > 0 ? `<p>Bitte beachten Sie: Von den Vorauszahlungen für diesen Zeitraum sind ${euro(vzOffen)} noch nicht bei uns eingegangen. Die Abrechnung berücksichtigt die vereinbarten Vorauszahlungen;
       ${brutto + vzOffen > 0 ? `insgesamt sind damit noch <b>${euro(brutto + vzOffen)}</b> zu zahlen.` : `nach Verrechnung mit den offenen Vorauszahlungen verbleibt ein Guthaben von <b>${euro(-(brutto + vzOffen))}</b>.`}</p>` : ''}
     ${a.co2 ? `<p class="klein">CO₂-Kostenaufteilung: Das Gebäude verursacht ${a.co2.kg_pro_qm.toFixed(1).replace('.', ',')} kg CO₂ je m² Wohnfläche und Jahr. Der Vermieter trägt daher ${a.co2.vermieter_prozent} % der CO₂-Kosten (${euro(a.co2.kosten_ct)} gesamt); dieser Anteil ist oben bereits abgezogen.</p>` : ''}
-    ${neu ? `<p>Ab dem ${datum(neu.ab)} betragen Ihre monatlichen Vorauszahlungen für Betriebskosten <b>${euro(neu.bk)}</b> und für Heizkosten <b>${euro(neu.hk)}</b>.</p>` : ''}
+    ${neu ? (neu.bk == null || nurHz ? `<p>Ab dem ${datum(neu.ab)} beträgt Ihre monatliche Vorauszahlung für Heizkosten <b>${euro(neu.hk)}</b>.</p>`
+      : `<p>Ab dem ${datum(neu.ab)} betragen Ihre monatlichen Vorauszahlungen für Betriebskosten <b>${euro(neu.bk)}</b> und für Heizkosten <b>${euro(neu.hk)}</b>.</p>`) : ''}
     ${p35aTabelle(e.p35a)}
     <p class="klein">Die Belege können Sie nach Terminvereinbarung bei uns einsehen. Einwendungen gegen die Abrechnung sind spätestens bis zum Ablauf des zwölften Monats nach Zugang mitzuteilen (§ 556 Abs. 3 BGB).</p>
     <p class="unterschrift">Mit freundlichen Grüßen<br><br>${esc(absender.name)}</p>`;
-  return brief({ absender, empfaenger: mieter, betreff: `Betriebskostenabrechnung ${a.von.slice(0, 4)} – ${objekt.bezeichnung}, ${s.einheit.bezeichnung}`,
+  return brief({ absender, empfaenger: mieter, betreff: `${nurHz ? 'Heizkostenabrechnung' : 'Betriebskostenabrechnung'} ${a.von.slice(0, 4)} – ${objekt.bezeichnung}, ${s.einheit.bezeichnung}`,
     info: [['Objekt', objekt.bezeichnung], ['Einheit', s.einheit.bezeichnung]], inhalt });
 }
 
@@ -52,8 +60,10 @@ export function nkUebersicht(a: Row, objekt: Row) {
     a.posten.map((p: Row) => [esc(p.label), esc(p.schluessel), `#r${p.gesamt_einheiten ? z(p.gesamt_einheiten) : ''}`, `#r${euro(p.gesamt_ct)}`]),
     { summe: ['Summe', '', '', `#r${euro(a.summe_ct)}`] });
   const erg = tabelle(['Einheit', 'Nutzer', 'Zeitraum', '#rKosten', '#rVorauszahlungen', '#rErgebnis'],
-    a.ergebnisse.map((e: Row) => [esc(e.segment.einheit.bezeichnung), e.segment.vertrag ? esc(e.segment.vertrag.name) : e.segment.selbst ? '<i>selbst genutzt (Eigenanteil)</i>' : '<i>Leerstand (Vermieter)</i>',
-      `${datum(e.segment.von)} – ${datum(e.segment.bis)}`, `#r${euro(e.kosten_ct)}`, `#r${euro(e.bk_vz_ct + e.hk_vz_ct)}`, `#r${euro(e.ergebnis_ct)}`]));
+    a.ergebnisse.map((e: Row) => [esc(e.segment.einheit.bezeichnung), e.segment.vertrag
+      ? `${esc(e.segment.vertrag.name)}${nurHeizung(e) ? ` <i>(${e.bk_art === 'inklusiv' ? 'Inklusivmiete' : 'BK-Pauschale'}: nur Heizung, ${euro(e.nicht_umgelegt_ct)} trägt der Vermieter)</i>` : ''}`
+      : e.segment.selbst ? '<i>selbst genutzt (Eigenanteil)</i>' : '<i>Leerstand (Vermieter)</i>',
+      `${datum(e.segment.von)} – ${datum(e.segment.bis)}`, `#r${euro(e.umgelegt_ct ?? e.kosten_ct)}`, `#r${euro(e.bk_vz_ct + e.hk_vz_ct)}`, `#r${euro(e.ergebnis_ct)}`]));
   return bericht(`Betriebskostenabrechnung – Gesamtübersicht`, `${objekt.bezeichnung} · ${datum(a.von)} – ${datum(a.bis)}`, `<h2>Kosten</h2>${posten}<h2>Verteilung</h2>${erg}`);
 }
 

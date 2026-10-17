@@ -5,7 +5,7 @@ import { useLoad } from '../useLoad';
 import { L, mitLinks } from '../navi';
 import { Tabs } from '../ui';
 import { absenderAus, alsPdf, empfaengerVon } from '../dokument';
-import { nkBrief, nkUebersicht } from '../abrechnungDocs';
+import { nkBrief, nkUebersicht, nurHeizung } from '../abrechnungDocs';
 
 const ersterNaechsterMonat = () => {
   const d = new Date();
@@ -43,7 +43,7 @@ export function NkAbrechnung(props: { objekt: Row }) {
       setA(r);
       setPruefung(await call('nkPruefung', props.objekt.id, von, bis, opt));
       setNeuVz(Object.fromEntries(r.ergebnisse.filter((e: Row) => e.segment.vertrag && (!e.segment.vertrag.ende || e.segment.vertrag.ende >= heute()))
-        .map((e: Row) => [e.segment.vertrag.id, { bk: (e.neu_bk_vz_ct / 100).toFixed(2).replace('.', ','), hk: (e.neu_hk_vz_ct / 100).toFixed(2).replace('.', ',') }])));
+        .map((e: Row) => [e.segment.vertrag.id, { bk: e.neu_bk_vz_ct == null ? '' : (e.neu_bk_vz_ct / 100).toFixed(2).replace('.', ','), hk: (e.neu_hk_vz_ct / 100).toFixed(2).replace('.', ',') }])));
       setMeldung('');
     } catch (e) {
       fehler(e);
@@ -60,9 +60,11 @@ export function NkAbrechnung(props: { objekt: Row }) {
     const absender = { ...absenderAus(einst), iban: props.objekt.iban || einst.verwalter_iban, bank: props.objekt.bank || einst.verwalter_bank, bic: props.objekt.bic || einst.verwalter_bic };
     const seiten = [nkUebersicht(a, props.objekt)];
     for (const e of mieterErgebnisse) {
+      // Flat fee or rent including operating costs without heating: nothing to settle, no letter.
+      if (nurHeizung(e) && !e.umgelegt_ct && !e.hk_vz_ct) continue;
       const p = await empfaengerVon(e.segment.vertrag);
       const n = neuVz[e.segment.vertrag.id];
-      seiten.push(nkBrief(a, e, absender, props.objekt, p, n ? { bk: parseCent(n.bk), hk: parseCent(n.hk), ab: neuAb } : null, vzOffen[e.segment.vertrag.id] ?? 0));
+      seiten.push(nkBrief(a, e, absender, props.objekt, p, n ? { bk: n.bk === '' ? null : parseCent(n.bk), hk: parseCent(n.hk), ab: neuAb } : null, vzOffen[e.segment.vertrag.id] ?? 0));
     }
     await alsPdf(seiten, `Betriebskostenabrechnung ${props.objekt.bezeichnung} ${von.slice(0, 4)}`);
   }
@@ -80,7 +82,7 @@ export function NkAbrechnung(props: { objekt: Row }) {
   }
 
   async function vzUebernehmen() {
-    const liste = Object.entries(neuVz).map(([vid, n]) => ({ vertrag_id: Number(vid), bk_vz_ct: parseCent(n.bk), hk_vz_ct: parseCent(n.hk) }));
+    const liste = Object.entries(neuVz).map(([vid, n]) => ({ vertrag_id: Number(vid), bk_vz_ct: n.bk === '' ? null : parseCent(n.bk), hk_vz_ct: parseCent(n.hk) }));
     const n = await call('anpassungenAnwenden', 'miete', neuAb, 'nk_anpassung', liste);
     setMeldung(`Neue Vorauszahlungen für ${n} Mietverhältnisse ab ${datum(neuAb)} hinterlegt.`);
   }
@@ -119,7 +121,8 @@ export function NkAbrechnung(props: { objekt: Row }) {
         )}
         <p className="hinweis klein">
           Berücksichtigt werden alle Kostenkonten mit „umlagefähig“ und Buchungsdatum im Zeitraum (Abflussprinzip). Kosten werden nach
-          dem Schlüssel des Kontos auf die Einheiten verteilt und bei Mieterwechsel tagegenau aufgeteilt; Leerstand trägt der Vermieter.
+          dem Schlüssel des Kontos auf die Einheiten verteilt; ein Mieter zählt für die Mietmonate, für die er Miete zahlt (Einzug am 15. mit vollem Monat: ab dem 1.),
+          oder – im Vertrag einstellbar – nach Wohntagen. Leerstand trägt der Vermieter, ebenso die Betriebskosten bei Pauschale oder Inklusivmiete.
           Eine selbst genutzte Wohnung nimmt an allen Schlüsseln teil (nach Personen mit deiner Haushaltsgröße); ihren Eigenanteil trägst du.
           {heizung === 'intern' && ' Heizkosten: Grundkosten nach Wohnfläche, Verbrauchskosten nach Wärme- bzw. Warmwasserzählern (Schlüssel vom Typ „Zähler“).'}
         </p>
@@ -152,7 +155,8 @@ export function NkAbrechnung(props: { objekt: Row }) {
                   <tr key={i}><td>{p.label}</td><td>{p.schluessel}</td><td className="num">{p.gesamt_einheiten ? zahl(+p.gesamt_einheiten.toFixed(3)) : ''} {p.einheit}</td><td className="num">{euro(p.gesamt_ct)}</td></tr>
                 ))}
               </tbody>
-              <tfoot><tr><td colSpan={3}>Summe (davon Leerstand {euro(a.leerstand_ct)}{a.eigenanteil_ct ? ` · Eigenanteil selbst genutzt ${euro(a.eigenanteil_ct)}` : ''})</td><td className="num"><b>{euro(a.summe_ct)}</b></td></tr></tfoot>
+              <tfoot><tr><td colSpan={3}>Summe (davon Leerstand {euro(a.leerstand_ct)}{a.eigenanteil_ct ? ` · Eigenanteil selbst genutzt ${euro(a.eigenanteil_ct)}` : ''}
+                {a.pauschal_ct ? ` · Pauschale/Inklusivmiete, trägt der Vermieter ${euro(a.pauschal_ct)}` : ''})</td><td className="num"><b>{euro(a.summe_ct)}</b></td></tr></tfoot>
             </table>
           </div>
           <div className="block">
@@ -168,11 +172,13 @@ export function NkAbrechnung(props: { objekt: Row }) {
                       <td><L zu={{ einheit: e.segment.einheit.id }}>{e.segment.einheit.bezeichnung}</L></td>
                       <td>{v ? <L zu={{ vertrag: v.id, typ: 'miete' }}>{v.name}</L> : e.segment.selbst ? `selbst genutzt · Eigenanteil (${zahl(e.segment.selbst.personen)} Pers.)` : 'Leerstand (Vermieter)'}</td>
                       <td>{datum(e.segment.von)} – {datum(e.segment.bis)}</td>
-                      <td className="num">{euro(e.kosten_ct)}</td>
+                      <td className="num">{euro(e.umgelegt_ct ?? e.kosten_ct)}
+                        {nurHeizung(e) && <div className="klein hinweis" title="Betriebskosten als Pauschale oder in der Miete enthalten: abgerechnet wird nur die Heizung">
+                          {e.bk_art === 'inklusiv' ? 'Inklusivmiete' : 'BK-Pauschale'}: nur Heizung, {euro(e.nicht_umgelegt_ct)} beim Vermieter</div>}</td>
                       <td className="num">{euro(e.bk_vz_ct + e.hk_vz_ct)}</td>
                       <td className="num"><b className={e.ergebnis_ct > 0 ? 'negativ' : ''}>{v ? (e.ergebnis_ct > 0 ? 'Nachz. ' : 'Guth. ') + euro(Math.abs(e.ergebnis_ct + (e.ust_ct ?? 0))) : ''}</b>
                         {e.ust_ct ? <div className="klein hinweis">inkl. {e.ust_satz} % USt {euro(Math.abs(e.ust_ct))}</div> : null}</td>
-                      <td>{n && <input className="num zelle" value={n.bk} onChange={(ev) => setNeuVz({ ...neuVz, [v.id]: { ...n, bk: ev.target.value } })} />}</td>
+                      <td>{n && (nurHeizung(e) ? <span className="klein hinweis">–</span> : <input className="num zelle" value={n.bk} onChange={(ev) => setNeuVz({ ...neuVz, [v.id]: { ...n, bk: ev.target.value } })} />)}</td>
                       <td>{n && <input className="num zelle" value={n.hk} onChange={(ev) => setNeuVz({ ...neuVz, [v.id]: { ...n, hk: ev.target.value } })} />}</td>
                     </tr>
                   );

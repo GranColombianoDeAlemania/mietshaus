@@ -172,8 +172,8 @@ module.exports = function mieterwechsel({ db, all, get, tx, PERSON_NAME }) {
       const teile = i.name.trim().split(/\s+/);
       const personId = i.person_id ?? Number(db.prepare('INSERT INTO personen (vorname, nachname, email, telefon) VALUES (?, ?, ?, ?)')
         .run(teile.length > 1 ? teile.slice(0, -1).join(' ') : null, teile.at(-1), i.email ?? null, i.telefon ?? null).lastInsertRowid);
-      const vid = Number(db.prepare(`INSERT INTO mietverhaeltnisse (einheit_id, person_id, beginn, kaltmiete_ct, bk_vz_ct, hk_vz_ct, kaution_ct, personen_anzahl)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(i.einheit_id, personId, beginn, a.kaltmiete_ct ?? 0, a.bk_vz_ct ?? 0, a.hk_vz_ct ?? 0, a.kaution_ct ?? 0, i.personen ?? 1).lastInsertRowid);
+      const vid = Number(db.prepare(`INSERT INTO mietverhaeltnisse (einheit_id, person_id, beginn, kaltmiete_ct, bk_vz_ct, hk_vz_ct, kaution_ct, personen_anzahl,
+        teilmonat_beginn, teilmonat_ende) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'voll', 'voll')`).run(i.einheit_id, personId, beginn, a.kaltmiete_ct ?? 0, a.bk_vz_ct ?? 0, a.hk_vz_ct ?? 0, a.kaution_ct ?? 0, i.personen ?? 1).lastInsertRowid);
       db.prepare(`UPDATE interessenten SET status = 'vermietet', person_id = ? WHERE id = ?`).run(personId, interessentId);
       db.prepare(`UPDATE interessenten SET status = 'absage' WHERE einheit_id = ? AND id <> ? AND status NOT IN ('absage', 'vermietet')`).run(i.einheit_id, interessentId);
       db.prepare(`UPDATE angebote SET aktiv = 0 WHERE einheit_id = ?`).run(i.einheit_id);

@@ -230,7 +230,7 @@ function Buchungsmaske(props: { objekt: Row; konten: Row[]; einheiten: Row[]; on
 
 // Rent and house money are charged to the contract account by the monthly charges; a payment booked straight to
 // the income account would count twice and leave the tenant in arrears.
-const ERTRAG_AUS_SOLL = ['miete', 'sonst', 'bk', 'hk', 'hausgeld', 'ruecklage'];
+const ERTRAG_AUS_SOLL = ['miete', 'sonst', 'bk', 'bk_pauschale', 'hk', 'hausgeld', 'ruecklage'];
 
 // Shows the selected account's state when a payment is entered: what is due, what remains after this payment.
 function KontoHinweis(props: { konto: Row | undefined; betrag_ct: number; datum: string }) {

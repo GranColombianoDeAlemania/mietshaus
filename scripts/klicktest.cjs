@@ -95,7 +95,15 @@ app.whenReady().then(async () => {
   const eingabe = (sel, wert) => js(`(() => { const i = document.querySelector(${JSON.stringify(sel)}); if (!i) return false;
     const proto = i.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : i.tagName === 'SELECT' ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
     Object.getOwnPropertyDescriptor(proto, 'value').set.call(i, ${JSON.stringify(wert)}); i.dispatchEvent(new Event(i.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true })); return true; })()`);
-  const shot = async (name) => { await wait(300); fs.writeFileSync(path.join(out, name + '.png'), (await win.webContents.capturePage()).toPNG()); };
+  // Screenshots are only for looking at: a failed capture (a GPU hiccup) is tried once more, then noted and skipped.
+  const shot = async (name) => {
+    await wait(300);
+    for (let i = 0; i < 2; i++) {
+      try { fs.writeFileSync(path.join(out, name + '.png'), (await win.webContents.capturePage()).toPNG()); return; } catch (e) {
+        if (i) console.log(`Bildschirmfoto ${name} fehlgeschlagen: ${e.message}`); else await wait(1500);
+      }
+    }
+  };
 
   // ---------- 1. Every page, every button ----------
   // Buttons that would remove the sample data needed later are left out.

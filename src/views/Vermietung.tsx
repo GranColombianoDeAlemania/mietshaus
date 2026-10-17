@@ -165,14 +165,31 @@ function EinheitVermietung(props: { einheit: Row; objekt: Row; reload: () => voi
               const neu = await call('zusage', zusage.id, zusage.beginn);
               setZusage(null); reload(); props.reload();
               await sollNachfrage('miete', neu.vertrag_id, { fruehereMonate: true });
-              if (confirm('Mieter und Mietverhältnis sind angelegt; die übrigen Interessenten stehen auf „Abgesagt“. Jetzt zur Einzugsübergabe?')) props.oeffne('uebergabe');
+              if (confirm(`Mieter und Mietverhältnis sind angelegt; die übrigen Interessenten stehen auf „Abgesagt“.${neu.folgemonat
+                ? ` Die Miete wird erst ab dem Folgemonat gefordert, weil ${neu.folgemonat.name} den Auszugsmonat noch voll zahlt.` : ''} Jetzt zur Einzugsübergabe?`)) props.oeffne('uebergabe');
             } catch (err) { fehler(err); }
           }}>Mieter anlegen</button>}>
           <p>Es werden eine Person und ein Mietverhältnis für <b>{e.bezeichnung}</b> mit den Werten des Angebots angelegt (Kaltmiete {euro(parseCent(a.kaltmiete))}, Kaution {euro(parseCent(a.kaution))}).</p>
           <div className="maske zwei"><label>Mietbeginn<input type="date" value={zusage.beginn} onChange={(ev) => setZusage({ ...zusage, beginn: ev.target.value })} /></label></div>
+          <ZusageMonat einheitId={e.id} beginn={zusage.beginn} />
           <p className="klein hinweis">Den Mietvertrag selbst bitte auf einem geprüften Formular (z. B. Haus & Grund) erstellen; die Daten stehen danach unter „Mieter“.</p>
         </Dialog>
       )}
     </>
+  );
+}
+
+// Acceptance: the first rent month, and why it is the next month when the previous tenant still pays this one.
+function ZusageMonat(props: { einheitId: number; beginn: string }) {
+  const gueltig = /^\d{4}-\d{2}-\d{2}$/.test(props.beginn ?? '');
+  const [info] = useLoad<Row | null>(() => (gueltig ? call('mietbeginnInfo', 'miete', { einheit_id: props.einheitId, beginn: props.beginn, teilmonat_beginn: 'voll', mietmonat_ab: 'erster', faelligkeitstag: 0 })
+    : Promise.resolve(null)), [props.einheitId, props.beginn]);
+  if (!info?.erste) return null;
+  const monatName = (m: string) => new Date(Date.UTC(Number(m.slice(0, 4)), Number(m.slice(5, 7)) - 1, 1)).toLocaleDateString('de-DE', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+  const folge = new Date(Date.UTC(Number(props.beginn.slice(0, 4)), Number(props.beginn.slice(5, 7)), 1)).toISOString().slice(0, 7);
+  return (
+    <p className="hinweisbox">{info.doppelt?.folgemonat
+      ? <>{info.doppelt.name} zieht am {datum(info.doppelt.ende)} aus und zahlt {monatName(info.doppelt.monat)} noch voll. Die Miete des neuen Mieters wird deshalb erst ab <b>{monatName(folge)}</b> gefordert.</>
+      : <>Erste Miete für {monatName(info.erste.monat)}, fällig am {datum(info.erste.datum)}{!props.beginn.endsWith('-01') ? ' – die Miete ist ein Monatsbetrag, auch der Einzugsmonat wird voll gefordert' : ''}.</>}</p>
   );
 }

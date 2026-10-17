@@ -97,28 +97,27 @@ function betraegeAm(k, datum) {
     for (const f of Object.keys(b)) if (a[f] != null) b[f] = a[f];
   return b;
 }
-// Expected charge of one contract for one month: { datum, posten: { label: ct }, summe }.
+// Expected charge of one contract for one month: { datum, posten: { label: ct }, summe }. Rent is a monthly amount:
+// the month of moving in or out is charged in full ("anteilig" from older versions counts as full), moving in
+// during a month the contract may say "from the next month".
 function erwartetesSoll(k, monat) {
   const v = V[k];
   const [y, m] = monat.split('-').map(Number);
   const T = tageImMonat(y, m), erster = `${monat}-01`, letzter = `${monat}-${pad(T)}`;
   if (v.beginn > letzter || (v.ende && v.ende < erster)) return null;
-  const beginntHier = v.beginn > erster, endetHier = !!v.ende && v.ende < letzter;
+  const beginntHier = v.beginn > erster;
   if (beginntHier && v.teilmonat_beginn === 'folgemonat') return null;
-  const ab = beginntHier && v.teilmonat_beginn !== 'voll' ? v.beginn : erster;
-  const bis = endetHier && v.teilmonat_ende !== 'voll' ? v.ende : letzter;
-  const tage = tageInkl(ab, bis);
   const b = betraegeAm(k, beginntHier ? v.beginn : erster);
   const posten = {};
   let netto = 0;
   for (const [f, label] of [['kaltmiete_ct', 'Miete'], ['sonstiges_ct', 'Sonstiges'], ['bk_vz_ct', 'BK-Vorauszahlung'], ['hk_vz_ct', 'HK-Vorauszahlung']]) {
-    const ct = Math.round(b[f] * tage / T);
+    const ct = b[f];
     if (ct > 0) { posten[label] = ct; netto += ct; }
   }
   if (v.ust_satz && netto) posten[`USt ${v.ust_satz} %`] = Math.round(netto * v.ust_satz / 100);
   let datum = v.faelligkeitstag === 0 ? dritterWerktagMiete(monat) : `${monat}-${pad(Math.min(v.faelligkeitstag, T))}`;
   if (beginntHier && datum < v.beginn) datum = v.beginn;
-  return { datum, posten, summe: Object.values(posten).reduce((s, x) => s + x, 0), tage, T };
+  return { datum, posten, summe: Object.values(posten).reduce((s, x) => s + x, 0) };
 }
 const zeilen = db.sollstellung(o, '2025-01', '2026-12');
 for (const [k, v] of Object.entries(V)) {
@@ -129,10 +128,12 @@ for (const [k, v] of Object.entries(V)) {
     gleich(`Soll ${k} ${monat}`, ist, soll && { datum: soll.datum, posten: soll.posten });
   }
 }
-// Spot checks by hand: Becker March 2025 (from 15th, 17/31 days), Schulz June (20/30), Wagner August (full), Neumann first in November.
-gleich('Becker 03/2025 Miete 600 × 17/31', zeilen.find((x) => x.vertrag_id === V.v2.id && x.monat === '2025-03' && x.posten === 'Miete')?.betrag_ct, 32903);
+// Spot checks by hand: Becker moves in on 15 March 2025 (stored as "anteilig" by an old version) and pays the full month,
+// Schulz moves out on 20 June and pays June in full, Wagner August (full), Neumann first in November.
+gleich('Becker 03/2025 voller Monat 600 € (Einzug 15.3., nicht 17/31)', zeilen.find((x) => x.vertrag_id === V.v2.id && x.monat === '2025-03' && x.posten === 'Miete')?.betrag_ct, 60000);
+gleich('Becker gespeichert als „voller Monat“', db.get('mietverhaeltnisse', V.v2.id).teilmonat_beginn, 'voll');
 gleich('Becker 03/2025 fällig am Einzug', zeilen.find((x) => x.vertrag_id === V.v2.id && x.monat === '2025-03')?.datum, '2025-03-15');
-gleich('Schulz 06/2025 Miete 900 × 20/30', zeilen.find((x) => x.vertrag_id === V.v3.id && x.monat === '2025-06' && x.posten === 'Miete')?.betrag_ct, 60000);
+gleich('Schulz 06/2025 voller Monat 900 € (Auszug 20.6., nicht 20/30)', zeilen.find((x) => x.vertrag_id === V.v3.id && x.monat === '2025-06' && x.posten === 'Miete')?.betrag_ct, 90000);
 gleich('Wagner 08/2025 voller Monat, fällig 16.8.', zeilen.filter((x) => x.vertrag_id === V.v3b.id && x.monat === '2025-08').map((x) => [x.datum, x.betrag_ct]),
   [['2025-08-16', 98000], ['2025-08-16', 18000], ['2025-08-16', 11000]]);
 gleich('Neumann erst ab 11/2025', zeilen.filter((x) => x.vertrag_id === V.v4.id && x.monat <= '2025-10').length, 0);
@@ -264,14 +265,22 @@ const CO2 = { co2_kg: 18000, co2_kosten_ct: 99000 };
 const nk = db.nkAbrechnung(o, '2025-01-01', '2025-12-31', { heizung: 'intern', verbrauchsanteil: 70, ...CO2, leerstand_personen: 1 });
 
 {
-  // Segments by unit: contracts and vacancies.
+  // Segments by unit: contracts and vacancies. A contract counts for the rent months it is charged for: from the 1st of
+  // the month of moving in (the next month with "from the next month") to the end of the month of moving out.
   const VON = '2025-01-01', BIS = '2025-12-31', JAHR = 365;
+  const monatsletzter = (d) => `${d.slice(0, 7)}-${pad(tageImMonat(...d.slice(0, 7).split('-').map(Number)))}`;
+  const zeitraumMonate = (v) => {
+    let von = `${v.beginn.slice(0, 7)}-01`;
+    if (v.beginn > von && v.teilmonat_beginn === 'folgemonat') von = plusTage(monatsletzter(v.beginn), 1);
+    return { von, bis: v.ende ? monatsletzter(v.ende) : '9999-12-31' };
+  };
   const seg = [];
   for (const [ek, e] of Object.entries(E)) {
-    const vs = Object.entries(V).filter(([, v]) => v.einheit === ek && v.beginn <= BIS && (!v.ende || v.ende >= VON)).sort((a, b) => (a[1].beginn < b[1].beginn ? -1 : 1));
+    const vs = Object.entries(V).filter(([, v]) => v.einheit === ek && zeitraumMonate(v).von <= BIS && zeitraumMonate(v).bis >= VON).sort((a, b) => (a[1].beginn < b[1].beginn ? -1 : 1));
     let cursor = VON;
     for (const [vk, v] of vs) {
-      const a = v.beginn > VON ? v.beginn : VON, b = v.ende && v.ende < BIS ? v.ende : BIS;
+      const z = zeitraumMonate(v);
+      const a = z.von > VON ? z.von : VON, b = z.bis < BIS ? z.bis : BIS;
       if (a > cursor) seg.push({ ek, vk: null, von: cursor, bis: plusTage(a, -1) });
       seg.push({ ek, vk, von: a, bis: b });
       cursor = plusTage(b, 1);
@@ -498,14 +507,12 @@ const wa = db.wegAbrechnung(w, '2025-01-01', '2025-12-31');
   gleich('Mietanpassung ab diesem Monat', soll(vt), { [VM]: 90000, [M]: 95000 });
   t.remove('anpassungen', an);
   gleich('Mietanpassung gelöscht', soll(vt), { [VM]: 90000, [M]: 90000 });
-  // Start on the 15th of last month, by day: (T − 14)/T of each amount, due on the day of moving in.
+  // Start on the 15th of last month: the full month (rent is a monthly amount, never by day), due on the day of moving in.
   t.save('mietverhaeltnisse', { id: vt, beginn: `${VM}-15` });
-  const T = tageImMonat(...VM.split('-').map(Number));
-  const anteil = (ct) => Math.round(ct * (T - 14) / T);
-  gleich('Beginn am 15.: Teilmonat tagegenau', soll(vt), { [VM]: anteil(70000) + anteil(12000) + anteil(8000), [M]: 90000 });
+  gleich('Beginn am 15.: voller Monat, nicht tageweise', soll(vt), { [VM]: 90000, [M]: 90000 });
   gleich('... fällig am Einzug', [...new Set(t.buchungen(ob, {}).filter((b) => b.art === 'soll' && b.monat === VM).map((b) => b.datum))], [`${VM}-15`]);
-  t.save('mietverhaeltnisse', { id: vt, teilmonat_beginn: 'voll' });
-  gleich('... voller Monat', soll(vt), { [VM]: 90000, [M]: 90000 });
+  t.save('mietverhaeltnisse', { id: vt, teilmonat_beginn: 'anteilig' });
+  gleich('... „anteilig“ (alte Einstellung) wird zum vollen Monat', [t.get('mietverhaeltnisse', vt).teilmonat_beginn, soll(vt)], ['voll', { [VM]: 90000, [M]: 90000 }]);
   t.save('mietverhaeltnisse', { id: vt, teilmonat_beginn: 'folgemonat' });
   gleich('... erst ab Folgemonat', soll(vt), { [M]: 90000 });
 
@@ -753,7 +760,8 @@ const wa = db.wegAbrechnung(w, '2025-01-01', '2025-12-31');
 
   // ----- E1–E4 for the 1st floor (Bernd → 61 days vacant → Carla) -----
   const ek = k.einheitKennzahlen(KE.B, S);
-  const leer61 = Math.round(80000 * 12 * 61 / 365);
+  // Vacancy costs whole months without rent: June and July (not 61/365 of a year's rent).
+  const leer61 = 2 * 80000;
   gleich('E1 Belegung seit 2020', ek.belegung.segmente.map((x) => [x.art, x.von, x.bis, x.tage, x.entgangen_ct ?? null]), [
     ['miete', '2020-06-01', '2025-05-31', tageInkl('2020-06-01', '2025-05-31'), null], ['leer', '2025-06-01', '2025-07-31', 61, leer61],
     ['miete', '2025-08-01', S, tageInkl('2025-08-01', S), null]]);
@@ -762,7 +770,7 @@ const wa = db.wegAbrechnung(w, '2025-01-01', '2025-12-31');
   gleich('E2 Ertrag je Jahr (Soll, gezahlt, Kosten der Einheit)', ek.ertrag.map((x) => [x.jahr, x.soll_ct, x.ist_ct, x.kosten_ct]),
     [[2025, 5 * 80000 + 5 * 96000, 5 * 80000 + 5 * 96000, 300000], [2026, 10 * 96000, 8 * 96000, 0]]);
   gleich('E4 Mieterwechsel', [ek.wechsel.posten.map((x) => [x.label, x.ct]), ek.wechsel.summe_ct, ek.wechsel.schnitt_jahre.toFixed(9)],
-    [[['Leerstand 61 Tage', leer61], ['Renovierung und Reparaturen', 300000]], leer61 + 300000,
+    [[['Leerstand 61 Tage (2 Monate ohne Miete)', leer61], ['Renovierung und Reparaturen', 300000]], leer61 + 300000,
       ((tageInkl('2020-06-01', '2025-05-31') + tageInkl('2025-08-01', S)) / 2 / 365.25).toFixed(9)]);
   const e3 = k.einheitKennzahlen(KE.A, S).verbrauch;
   gleich('E3 Kaltwasser je m² gegen Haus und Vorjahr', e3.map((x) => [x.art, x.jahr, x.wert, x.vorjahr, x.qm, x.haus_qm, x.aenderung]),
@@ -781,8 +789,8 @@ const wa = db.wegAbrechnung(w, '2025-01-01', '2025-12-31');
   gleich('K3 Rückstände nach Alter', [c.rueckstaende.stufen.map((x) => x.ct), c.rueckstaende.summe_ct], [[80000 + 123000, 123000, 0, 0], 326000]);
   gleich('K3 § 543: zwei Monatsmieten offen', c.rueckstaende.p543.map((x) => [x.vertrag_id, x.ct, x.monatsmieten, x.folge]), [[KV.carla.id, 246000, 2, true]]);
   const c2 = k.cockpitKennzahlen('miete', '2026-06-30');
-  gleich('K2 Vermietung 12 Monate (Fläche × Tage, eigene Wohnung zählt nicht)', [c2.vermietung.quote.toFixed(9), c2.vermietung.leerstand_ct, c2.vermietung.vermietet, c2.vermietung.selbst, c2.vermietung.leer],
-    [((60 * 365 + 80 * 334) / (60 * 365 + 80 * 365)).toFixed(9), Math.round(80000 * 12 * 31 / 365), 3, 1, 0]);
+  gleich('K2 Vermietung 12 Monate (Fläche × Tage, eigene Wohnung zählt nicht; Leerstand Juli = 1 Monatsmiete)', [c2.vermietung.quote.toFixed(9), c2.vermietung.leerstand_ct, c2.vermietung.vermietet, c2.vermietung.selbst, c2.vermietung.leer],
+    [((60 * 365 + 80 * 334) / (60 * 365 + 80 * 365)).toFixed(9), 80000, 3, 1, 0]);
   // K4: expected rent at the share and delay of the last 12 months, loan instalments, insurance, last year's recurring costs.
   const quote = (x) => { const e = erwartet(x, S, 12); const due = e.lasten.filter((l) => l.datum >= '2025-11-01'); return due.reduce((y, l) => y + l.bezahlt, 0) / due.reduce((y, l) => y + l.ct, 0); };
   const verzug = (x) => { const e = erwartet(x, S, 12).liste.filter(([, st]) => st === 'puenktlich' || st === 'verspaetet'); return Math.round(e.reduce((y, [, st, t]) => y + (st === 'verspaetet' ? t : 0), 0) / e.length); };
@@ -831,6 +839,200 @@ const wa = db.wegAbrechnung(w, '2025-01-01', '2025-12-31');
   const zp = k.zahlungsverhalten('miete', KV.paul.id, { stichtag: S });
   gleich('M1 Rücklastschrift öffnet den Juni wieder, Storno zählt nicht', [zp.monate.find((q) => q.monat === '2026-06').status, zp.monate.find((q) => q.monat === '2026-06').tage, zp.ruecklastschriften, zp.score],
     ['verspaetet', tageInkl(juni, '2026-06-20') - 1, 1, Math.round((21 * 100 + Math.max(0, 100 - 4 * (tageInkl(juni, '2026-06-20') - 1))) / 22 - 10)]);
+}
+
+// ---------- 17. Rent is a monthly amount (report of 17.10.2026: "800 € warm, 500 € paid = 300 € missing, not a share by day") ----------
+// Starts and ends in mid-month charge whole months; a rent month may run from the day of moving in; a tenant change in
+// mid-month; statements by rent months or by days; flat fee and rent including operating costs; vacancy in months;
+// the one-time conversion of months booked by day before.
+{
+  const S = '2026-10-17';
+  const werktagAb = (d0, n = 3) => { let z = 0; for (let d = d0; ; d = plusTage(d, 1)) if (wochentag(d) !== 0 && wochentag(d) !== 6 && !FEIERTAGE_BE.has(d) && ++z === n) return d; };
+  const haus = () => {
+    const raw = open(':memory:');
+    const t = api(raw);
+    t.setzeEinstellungen({ bundesland: 'BE', auto_soll: '0' });
+    const ob = t.neuesObjekt({ bezeichnung: 'Monatshaus', art: 'miete', strasse: 'Monatsweg 1', plz: '10115', ort: 'Berlin' });
+    const bank = t.konten(ob).find((k) => k.nr === 1200).id;
+    let nr = 0;
+    const einheit = () => t.save('einheiten', { objekt_id: ob, nr: ++nr, bezeichnung: `WE${nr}`, art: 'Wohnung', wohnflaeche: 60 });
+    const vertrag = (eh, beginn, x = {}) => t.save('mietverhaeltnisse', { einheit_id: eh, person_id: t.save('personen', { anrede: 'Herr', vorname: 'Max', nachname: `Mieter ${eh}-${beginn}` }),
+      beginn, kaltmiete_ct: 60000, bk_vz_ct: 12000, hk_vz_ct: 8000, personen_anzahl: 1, faelligkeitstag: 0, ust_satz: 0, ...x });
+    const konto = (vid) => t.kontoVon('miete', vid).id;
+    const zahle = (vid, datum, ct) => t.buchen({ objekt_id: ob, datum, text: 'Zahlung', art: 'bank', positionen: [{ soll_id: bank, haben_id: konto(vid), betrag_ct: ct }] });
+    const lasten = (vid) => t.buchungen(ob, {}).filter((b) => b.art === 'soll' && b.soll_id === konto(vid));
+    const monate17 = (vid, bis = '9999-99') => {
+      const m = {};
+      for (const b of lasten(vid).filter((b) => b.monat <= bis)) (m[b.monat] ??= { ct: 0, datum: b.datum }).ct += b.betrag_ct;
+      return Object.fromEntries(Object.entries(m).sort().map(([k, x]) => [k, [x.ct, x.datum]]));
+    };
+    return { raw, t, ob, bank, einheit, vertrag, konto, zahle, lasten, monate17 };
+  };
+
+  // ----- Julian's case with every start and end: 800 € warm, 500 € paid on 17.10.2026 -----
+  const H = haus();
+  const FAELLE = [
+    // [name, start, extra, payments, expected months up to 11/2026 {monat: [ct, due]}, [overdue, due today, credit] on 17.10.]
+    ['Beginn 01.10.', '2026-10-01', {}, [[S, 50000]], { '2026-10': [80000, '2026-10-05'], '2026-11': [80000, '2026-11-04'] }, [30000, 0, 0]],
+    ['Beginn 02.10.', '2026-10-02', {}, [[S, 50000]], { '2026-10': [80000, '2026-10-05'], '2026-11': [80000, '2026-11-04'] }, [30000, 0, 0]],
+    ['Beginn 15.10.', '2026-10-15', {}, [[S, 50000]], { '2026-10': [80000, '2026-10-15'], '2026-11': [80000, '2026-11-04'] }, [30000, 0, 0]],
+    ['Beginn 17.10. (heute fällig)', '2026-10-17', {}, [[S, 50000]], { '2026-10': [80000, '2026-10-17'], '2026-11': [80000, '2026-11-04'] }, [0, 30000, 0]],
+    ['Beginn 16.09. (Monat mit 30 Tagen)', '2026-09-16', {}, [[S, 50000]], { '2026-09': [80000, '2026-09-16'], '2026-10': [80000, '2026-10-05'], '2026-11': [80000, '2026-11-04'] }, [110000, 0, 0]],
+    ['Beginn 30.09. (ein Tag im September)', '2026-09-30', {}, [[S, 50000]], { '2026-09': [80000, '2026-09-30'], '2026-10': [80000, '2026-10-05'], '2026-11': [80000, '2026-11-04'] }, [110000, 0, 0]],
+    ['Auszug 15.10.', '2026-09-01', { ende: '2026-10-15' }, [['2026-09-03', 80000], [S, 50000]], { '2026-09': [80000, '2026-09-03'], '2026-10': [80000, '2026-10-05'] }, [30000, 0, 0]],
+    ['Beginn 01.11. (nichts fällig)', '2026-11-01', {}, [[S, 50000]], { '2026-11': [80000, '2026-11-04'] }, [0, 0, 50000]],
+    ['Beginn 17.10., erst ab Folgemonat', '2026-10-17', { teilmonat_beginn: 'folgemonat' }, [[S, 50000]], { '2026-11': [80000, '2026-11-04'] }, [0, 0, 50000]],
+  ].map(([name, beginn, x, z, mon, stand]) => ({ name, vid: H.vertrag(H.einheit(), beginn, x), z, mon, stand }));
+  H.t.sollstellung(H.ob, '2026-01', '2027-03');
+  for (const f of FAELLE) for (const [d, ct] of f.z) H.zahle(f.vid, d, ct);
+  for (const f of FAELLE) {
+    gleich(`800/500 ${f.name}: Monate voll`, H.monate17(f.vid, '2026-11'), f.mon);
+    const ks = H.t.kontoStatus(H.konto(f.vid), S);
+    gleich(`800/500 ${f.name}: überfällig, heute fällig, Guthaben`, [ks.ueberfaellig_ct, ks.heute_faellig_ct, ks.guthaben_ct], f.stand);
+  }
+  gleich('800/500: nirgends ein Tagesanteil im Buchungstext', FAELLE.flatMap((f) => H.lasten(f.vid)).filter((b) => /anteilig|Tage\)/.test(b.text)).length, 0);
+  gleich('800/500 Beginn 15.10.: Vertragsseite zeigt 300 € Rückstand', H.t.vertragAkte('miete', FAELLE[2].vid).vertrag.ueberfaellig_ct >= 0 && H.t.offenePostenKonto(H.konto(FAELLE[2].vid), S).offen.map((o) => [o.monat, o.soll_ct, o.bezahlt_ct, o.offen_ct, o.status]),
+    [['2026-10', 80000, 50000, 30000, 'teilweise bezahlt']]);
+  gleich('800/500 Beginn 16.09.: September und Oktober voll, 500 € auf den September', H.t.offenePostenKonto(H.konto(FAELLE[4].vid), S).offen.map((o) => [o.monat, o.offen_ct]),
+    [['2026-09', 30000], ['2026-10', 80000]]);
+  gleich('800/500 Cockpit: Mieteingang Oktober zählt volle Monate', (() => { const k1 = H.t.cockpitKennzahlen('miete', S).eingang; return k1.soll_ct; })(),
+    FAELLE.reduce((x, f) => x + (f.mon['2026-10']?.[0] ?? 0), 0));
+
+  // ----- Rent month from the day of moving in (the 15th to the 14th) -----
+  const J = haus();
+  const vj = J.vertrag(J.einheit(), '2026-10-15', { mietmonat_ab: 'einzug', ende: '2027-03-10' });
+  const vj15 = J.vertrag(J.einheit(), '2026-10-15', { mietmonat_ab: 'einzug', faelligkeitstag: 15 });
+  J.t.sollstellung(J.ob, '2026-01', '2027-06');
+  gleich('Mietmonat ab 15.: volle Monate, fällig am 3. Werktag ab dem 15., letzter Monat 15.02.–14.03. voll', J.monate17(vj),
+    Object.fromEntries(['2026-10', '2026-11', '2026-12', '2027-01', '2027-02'].map((m) => [m, [80000, werktagAb(`${m}-15`)]])));
+  gleich('... Text nennt den Mietmonat', [...new Set(J.lasten(vj).filter((b) => b.monat === '2026-10').map((b) => b.text))].sort(),
+    ['BK-Vorauszahlung 10/2026 (15.10.–14.11.)', 'HK-Vorauszahlung 10/2026 (15.10.–14.11.)', 'Miete 10/2026 (15.10.–14.11.)']);
+  gleich('... fällig am 15.', Object.values(J.monate17(vj15, '2026-12')).map(([, d]) => d), ['2026-10-15', '2026-11-15', '2026-12-15']);
+  J.zahle(vj, S, 50000);
+  gleich('... vor dem 3. Werktag kein Rückstand, danach 300 €', [J.t.kontoStatus(J.konto(vj), S).ueberfaellig_ct, J.t.kontoStatus(J.konto(vj), '2026-10-20').ueberfaellig_ct], [0, 30000]);
+  gleich('... offener Posten mit Mietmonat', J.t.offenePostenKonto(J.konto(vj), '2026-10-20').offen.map((o) => o.text), ['Monatssoll 10/2026 (15.10.–14.11.)']);
+  gleich('... Betriebskosten ab dem 15. (Abrechnung nach Mietmonaten)', J.t.nkAbrechnung(J.ob, '2026-01-01', '2026-12-31').ergebnisse.filter((e) => e.segment.vertrag?.id === vj).map((e) => [e.segment.von, e.segment.bis]),
+    [['2026-10-15', '2026-12-31']]);
+  const v31 = J.vertrag(J.einheit(), '2027-01-31', { mietmonat_ab: 'einzug' });
+  const r31 = J.t.get('mietverhaeltnisse', v31);
+  gleich('Mietmonat ab 31.: kürzere Monate beginnen am Monatsletzten', ['2027-01', '2027-02', '2027-03', '2027-04'].map((m) => { const x = J.t.periode(r31, m); return [x.von, x.bis]; }),
+    [['2027-01-31', '2027-02-27'], ['2027-02-28', '2027-03-30'], ['2027-03-31', '2027-04-29'], ['2027-04-30', '2027-05-30']]);
+
+  // ----- Tenant change in mid-month -----
+  const W = haus();
+  const ew = W.einheit();
+  const alt = W.vertrag(ew, '2026-01-01', { ende: '2026-10-15' });
+  const neu = W.vertrag(ew, '2026-10-16');
+  W.t.sollstellung(W.ob, '2026-01', '2026-12');
+  gleich('Wechsel 15./16.10. mit vollem Monat: Oktober doppelt → Prüfbericht', W.t.pruefbericht().punkte.filter((p) => p.schluessel.startsWith('doppelmonat:')).map((p) => p.schluessel), [`doppelmonat:miete:${alt}:${neu}`]);
+  const info = W.t.mietbeginnInfo('miete', { id: neu, einheit_id: ew, beginn: '2026-10-16', teilmonat_beginn: 'voll', mietmonat_ab: 'erster', faelligkeitstag: 0 });
+  gleich('... Formular schlägt „ab Folgemonat“ vor', [info.erste.von, info.doppelt.von, info.doppelt.bis, info.doppelt.folgemonat], ['2026-10-01', '2026-10-01', '2026-10-31', true]);
+  W.t.save('mietverhaeltnisse', { id: neu, teilmonat_beginn: 'folgemonat' });
+  W.t.sollAbgleich('miete', neu, { anwenden: true });
+  gleich('... mit „ab Folgemonat“: Oktober nur beim Vormieter, keine Warnung', [Object.keys(W.monate17(neu, '2026-11')), Object.keys(W.monate17(alt)).at(-1),
+    W.t.pruefbericht().punkte.some((p) => p.schluessel.startsWith('doppelmonat:'))], [['2026-11'], '2026-10', false]);
+  const Z = haus();
+  const ez = Z.einheit();
+  Z.vertrag(ez, '2026-01-01', { ende: '2026-10-15' });
+  Z.t.angebotSpeichern(ez, { kaltmiete_ct: 60000, bk_vz_ct: 12000, hk_vz_ct: 8000, kaution_ct: 180000, frei_ab: '2026-10-16' });
+  const zr = Z.t.zusage(Z.t.save('interessenten', { einheit_id: ez, name: 'Lea Neu' }), '2026-10-16');
+  gleich('Zusage nach Auszug am 15.: neuer Mieter erst ab November', [Z.t.get('mietverhaeltnisse', zr.vertrag_id).teilmonat_beginn, !!zr.folgemonat], ['folgemonat', true]);
+
+  // ----- Service-charge statement 2025: by rent months (standard), by days, rent month from the 15th, overlap -----
+  const L = haus();
+  const [lx, ly, lz, lw] = [L.einheit(), L.einheit(), L.einheit(), L.einheit()];
+  const xa = L.vertrag(lx, '2024-01-01', { ende: '2025-06-15' });
+  const xb = L.vertrag(lx, '2025-06-16', { teilmonat_beginn: 'folgemonat' });
+  const ya = L.vertrag(ly, '2025-03-15', { bk_abrechnung: 'wohntage' });
+  const za = L.vertrag(lz, '2025-05-15', { mietmonat_ab: 'einzug' });
+  const wa2 = L.vertrag(lw, '2024-01-01', { ende: '2025-10-15' });
+  const wb2 = L.vertrag(lw, '2025-10-16');
+  L.t.sollstellung(L.ob, '2024-01', '2025-12');
+  const lk = Object.fromEntries(L.t.konten(L.ob).map((k) => [k.nr, k.id]));
+  L.t.buchen({ objekt_id: L.ob, datum: '2025-03-01', text: 'Grundsteuer', positionen: [{ soll_id: lk[40100], haben_id: L.bank, betrag_ct: 240000 }] });
+  const nkL = L.t.nkAbrechnung(L.ob, '2025-01-01', '2025-12-31');
+  gleich('NK nach Mietmonaten: Abschnitte', nkL.ergebnisse.map((e) => [e.segment.einheit.id, e.segment.vertrag?.id ?? null, e.segment.von, e.segment.bis]), [
+    [lx, xa, '2025-01-01', '2025-06-30'], [lx, xb, '2025-07-01', '2025-12-31'],
+    [ly, null, '2025-01-01', '2025-03-14'], [ly, ya, '2025-03-15', '2025-12-31'],
+    [lz, null, '2025-01-01', '2025-05-14'], [lz, za, '2025-05-15', '2025-12-31'],
+    [lw, wa2, '2025-01-01', '2025-10-15'], [lw, wb2, '2025-10-16', '2025-12-31']]);
+  gleich('... angerechnete BK-Vorauszahlungen je Abschnitt', nkL.ergebnisse.filter((e) => e.segment.vertrag).map((e) => e.bk_vz_ct), [6, 6, 10, 8, 10, 3].map((n) => n * 12000));
+  gleich('... Grundsteuer nach Fläche und Tagen der Abschnitte', nkL.ergebnisse.map((e) => e.kosten_ct),
+    nkL.ergebnisse.map((e) => Math.round(240000 * tageInkl(e.segment.von, e.segment.bis) / 365 / 4)));
+
+  // ----- V1: flat fee and rent including operating costs -----
+  const P2 = haus();
+  const [pp, pi, pv] = [P2.einheit(), P2.einheit(), P2.einheit()];
+  const vp = P2.vertrag(pp, '2025-01-01', { bk_art: 'pauschale', bk_vz_ct: 10000 });
+  const vi = P2.vertrag(pi, '2025-01-01', { bk_art: 'inklusiv', kaltmiete_ct: 72000, bk_vz_ct: 12000 });
+  const vv = P2.vertrag(pv, '2025-01-01');
+  P2.t.sollstellung(P2.ob, '2025-01', '2025-12');
+  const pk = P2.t.konten(P2.ob);
+  const kat = (id) => pk.find((k) => k.id === id).kategorie;
+  gleich('Pauschale: eigenes Ertragskonto', pk.filter((k) => k.kategorie === 'bk_pauschale').map((k) => [k.nr, k.bezeichnung]), [[60025, 'Betriebskostenpauschalen']]);
+  gleich('Pauschale: monatlich als „BK-Pauschale“', P2.lasten(vp).filter((b) => b.monat === '2025-03').map((b) => [b.text, b.betrag_ct, kat(b.haben_id)]).sort(),
+    [['BK-Pauschale 03/2025', 10000, 'bk_pauschale'], ['HK-Vorauszahlung 03/2025', 8000, 'hk'], ['Miete 03/2025', 60000, 'miete']]);
+  gleich('Inklusivmiete: kein eigener BK-Betrag, keine BK-Forderung', [P2.t.get('mietverhaeltnisse', vi).bk_vz_ct, P2.lasten(vi).filter((b) => b.monat === '2025-03').map((b) => b.text).sort()],
+    [0, ['HK-Vorauszahlung 03/2025', 'Miete 03/2025']]);
+  const pkn = Object.fromEntries(pk.map((k) => [k.nr, k.id]));
+  P2.t.buchen({ objekt_id: P2.ob, datum: '2025-03-01', text: 'Grundsteuer', positionen: [{ soll_id: pkn[40100], haben_id: P2.bank, betrag_ct: 180000 }] });
+  P2.t.buchen({ objekt_id: P2.ob, datum: '2025-12-01', text: 'Gas', positionen: [{ soll_id: pkn[41000], haben_id: P2.bank, betrag_ct: 90000 }] });
+  for (const vid of [vp, vi, vv]) P2.zahle(vid, '2025-12-31', P2.lasten(vid).reduce((x, b) => x + b.betrag_ct, 0));
+  const nkP = P2.t.nkAbrechnung(P2.ob, '2025-01-01', '2025-12-31', { heizung: 'intern' });
+  gleich('Pauschale/Inklusiv: nur Heizung abgerechnet, Betriebskosten trägt der Vermieter', nkP.ergebnisse.map((e) => [e.bk_art, e.kosten_ct, e.umgelegt_ct, e.nicht_umgelegt_ct, e.bk_vz_ct, e.hk_vz_ct, e.ergebnis_ct, e.neu_bk_vz_ct]),
+    [['pauschale', 90000, 30000, 60000, 0, 96000, 30000 - 96000, null], ['inklusiv', 90000, 30000, 60000, 0, 96000, 30000 - 96000, null],
+      ['vorauszahlung', 90000, 90000, 0, 144000, 96000, 90000 - 240000, 5000]]);
+  gleich('... Summe beim Vermieter und Hinweis in der Prüfung', [nkP.pauschal_ct, P2.t.nkPruefung(P2.ob, '2025-01-01', '2025-12-31', { heizung: 'intern' }).punkte.some((p) => /nicht abgerechnet: 1\.200,00\s€ trägt der Vermieter/.test(p.text))], [120000, true]);
+  const avP = P2.t.anlageV(P2.ob, 2025);
+  gleich('Anlage V: Pauschale zählt zu den Umlagen', avP.einnahmen.map(([l, ct]) => [l.split(' ')[0], ct]).slice(0, 2), [['Mieteinnahmen', 12 * (60000 + 72000 + 60000)], ['Umlagen,', 12 * (10000 + 12000) + 3 * 12 * 8000]]);
+  const mi = P2.t.mieterKennzahlen(vi, S);
+  gleich('Inklusivmiete: kein Mietspiegel-Vergleich, § 558 mit Hinweis', [mi.vergleich.quelle, mi.vergleich.von_ct, mi.fakten.schritte.find((x) => x.art === '558')?.plus_ct ?? null,
+    /Betriebskosten/.test(mi.fakten.schritte.find((x) => x.art === '558')?.text ?? '')], ['brutto', null, null, true]);
+  P2.t.save('mietverhaeltnisse', { id: vp, bk_vz_ct: 0 });
+  gleich('Pauschale ohne Betrag → Prüfbericht', P2.t.pruefbericht().punkte.some((p) => p.schluessel === `pauschale0:${vp}`), true);
+
+  // ----- Vacancy in whole months: out 15.06. (June paid), in 16.08. (August paid) → only July lost -----
+  const O2 = haus();
+  const eo = O2.einheit();
+  O2.vertrag(eo, '2024-01-01', { ende: '2026-06-15' });
+  O2.vertrag(eo, '2026-08-16');
+  const lo = O2.t.einheitKennzahlen(eo, S).belegung.segmente.find((x) => x.art === 'leer');
+  gleich('Leerstand 16.06.–15.08.: ein Monat ohne Miete', [lo.von, lo.bis, lo.tage, lo.monate, lo.entgangen_ct], ['2026-06-16', '2026-08-15', 61, 1, 60000]);
+
+  // ----- One-time conversion of months booked by day (database of version 0.7) -----
+  const U = haus();
+  const [eu1, eu2] = [U.einheit(), U.einheit()];
+  const vu1 = U.vertrag(eu1, '2026-09-16');
+  const vu2 = U.vertrag(eu2, '2026-08-15');
+  U.t.sollstellung(U.ob, '2026-08', '2026-10');
+  // As version 0.7 left it: "anteilig" set and the first month booked by day (September 15/30, August 17/31).
+  for (const [vid, monat, tg, T] of [[vu1, '2026-09', 15, 30], [vu2, '2026-08', 17, 31]]) {
+    U.raw.prepare(`UPDATE mietverhaeltnisse SET teilmonat_beginn = 'anteilig' WHERE id = ?`).run(vid);
+    for (const b of U.lasten(vid).filter((b) => b.monat === monat)) U.raw.prepare('UPDATE buchungen SET betrag_ct = ?, text = ? WHERE id = ?')
+      .run(Math.round(b.betrag_ct * tg / T), `${b.text} (anteilig ${tg}/${T} Tage)`, b.id);
+  }
+  U.t.setzeEinstellungen({ festgeschrieben_bis: '2026-08-31' });
+  U.raw.prepare(`DELETE FROM einstellungen WHERE schluessel = 'umstellung_monatlich'`).run();
+  const um = U.t.umstellungMonatlich();
+  gleich('Umstellung: Teilmonat umgebucht, festgeschriebener bleibt', um.map((x) => [x.vertrag_id, x.monat, x.alt_ct, x.neu_ct, x.gebucht]),
+    [[vu1, '2026-09', 30000 + 6000 + 4000, 80000, true], [vu2, '2026-08', Math.round(60000 * 17 / 31) + Math.round(12000 * 17 / 31) + Math.round(8000 * 17 / 31), 80000, false]]);
+  gleich('... September jetzt voll, August unverändert', [U.monate17(vu1)['2026-09'], U.monate17(vu2)['2026-08'][0]], [[80000, '2026-09-16'], Math.round(60000 * 17 / 31) + Math.round(12000 * 17 / 31) + Math.round(8000 * 17 / 31)]);
+  gleich('... Hinweis im Cockpit, nur einmal', [U.t.hinweise().some((h) => h.schluessel === 'umstellung:monatlich' && /400,00\s€ → 800,00\s€/.test(h.text)), U.t.umstellungMonatlich()], [true, null]);
+
+  // ----- WEG: house money of the month of an owner change once; a special levy on a date goes to the owner then -----
+  const G = haus();
+  const wo = G.t.neuesObjekt({ bezeichnung: 'WEG Monatsplatz', art: 'weg', strasse: 'Monatsplatz 2', plz: '10115', ort: 'Berlin' });
+  const [g1, g2] = [1, 2].map((nr) => G.t.save('einheiten', { objekt_id: wo, nr, bezeichnung: `W${nr}`, art: 'Wohnung', wohnflaeche: 50, mea: 500 }));
+  const eigen = (eh, name, beginn, x = {}) => G.t.save('eigentum', { einheit_id: eh, person_id: G.t.save('personen', { nachname: name }), beginn, hausgeld_ct: 30000, ruecklage_ct: 5000, faelligkeitstag: 1, ...x });
+  const ga = eigen(g1, 'Alt', '2020-01-01', { ende: '2026-06-15' });
+  const gb = eigen(g1, 'Neu', '2026-06-16', { teilmonat_beginn: 'folgemonat' });
+  eigen(g2, 'Zwei', '2020-01-01');
+  G.t.sollstellung(wo, '2026-01', '2026-12');
+  const hg = (vid) => { const k = G.t.kontoVon('weg', vid).id; return [...new Set(G.t.buchungen(wo, {}).filter((b) => b.art === 'soll' && b.soll_id === k && b.monat).map((b) => b.monat))].sort(); };
+  gleich('WEG Wechsel 15./16.06.: Juni nur beim alten Eigentümer (voll)', [hg(ga).at(-1), hg(gb)[0]], ['2026-06', '2026-07']);
+  const meaKey = G.t.schluessel(wo).find((x) => x.typ === 'mea').id;
+  const su = G.t.sonderumlage(wo, { betrag_ct: 100000, schluessel_id: meaKey, datum: '2026-06-20', text: 'Sonderumlage Dach' });
+  gleich('Sonderumlage am 20.06.: schuldet der Eigentümer an diesem Tag (Neu, obwohl Hausgeld erst ab Juli)', su.map((x) => [x.name, x.betrag_ct]), [['Neu', 50000], ['Zwei', 50000]]);
 }
 
 console.log(`\nRechentest: ${ok} Prüfungen richtig, ${falsch} falsch.`);

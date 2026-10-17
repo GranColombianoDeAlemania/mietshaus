@@ -89,8 +89,9 @@ export function Sollstellung(props: { objekt: Row; modus: Modus }) {
       <p className="hinweis">
         Erzeugt die monatlichen Forderungen aus den {props.modus === 'weg' ? 'Eigentumsverhältnissen (Hausgeld, Rücklage)' : 'Mietverträgen (Miete, Vorauszahlungen)'} als
         Buchungen auf den {props.modus === 'weg' ? 'Eigentümerkonten' : 'Mieterkonten'}. Der laufende Monat wird automatisch gebucht – auch sofort, wenn du einen Vertrag
-        anlegst oder änderst. Bereits erzeugte Monate werden übersprungen. Wie ein Ein- oder Auszug mitten im Monat
-        berechnet wird (tagegenau, voller Monat oder ab dem Folgemonat), steht im jeweiligen Vertrag; der erste Monat ist nie vor dem Einzug fällig.
+        anlegst oder änderst. Bereits erzeugte Monate werden übersprungen. {props.modus === 'weg' ? 'Das Hausgeld' : 'Die Miete'} ist immer ein voller Monatsbetrag:
+        Ein- und Auszugsmonat werden voll gefordert – beim Einzug mitten im Monat wahlweise erst ab dem Folgemonat{props.modus === 'weg' ? '' : ', oder der Mietmonat läuft vom Einzugstag an (z. B. 15. bis 14.)'};
+        das steht im jeweiligen Vertrag. Der erste Monat ist nie vor dem Einzug fällig.
         Miet- und Hausgeldänderungen gelten ab ihrem Gültigkeitsdatum.
       </p>
       <div className="toolbar">
@@ -110,7 +111,7 @@ export function Sollstellung(props: { objekt: Row; modus: Modus }) {
               <td>{datum(z.datum)}</td>
               <td><L zu={{ vertrag: z.vertrag_id, typ: z.typ }}>{z.name}</L></td>
               <td><L zu={{ einheit: z.einheit_id }}>{z.einheit}</L></td>
-              <td>{z.posten} {z.anteilig && <span className="tag" title="Ein- oder Auszug in diesem Monat">anteilig {z.tage}/{z.tage_monat} Tage</span>}</td>
+              <td>{z.posten} {z.anker > 1 && <span className="tag" title="Mietmonat ab dem Einzugstag">{datum(z.periode_von)} – {datum(z.periode_bis)}</span>}</td>
               <td className="num">{betrag(z.betrag_ct)}</td>
               <td>{z.abweichend ? <span className="negativ" title="Der gebuchte Betrag passt nicht zum Vertrag">gebucht {euro(z.vorhanden_ct)}</span> : z.vorhanden ? 'bereits gebucht' : 'neu'}</td>
             </tr>

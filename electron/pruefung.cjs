@@ -148,7 +148,7 @@ module.exports = function pruefung({ all, get, PERSON_NAME, bh, aw, einstellunge
             const bis = [(v.ende || '9999-12').slice(0, 7), t.slice(0, 7)].sort()[0];
             if (ab > bis) continue;
             const vorhanden = new Set(all(`SELECT DISTINCT monat FROM buchungen WHERE soll_id = ? AND art = 'soll' AND monat IS NOT NULL`, k.id).map((x) => x.monat));
-            const fehlend = monatsliste(ab, bis).filter((m) => !vorhanden.has(m) && bh.teilmonat(v, m));
+            const fehlend = monatsliste(ab, bis).filter((m) => !vorhanden.has(m) && bh.periode(v, m));
             if (fehlend.length) add('Buchhaltung', `soll:${typ}:${v.id}:${fehlend.at(-1)}`, 'warnung',
               `${v.name} (${v.einheit}): Für ${fehlend.length > 3 ? `${fehlend.length} Monate (${monatDe(fehlend[0])} bis ${monatDe(fehlend.at(-1))})` : fehlend.map(monatDe).join(', ')} fehlen die monatlichen Forderungen.`,
               { links: [{ text: v.name, ziel: { vertrag: v.id, typ } }], ziel: { seite: 'soll', objektId: o.id, modus: typ }, hilfe: 'Unter „Sollstellung“ erzeugen – sonst fehlen diese Monate in offenen Posten und Abrechnungen.' });
@@ -159,6 +159,28 @@ module.exports = function pruefung({ all, get, PERSON_NAME, bh, aw, einstellunge
                 + `(z. B. ${monatDe(abw[0].monat)}: gebucht ${euro(abw[0].alt_ct)}, laut Vertrag ${euro(abw[0].neu_ct)}).`,
               { links: [{ text: v.name, ziel: { vertrag: v.id, typ } }], ziel: { vertrag: v.id, typ }, hilfe: 'Auf der Vertragsseite mit „Forderungen prüfen“ neu buchen – oder Vertrag und Mietanpassungen prüfen.' });
           }
+        }
+      });
+      pruefe(() => {
+        // A month charged twice on a change in mid-month (both contracts pay it in full).
+        for (const typ of ['miete', 'weg']) {
+          const vs = all(`SELECT v.*, e.bezeichnung AS einheit, ${PERSON_NAME} AS name FROM ${vertragTab(typ)} v JOIN einheiten e ON e.id = v.einheit_id
+            JOIN personen p ON p.id = v.person_id WHERE e.objekt_id = ? ORDER BY v.einheit_id, v.beginn`, o.id);
+          for (let i = 1; i < vs.length; i++) {
+            const [alt, neu] = [vs[i - 1], vs[i]];
+            if (alt.einheit_id !== neu.einheit_id || !alt.ende) continue;
+            const d = bh.doppelteMiete(alt, neu);
+            if (d) add('Buchhaltung', `doppelmonat:${typ}:${alt.id}:${neu.id}`, 'warnung',
+              `${neu.einheit}: ${datumDe(d.von)} bis ${datumDe(d.bis)} wird doppelt gefordert – von ${alt.name} (Auszug ${datumDe(alt.ende)}, voller Monat) und von ${neu.name} (Einzug ${datumDe(neu.beginn)}).`,
+              { links: [{ text: alt.name, ziel: { vertrag: alt.id, typ } }, { text: neu.name, ziel: { vertrag: neu.id, typ } }], ziel: { vertrag: neu.id, typ },
+                hilfe: typ === 'weg' ? 'Beim neuen Eigentümer „erst ab dem Folgemonat“ wählen – oder es ist so vereinbart.' : 'Beim neuen Mieter „erst ab dem Folgemonat“ wählen – oder es ist so vereinbart.' });
+          }
+        }
+        // A flat fee for operating costs without an amount.
+        for (const v of all(`SELECT m.*, e.bezeichnung AS einheit, ${PERSON_NAME} AS name FROM mietverhaeltnisse m JOIN einheiten e ON e.id = m.einheit_id
+            JOIN personen p ON p.id = m.person_id WHERE e.objekt_id = ? AND m.bk_art = 'pauschale' AND (m.ende IS NULL OR m.ende = '' OR m.ende >= ?)`, o.id, t)) {
+          if (!(bh.betraege('miete', v.id, t).bk_vz_ct > 0)) add('Buchhaltung', `pauschale0:${v.id}`, 'warnung', `${v.name} (${v.einheit}): Betriebskosten als Pauschale vereinbart, aber ohne Betrag.`,
+            { links: [{ text: v.name, ziel: { vertrag: v.id, typ: 'miete' } }], ziel: { vertrag: v.id, typ: 'miete' }, hilfe: 'Im Vertrag den Betrag der Pauschale eintragen – oder „in der Kaltmiete enthalten“ wählen.' });
         }
       });
       pruefe(() => {

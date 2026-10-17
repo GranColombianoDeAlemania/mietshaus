@@ -4,32 +4,44 @@ import { FormDialog, type Field } from '../Form';
 import { useLoad } from '../useLoad';
 import { L, useNavi } from '../navi';
 import { Leer, SortTh, sortiere, type Sortierung } from '../ui';
-import { SaldoChip, TeilmonatHinweis } from './Akten';
+import { SaldoChip, MietbeginnHinweis } from './Akten';
 import { sollNachfrage } from './Sollstellung';
 import { QmMini, ZahlungMini } from './Kennzahlen';
 
 const FAELLIG: [number, string][] = [[0, '3. Werktag (gesetzlich, § 556b BGB)'], ...Array.from({ length: 28 }, (_, i) => [i + 1, `am ${i + 1}. des Monats`] as [number, string])];
 
-// One screen for both contract kinds: tenancies (Miete) and ownership (WEG).
+export const BK_ART: [string, string][] = [['vorauszahlung', 'Vorauszahlung (wird jährlich abgerechnet)'], ['pauschale', 'Pauschale (keine Abrechnung)'],
+  ['inklusiv', 'in der Kaltmiete enthalten (Bruttokaltmiete)']];
+const mitteImMonat = (f: Row) => /^\d{4}-\d{2}-\d{2}$/.test(f.beginn ?? '') && !String(f.beginn).endsWith('-01');
+
+// One screen for both contract kinds: tenancies (Miete) and ownership (WEG). Rent and house money are monthly
+// amounts: a month of moving in or out is charged in full, never by day. The fields depend on what is entered.
 const ART = {
   miete: {
     table: 'mietverhaeltnisse',
     titel: 'Mieter',
     neu: 'Neues Mietverhältnis',
     person: 'Mieter',
-    felder: [
-      { key: 'kaltmiete_ct', label: 'Kaltmiete', type: 'money', section: 'Monatliche Zahlungen bei Vertragsbeginn (spätere Änderungen unter „Mietanpassungen“)' },
-      { key: 'bk_vz_ct', label: 'Betriebskosten-Vorauszahlung', type: 'money' },
+    felder: (f: Row): Field[] => [
+      { key: 'kaltmiete_ct', label: f.bk_art === 'inklusiv' ? 'Kaltmiete inkl. Betriebskosten' : 'Kaltmiete', type: 'money',
+        section: 'Monatliche Zahlungen bei Vertragsbeginn (spätere Änderungen unter „Mietanpassungen“)' },
+      { key: 'bk_art', label: 'Betriebskosten', type: 'select', required: true, options: BK_ART },
+      ...(f.bk_art === 'inklusiv' ? [] : [{ key: 'bk_vz_ct', label: f.bk_art === 'pauschale' ? 'Betriebskostenpauschale' : 'Betriebskosten-Vorauszahlung', type: 'money' } as Field]),
       { key: 'hk_vz_ct', label: 'Heizkosten-Vorauszahlung', type: 'money' },
       { key: 'sonstiges_ct', label: 'Sonstiges (z. B. Stellplatz)', type: 'money' },
       { key: 'faelligkeitstag', label: 'Fällig', type: 'select', required: true, options: FAELLIG },
       { key: 'ust_satz', label: 'Umsatzsteuer (nur Gewerbe mit Option)', type: 'select', required: true, options: [[0, 'keine'], [19, 'zzgl. 19 %'], [7, 'zzgl. 7 %']] },
-      { key: 'teilmonat_beginn', label: 'Einzugsmonat berechnen', type: 'select', required: true, section: 'Ein- und Auszug mitten im Monat',
-        options: [['anteilig', 'tagegenau anteilig'], ['voll', 'voller Monat'], ['folgemonat', 'erst ab dem Folgemonat']] },
-      { key: 'teilmonat_ende', label: 'Auszugsmonat berechnen', type: 'select', required: true, options: [['anteilig', 'tagegenau anteilig'], ['voll', 'voller Monat']] },
+      ...(mitteImMonat(f) ? [
+        { key: 'mietmonat_ab', label: 'Mietmonat läuft', type: 'select', required: true, section: 'Einzug mitten im Monat – die Miete ist immer ein voller Monatsbetrag',
+          options: [['erster', 'vom 1. bis zum Monatsende'], ['einzug', `vom ${Number(String(f.beginn).slice(8, 10))}. bis zum ${Number(String(f.beginn).slice(8, 10)) - 1}. des Folgemonats`]] } as Field,
+        ...(f.mietmonat_ab === 'einzug' ? [] : [{ key: 'teilmonat_beginn', label: 'Einzugsmonat', type: 'select', required: true,
+          options: [['voll', 'voller Monat'], ['folgemonat', 'erst ab dem Folgemonat']] } as Field]),
+      ] : []),
+      { key: 'bk_abrechnung', label: 'Betriebskostenabrechnung', type: 'select', required: true, section: mitteImMonat(f) ? undefined : 'Betriebskostenabrechnung',
+        options: [['mietmonate', 'nach Mietmonaten (Standard)'], ['wohntage', 'nach Wohntagen (ab Einzugstag, bis Auszugstag)']] },
       { key: 'kaution_ct', label: 'Kaution', type: 'money', section: 'Weitere Angaben' },
       { key: 'personen_anzahl', label: 'Personen im Haushalt', type: 'number' },
-    ] as Field[],
+    ],
     summe: (v: Row) => v.akt_kaltmiete_ct + v.akt_bk_vz_ct + v.akt_hk_vz_ct + v.akt_sonstiges_ct + (v.akt_ust_ct ?? 0),
   },
   weg: {
@@ -37,22 +49,21 @@ const ART = {
     titel: 'Eigentümer',
     neu: 'Neuer Eigentümer',
     person: 'Eigentümer',
-    felder: [
+    felder: (f: Row): Field[] => [
       { key: 'hausgeld_ct', label: 'Hausgeld', type: 'money', section: 'Monatliche Zahlungen bei Beginn (spätere Änderungen über den Wirtschaftsplan)' },
       { key: 'ruecklage_ct', label: 'davon Erhaltungsrücklage', type: 'money' },
       { key: 'faelligkeitstag', label: 'Fällig', type: 'select', required: true, options: FAELLIG },
-      { key: 'teilmonat_beginn', label: 'Monat des Eigentumsübergangs', type: 'select', required: true, section: 'Wechsel mitten im Monat',
-        options: [['anteilig', 'tagegenau anteilig'], ['voll', 'voller Monat'], ['folgemonat', 'erst ab dem Folgemonat']] },
-      { key: 'teilmonat_ende', label: 'Letzter Monat', type: 'select', required: true, options: [['anteilig', 'tagegenau anteilig'], ['voll', 'voller Monat']] },
+      ...(mitteImMonat(f) ? [{ key: 'teilmonat_beginn', label: 'Monat des Eigentumsübergangs', type: 'select', required: true,
+        section: 'Wechsel mitten im Monat – das Hausgeld ist immer ein voller Monatsbetrag', options: [['voll', 'voller Monat'], ['folgemonat', 'erst ab dem Folgemonat']] } as Field] : []),
       { key: 'selbstnutzer', label: 'Bewohnt die Einheit selbst', type: 'check', section: 'Weitere Angaben' },
-    ] as Field[],
+    ],
     // The reserve share is part of the house money, not added on top.
     summe: (v: Row) => v.akt_hausgeld_ct,
   },
 } as const;
 
-// Contract form fields, shared by this list and the contract page.
-export function vertragFelder(modus: Modus, einheiten: Row[], personen: Row[]): Field[] {
+// Contract form fields, shared by this list and the contract page; `f` are the values as currently entered.
+export function vertragFelder(modus: Modus, einheiten: Row[], personen: Row[], f: Row = {}): Field[] {
   const a = ART[modus === 'weg' ? 'weg' : 'miete'];
   const personOpts: [number, string][] = personen.map((p) => [p.id, personName(p)]);
   return [
@@ -61,7 +72,7 @@ export function vertragFelder(modus: Modus, einheiten: Row[], personen: Row[]): 
     { key: 'person2_id', label: `Weiterer ${a.person}`, type: 'select', options: personOpts },
     { key: 'beginn', label: 'Beginn', type: 'date', required: true },
     { key: 'ende', label: 'Ende', type: 'date' },
-    ...a.felder,
+    ...a.felder(f),
     { key: 'lastschrift', label: 'Zahlt per SEPA-Lastschrift', type: 'check', section: 'Zahlungsweg' },
     { key: 'sepa_mandat', label: 'Mandatsreferenz' },
     { key: 'notiz', label: 'Notiz', type: 'textarea' },
@@ -89,7 +100,8 @@ export function Vertraege(props: { modus: Modus; objekt: Row }) {
 
   const sichtbar = sortiere(rows?.filter((v) => !nurAktuell || v.aktuell || v.zukuenftig), sort, (v, k) => (k === 'monatlich' ? a.summe(v) : k === 'saldo' ? v.ueberfaellig_ct : v[k]));
   const gesamt = sichtbar.filter((v) => v.aktuell).reduce((s, v) => s + a.summe(v), 0);
-  const neu = () => setEdit({ beginn: ersterNaechsterMonat(), faelligkeitstag: typ === 'weg' ? 1 : 0, personen_anzahl: 1, teilmonat_beginn: 'anteilig', teilmonat_ende: 'anteilig', ust_satz: 0 });
+  const neu = () => setEdit({ beginn: ersterNaechsterMonat(), faelligkeitstag: typ === 'weg' ? 1 : 0, personen_anzahl: 1, teilmonat_beginn: 'voll', ust_satz: 0,
+    ...(typ === 'miete' ? { mietmonat_ab: 'erster', bk_abrechnung: 'mietmonate', bk_art: 'vorauszahlung' } : {}) });
 
   return (
     <section>
@@ -135,7 +147,10 @@ export function Vertraege(props: { modus: Modus; objekt: Row }) {
                 <td>{datum(v.beginn)}</td>
                 <td>{datum(v.ende)}</td>
                 {typ === 'miete' ? (
-                  <><td className="num">{euro(v.akt_kaltmiete_ct)}</td><td className="num">{euro(v.akt_bk_vz_ct)}</td><td className="num">{euro(v.akt_hk_vz_ct)}</td></>
+                  <><td className="num">{euro(v.akt_kaltmiete_ct)}</td>
+                    <td className="num">{v.bk_art === 'inklusiv' ? <span className="klein hinweis" title="Betriebskosten in der Kaltmiete enthalten">inkl.</span>
+                      : <>{euro(v.akt_bk_vz_ct)}{v.bk_art === 'pauschale' && <div className="klein hinweis">Pauschale</div>}</>}</td>
+                    <td className="num">{euro(v.akt_hk_vz_ct)}</td></>
                 ) : (
                   <><td className="num">{euro(v.akt_hausgeld_ct)}</td><td className="num">{euro(v.akt_ruecklage_ct)}</td></>
                 )}
@@ -159,9 +174,9 @@ export function Vertraege(props: { modus: Modus; objekt: Row }) {
       {edit && (
         <FormDialog
           title={edit.id ? `${a.person} bearbeiten` : a.neu}
-          fields={vertragFelder(props.modus, einheiten ?? [], personen ?? [])}
+          fields={(f) => vertragFelder(props.modus, einheiten ?? [], personen ?? [], f)}
           row={edit}
-          extra={(f) => <TeilmonatHinweis f={f} modus={typ} />}
+          extra={(f, setze) => <MietbeginnHinweis f={f} modus={typ} setze={setze} />}
           onSave={async (r) => {
             if (r.ende && r.ende < r.beginn) throw new Error('Das Ende liegt vor dem Beginn.');
             const id = await call('save', a.table, r);

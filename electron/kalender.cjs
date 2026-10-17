@@ -54,9 +54,9 @@ function istWerktag(datum, land, { samstag = true } = {}) {
   return !istFeiertag(datum, land);
 }
 
-// n-th working day of a month (YYYY-MM).
-function werktagImMonat(monat, n, land, opt) {
-  let d = new Date(monat + '-01T00:00:00Z');
+// n-th working day counted from a date (YYYY-MM-DD, the date itself included).
+function werktagAb(datum, n, land, opt) {
+  let d = new Date(datum + 'T00:00:00Z');
   let zaehler = 0;
   for (;;) {
     if (istWerktag(iso(d), land, opt)) zaehler++;
@@ -65,8 +65,14 @@ function werktagImMonat(monat, n, land, opt) {
   }
 }
 
-// Rent due date by statute (§ 556b Abs. 1 BGB): at the latest on the 3rd working day, Saturdays not counted.
-const mieteFaellig = (monat, land) => werktagImMonat(monat, 3, land, { samstag: false });
+// n-th working day of a month (YYYY-MM).
+const werktagImMonat = (monat, n, land, opt) => werktagAb(`${monat}-01`, n, land, opt);
+
+// Rent due date by statute (§ 556b Abs. 1 BGB): at the latest on the 3rd working day of the period the rent is
+// measured by, Saturdays not counted. mieteFaellig: calendar month (YYYY-MM); mieteFaelligAb: a rent month that
+// starts on another day (e.g. the 15th).
+const mieteFaelligAb = (beginn, land) => werktagAb(beginn, 3, land, { samstag: false });
+const mieteFaellig = (monat, land) => mieteFaelligAb(`${monat}-01`, land);
 
 // Next working day on or after a date (Saturday counts as a working day except as the last day of a period, § 193 BGB).
 function naechsterWerktag(datum, land) {
@@ -101,4 +107,4 @@ function ordentlicheKuendigung({ zugang, durch = 'mieter', ueberlassung = null, 
   return { zum: ende, karenz_bis: karenz, rechtzeitig, frist_monate: monate, jahre };
 }
 
-module.exports = { ostern, feiertage, istFeiertag, istWerktag, werktagImMonat, mieteFaellig, naechsterWerktag, ordentlicheKuendigung, LAENDER };
+module.exports = { ostern, feiertage, istFeiertag, istWerktag, werktagAb, werktagImMonat, mieteFaellig, mieteFaelligAb, naechsterWerktag, ordentlicheKuendigung, LAENDER };

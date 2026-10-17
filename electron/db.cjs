@@ -699,6 +699,22 @@ const MIGRATIONS = [
   -- Deductible share of loan interest in percent when it differs from the rented share of the area.
   ALTER TABLE steuerangaben ADD COLUMN zins_anteil REAL;
   `,
+  `
+  -- Rent and house money are monthly amounts: a month of moving in or out is charged in full (or, moving in, from the
+  -- next month on), never by day. The months booked by day before are rebooked once by the app (umstellungMonatlich).
+  UPDATE mietverhaeltnisse SET teilmonat_beginn = 'voll' WHERE teilmonat_beginn NOT IN ('voll', 'folgemonat');
+  UPDATE mietverhaeltnisse SET teilmonat_ende = 'voll';
+  UPDATE eigentum SET teilmonat_beginn = 'voll' WHERE teilmonat_beginn NOT IN ('voll', 'folgemonat');
+  UPDATE eigentum SET teilmonat_ende = 'voll';
+  -- Rent month: the calendar month ('erster') or from the day of moving in to the day before it next month ('einzug').
+  ALTER TABLE mietverhaeltnisse ADD COLUMN mietmonat_ab TEXT NOT NULL DEFAULT 'erster';
+  -- Service-charge statement of the tenancy: by the rent months it is charged for ('mietmonate'), or by the days
+  -- from moving in to moving out ('wohntage').
+  ALTER TABLE mietverhaeltnisse ADD COLUMN bk_abrechnung TEXT NOT NULL DEFAULT 'mietmonate';
+  -- Operating costs: advance payment settled every year ('vorauszahlung'), flat fee without statement ('pauschale')
+  -- or included in the rent ('inklusiv').
+  ALTER TABLE mietverhaeltnisse ADD COLUMN bk_art TEXT NOT NULL DEFAULT 'vorauszahlung';
+  `,
 ];
 
 // Columns the renderer may write, per table. Everything else is rejected.
@@ -712,7 +728,7 @@ const TABLES = {
     'mobil', 'email', 'iban', 'bic', 'kontoinhaber', 'geburtsdatum', 'notiz'],
   mietverhaeltnisse: ['einheit_id', 'person_id', 'person2_id', 'beginn', 'ende', 'kaltmiete_ct', 'bk_vz_ct',
     'hk_vz_ct', 'sonstiges_ct', 'kaution_ct', 'personen_anzahl', 'faelligkeitstag', 'lastschrift', 'sepa_mandat', 'notiz',
-    'teilmonat_beginn', 'teilmonat_ende', 'ust_satz'],
+    'teilmonat_beginn', 'teilmonat_ende', 'ust_satz', 'mietmonat_ab', 'bk_abrechnung', 'bk_art'],
   eigentum: ['einheit_id', 'person_id', 'person2_id', 'beginn', 'ende', 'hausgeld_ct', 'ruecklage_ct',
     'selbstnutzer', 'faelligkeitstag', 'lastschrift', 'sepa_mandat', 'notiz', 'teilmonat_beginn', 'teilmonat_ende'],
   umlageschluessel: ['objekt_id', 'bezeichnung', 'einheit', 'typ', 'zaehler_art'],
@@ -832,9 +848,26 @@ function api(db) {
     }
   };
 
-  function save(table, row) {
+  // Contract settings: a month of moving in or out is never charged by day ('anteilig' from older versions or other
+  // callers becomes the full month); a rent including operating costs has no separate operating cost amount.
+  function vertragNormalisieren(table, row) {
+    if (table !== 'mietverhaeltnisse' && table !== 'eigentum') return row;
+    const r = { ...row };
+    if (!r.id || 'teilmonat_beginn' in r) r.teilmonat_beginn = r.teilmonat_beginn === 'folgemonat' ? 'folgemonat' : 'voll';
+    if (!r.id || 'teilmonat_ende' in r) r.teilmonat_ende = 'voll';
+    if (table === 'mietverhaeltnisse') {
+      if ('mietmonat_ab' in r && r.mietmonat_ab !== 'einzug') r.mietmonat_ab = 'erster';
+      if ('bk_abrechnung' in r && r.bk_abrechnung !== 'wohntage') r.bk_abrechnung = 'mietmonate';
+      if ('bk_art' in r && !['pauschale', 'inklusiv'].includes(r.bk_art)) r.bk_art = 'vorauszahlung';
+      if (r.bk_art === 'inklusiv') r.bk_vz_ct = 0;
+    }
+    return r;
+  }
+
+  function save(table, row0) {
     const cols = TABLES[table];
     if (!cols) throw new Error(`Unbekannte Tabelle: ${table}`);
+    const row = vertragNormalisieren(table, row0);
     const keys = cols.filter((c) => c in row);
     const vals = keys.map((k) => (row[k] === '' || row[k] === undefined ? null : row[k]));
     if (row.id) {
@@ -868,6 +901,7 @@ function api(db) {
 
   const bh = buchhaltung({ db, all, get, tx, save, aktuell, PERSON_NAME });
   bh.syncKonten();
+  bh.umstellungMonatlich();
   const ab = abrechnung({ db, all, get, tx, PERSON_NAME, bh });
   const vw = verwaltung({ db, all, get, tx, PERSON_NAME, bh });
   const ar = archiv({ db, all, get, tx, PERSON_NAME });
@@ -1085,6 +1119,13 @@ function api(db) {
     zusage: (interessentId, beginn) => {
       const r = mw.zusage(interessentId, beginn);
       bh.syncKonten();
+      // Moving in during a month the previous tenant pays in full: the new tenancy is charged from the next month.
+      const v = get('SELECT * FROM mietverhaeltnisse WHERE id = ?', r.vertrag_id);
+      const info = bh.mietbeginnInfo('miete', v);
+      if (info?.doppelt?.folgemonat) {
+        save('mietverhaeltnisse', { id: v.id, teilmonat_beginn: 'folgemonat' });
+        r.folgemonat = { name: info.doppelt.name, ende: info.doppelt.ende };
+      }
       sollNachziehen({ typ: 'miete', id: r.vertrag_id });
       return r;
     },

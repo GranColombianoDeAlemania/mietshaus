@@ -56,7 +56,7 @@ export function WegAbrechnung(props: { objekt: Row }) {
         </div>
         <p className="hinweis klein">
           Alle Kosten des Zeitraums werden nach dem WEG-Schlüssel des Kontos (Standard: Miteigentumsanteile) auf die Eigentümer
-          verteilt, bei Eigentümerwechsel tagegenau. Ausgaben „aus Rücklage“ erscheinen nicht als Kosten, sondern in der Rücklagenentwicklung.
+          verteilt, bei Eigentümerwechsel nach den Monaten, für die jeder Hausgeld zahlt. Ausgaben „aus Rücklage“ erscheinen nicht als Kosten, sondern in der Rücklagenentwicklung.
           Ergebnis je Eigentümer ist die Abrechnungsspitze: Kostenanteil minus Hausgeld-Vorschüsse (ohne Rücklagenanteil).
         </p>
         <div className="buttons"><span className="spacer" /><button className="primary" onClick={berechnen}>Berechnen</button></div>

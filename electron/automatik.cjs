@@ -62,6 +62,18 @@ module.exports = function automatik({ db, all, get, tx, PERSON_NAME, bh, ab, vw,
     const fehler = get(`SELECT count(*) AS n FROM dokumente WHERE analyse LIKE 'fehler%'`).n;
     if (fehler) add({ schluessel: 'dok:fehler', stufe: 'gelb', kategorie: 'Dokumente', text: `${fehler} Dokument(e) konnten nicht gelesen werden.`, ziel: 'archiv' });
 
+    // Once after version 0.8: months that had been charged by day are now full months.
+    try {
+      const u = JSON.parse(e.umstellung_monatlich ?? 'null');
+      const umgebucht = (u?.monate ?? []).filter((x) => x.gebucht);
+      const gesperrt = (u?.monate ?? []).filter((x) => !x.gebucht);
+      const monatDe = (m) => `${m.slice(5, 7)}/${m.slice(0, 4)}`;
+      if (umgebucht.length) add({ schluessel: 'umstellung:monatlich', stufe: 'gelb', kategorie: 'Buchhaltung', ziel: 'soll',
+        text: `Miete und Hausgeld sind jetzt immer volle Monatsbeträge. Umgebucht: ${umgebucht.slice(0, 3).map((x) => `${x.name} ${monatDe(x.monat)} ${euro(x.alt_ct)} → ${euro(x.neu_ct)}`).join('; ')}`
+          + `${umgebucht.length > 3 ? ` und ${umgebucht.length - 3} weitere` : ''}.`
+          + (gesperrt.length ? ` ${gesperrt.length} Monat(e) in festgeschriebenen Zeiträumen oder von Hand storniert sind unverändert.` : '') });
+    } catch { /* no conversion recorded */ }
+
     for (const r of all(`SELECT d.id, d.titel, d.absender, d.betrag_ct, d.faellig, d.objekt_id, o.bezeichnung AS objekt FROM dokumente d
         LEFT JOIN objekte o ON o.id = d.objekt_id WHERE d.typ = 'Rechnung' AND d.buchung_id IS NULL AND d.faellig IS NOT NULL AND d.faellig <= ?
         -- The same invoice stored twice (e.g. PDF and photo) is reported once.

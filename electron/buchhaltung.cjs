@@ -14,6 +14,7 @@ const STANDARDKONTEN = [
   [60000, 'Miete (kalt)', 'einnahme', 'miete', 'miete'],
   [60010, 'Sonstige Mieteinnahmen (Garage, Stellplatz)', 'einnahme', 'sonst', 'miete'],
   [60020, 'Betriebskosten-Vorauszahlungen', 'einnahme', 'bk', 'miete'],
+  [60025, 'Betriebskostenpauschalen', 'einnahme', 'bk_pauschale', 'miete', { seit: 3 }],
   [60030, 'Heizkosten-Vorauszahlungen', 'einnahme', 'hk', 'miete'],
   [60080, 'Kautionen', 'einnahme', 'kaution', 'miete'],
   [60090, 'Nebenkostenabrechnung Mieter', 'einnahme', 'nk_ergebnis', 'miete'],
@@ -58,8 +59,8 @@ const USTKONTEN = [
   [1771, 'Umsatzsteuer 7 %', 'steuer', 'ust7'],
   [1780, 'Umsatzsteuer: Zahlungen an / Erstattungen vom Finanzamt', 'steuer', 'ust_fa'],
 ];
-// Version of the standard chart; objects created earlier get the accounts added later (marker 'k2' in kontenplan).
-const KONTENPLAN_VERSION = 2;
+// Version of the standard chart; objects created earlier get the accounts added later (marker 'k3' in kontenplan).
+const KONTENPLAN_VERSION = 3;
 
 // Contract amounts and the income account category each one is charged to.
 const POSTEN = {
@@ -84,6 +85,12 @@ const monatsliste = (von, bis) => {
   return out;
 };
 const tageZwischen = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 86400000);
+const vorTag = (iso) => new Date(Date.parse(iso) - 864e5).toISOString().slice(0, 10);
+const monatPlus = (monat, n) => new Date(Date.UTC(Number(monat.slice(0, 4)), Number(monat.slice(5, 7)) - 1 + n, 1)).toISOString().slice(0, 7);
+// Day of the month a contract's rent month starts on: 1, or the day of moving in for tenancies that run from it.
+const ankertag = (v) => (v?.mietmonat_ab === 'einzug' && v.beginn && Number(v.beginn.slice(8, 10)) > 1 ? Number(v.beginn.slice(8, 10)) : 1);
+// Start of the rent month in calendar month `monat` (the last day of a shorter month for days 29 to 31).
+const periodeBeginn = (monat, anker) => `${monat}-${pad(Math.min(anker, tageImMonat(monat)))}`;
 
 // SQL condition: the unit `e` is used by the landlord himself on date `d` (a column, parameter or literal).
 const selbstSql = (e, d) => `EXISTS (SELECT 1 FROM selbstnutzung sn WHERE sn.einheit_id = ${e}.id AND sn.beginn <= ${d}
@@ -105,19 +112,26 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
       const plan = o.kontenplan.split(',').filter(Boolean);
       const seiten = o.art === 'gemischt' ? ['miete', 'weg'] : [o.art];
       const fehlend = seiten.filter((s) => !plan.includes(s));
-      // Accounts added to the standard chart later reach objects whose chart is older.
+      // Accounts added to the standard chart later reach objects whose chart is older (only those newer than its version).
       const nachtrag = plan.length > 0 && !plan.includes(`k${KONTENPLAN_VERSION}`);
+      const planVersion = Number(plan.find((x) => /^k\d+$/.test(x))?.slice(1) ?? 1);
       if (fehlend.length || nachtrag) {
         const keys = Object.fromEntries(all('SELECT typ, id FROM umlageschluessel WHERE objekt_id = ? ORDER BY id DESC', o.id).map((k) => [k.typ, k.id]));
         const ins = db.prepare(`INSERT OR IGNORE INTO konten (objekt_id, nr, bezeichnung, klasse, kategorie, umlagefaehig,
           heizkosten, schluessel_id, weg_schluessel_id, aus_ruecklage, p35a) VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
         for (const [nr, bez, klasse, kat, side, x = {}] of STANDARDKONTEN) {
           const neuSeite = fehlend.includes(side) || (side === 'beide' && fehlend.length === seiten.length);
-          const neuVersion = nachtrag && (x.seit ?? 1) > 1 && (side === 'beide' || plan.includes(side));
+          const neuVersion = nachtrag && (x.seit ?? 1) > planVersion && (side === 'beide' || plan.includes(side));
           if (!neuSeite && !neuVersion) continue;
           const sKey = keys[x.schluessel] ?? keys.flaeche ?? null;
           const wKey = (x.schluessel === 'einheiten' ? keys.einheiten : null) ?? keys.mea ?? keys.flaeche ?? null;
-          ins.run(o.id, nr, bez, klasse, kat, x.umlagefaehig ?? 0, x.heizkosten ?? 0,
+          // An account added later takes the next free number if the user already uses its number for something else.
+          let n = nr;
+          if (neuVersion && !neuSeite) {
+            if (get('SELECT 1 FROM konten WHERE objekt_id = ? AND klasse = ? AND kategorie = ?', o.id, klasse, kat)) continue;
+            while (get('SELECT 1 FROM konten WHERE objekt_id = ? AND nr = ?', o.id, n)) n++;
+          }
+          ins.run(o.id, n, bez, klasse, kat, x.umlagefaehig ?? 0, x.heizkosten ?? 0,
             klasse === 'kosten' ? sKey : null, klasse === 'kosten' ? wKey : null, x.aus_ruecklage ?? 0, x.p35a ?? null);
         }
         if (nachtrag) db.prepare(`UPDATE konten SET bezeichnung = 'Antenne/Breitband: Betriebsstrom & Wartung'
@@ -173,6 +187,8 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
         if (a[k] != null) r[k] = a[k];
     }
     if (typ === 'weg') r.hausgeld_netto_ct = Math.max(0, (r.hausgeld_ct ?? 0) - (r.ruecklage_ct ?? 0));
+    // Operating costs included in the rent: there is no separate amount (later changes cannot add one either).
+    if (typ === 'miete' && v?.bk_art === 'inklusiv') r.bk_vz_ct = 0;
     return r;
   }
 
@@ -248,9 +264,11 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
       zahlungen -= bezahlt;
       if (p.soll_ct > bezahlt) {
         const [y, m] = (p.monat ?? '').split('-');
+        // A rent month from another day than the 1st keeps its days: "Monatssoll 10/2026 (15.10.–14.11.)".
+        const tage = p.monat ? p.teile[0].text.match(/\s\d{2}\/\d{4}( \(\d{2}\.\d{2}\.–\d{2}\.\d{2}\.\))/)?.[1] ?? '' : '';
         offen.push({
           id: p.id, datum: p.datum, monat: p.monat,
-          text: p.monat ? `${p.teile.length > 1 ? 'Monatssoll' : p.teile[0].text.replace(/\s\d{2}\/\d{4}.*$/, '')} ${m}/${y}` : p.teile[0].text,
+          text: p.monat ? `${p.teile.length > 1 ? 'Monatssoll' : p.teile[0].text.replace(/\s\d{2}\/\d{4}.*$/, '')} ${m}/${y}${tage}` : p.teile[0].text,
           teile: p.teile, soll_ct: p.soll_ct, bezahlt_ct: bezahlt, offen_ct: p.soll_ct - bezahlt,
           status: bezahlt > 0 ? 'teilweise bezahlt' : 'nicht bezahlt',
           verzug: Math.max(0, tageZwischen(p.datum, stichtag)),
@@ -261,41 +279,101 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
     return { offen, guthaben_ct: guthaben, summe_ct: offen.reduce((s, o) => s + o.offen_ct, 0) - guthaben };
   }
 
-  // Which part of a month a contract is charged for. The month of moving in or out is charged by day unless the
-  // contract says "full month" (or, moving in, "from the next month"). The first month is never due before the start.
-  function teilmonat(v, monat) {
-    const tage = tageImMonat(monat);
-    const erster = `${monat}-01`, letzter = `${monat}-${pad(tage)}`;
-    if (v.beginn > letzter || (v.ende && v.ende < erster)) return null;
-    const beginntHier = v.beginn > erster;
-    const endetHier = !!v.ende && v.ende < letzter;
+  // Rent and house money are monthly amounts, never shares by day. The rent month is the calendar month, or – for a
+  // tenancy that says so – runs from the day of moving in (e.g. the 15th) to the day before it in the next month.
+  // A month in which a contract starts or ends is charged in full; moving in during a calendar month, the contract
+  // may say "from the next month" instead. The first charge is never due before the start.
+  // periode(v, monat): the rent month starting in calendar month `monat` (YYYY-MM) if the contract is charged for it.
+  function periode(v, monat) {
+    const anker = ankertag(v);
+    const von = periodeBeginn(monat, anker);
+    const bis = vorTag(periodeBeginn(monatPlus(monat, 1), anker));
+    if (!v.beginn || v.beginn > bis || (v.ende && v.ende < von)) return null;
+    const beginntHier = v.beginn > von;
     if (beginntHier && v.teilmonat_beginn === 'folgemonat') return null;
-    const ab = beginntHier && v.teilmonat_beginn !== 'voll' ? v.beginn : erster;
-    const bis = endetHier && v.teilmonat_ende !== 'voll' ? v.ende : letzter;
-    const tageAnteil = tageZwischen(ab, bis) + 1;
-    // Due day 0 means the statutory rule: the 3rd working day of the month (§ 556b BGB, Saturdays not counted).
-    let datum = v.faelligkeitstag === 0 ? kalender.mieteFaellig(monat, land()) : `${monat}-${pad(Math.min(v.faelligkeitstag || 1, tage))}`;
-    if (beginntHier && datum < v.beginn) datum = v.beginn;
-    return { anteil: tageAnteil / tage, tage: tageAnteil, tage_monat: tage, datum, stichtag: beginntHier ? v.beginn : erster };
+    let datum = faelligAb(v.faelligkeitstag, von);
+    if (datum < v.beginn) datum = v.beginn;
+    return { monat, von, bis, anker, datum, stichtag: beginntHier ? v.beginn : von };
+  }
+  // The rent month containing a date (whether charged or not).
+  function periodeAm(v, datum) {
+    const anker = ankertag(v);
+    const m = datum.slice(0, 7);
+    const monat = datum >= periodeBeginn(m, anker) ? m : monatPlus(m, -1);
+    return { monat, von: periodeBeginn(monat, anker), bis: vorTag(periodeBeginn(monatPlus(monat, 1), anker)) };
+  }
+  // First and last rent month a contract is charged for (null: never charged / no end).
+  function erstePeriode(v) {
+    const m = v.beginn.slice(0, 7);
+    return periode(v, m) ?? periode(v, monatPlus(m, 1));
+  }
+  const letztePeriode = (v) => (v.ende ? periode(v, periodeAm(v, v.ende).monat) : null);
+  // Days charged twice when a contract of a unit follows another in mid-month: the outgoing one pays its last month in
+  // full, and the incoming one is charged for the same days (e.g. out on the 15th, in on the 16th with a full month).
+  function doppelteMiete(alt, neu) {
+    const a = letztePeriode(alt), b = erstePeriode(neu);
+    if (!a || !b || b.von > a.bis || a.von > b.bis) return null;
+    return { monat: b.monat, von: b.von > a.von ? b.von : a.von, bis: a.bis < b.bis ? a.bis : b.bis };
+  }
+  // What the form shows for a contract being entered: its first rent month, when that is due, and whether the
+  // previous contract of the unit is charged for the same days.
+  function mietbeginnInfo(typ, v) {
+    if (!v?.beginn || !/^\d{4}-\d{2}-\d{2}$/.test(v.beginn)) return null;
+    const x = { ...v, faelligkeitstag: v.faelligkeitstag === '' || v.faelligkeitstag == null ? 0 : Number(v.faelligkeitstag), ende: v.ende || null };
+    const erste = erstePeriode(x);
+    let doppelt = null;
+    if (v.einheit_id) {
+      const alt = get(`SELECT v.*, ${PERSON_NAME} AS name FROM ${vertragTabelle(typ)} v JOIN personen p ON p.id = v.person_id
+        WHERE v.einheit_id = ? AND v.id <> ? AND v.beginn < ? AND v.ende IS NOT NULL AND v.ende <> '' ORDER BY v.ende DESC LIMIT 1`, Number(v.einheit_id), Number(v.id) || -1, v.beginn);
+      const d = alt && doppelteMiete(alt, x);
+      if (d) doppelt = { ...d, name: alt.name, ende: alt.ende, vertrag_id: alt.id, folgemonat: x.teilmonat_beginn !== 'folgemonat' && ankertag(x) === 1 && x.beginn > `${x.beginn.slice(0, 7)}-01` };
+    }
+    return { erste, doppelt };
+  }
+
+  // Calendar months whose 1st lies in [von, bis] (dates) and for which no tenancy of the unit is charged – the months
+  // a vacancy or the landlord's own use costs rent (a month a tenant pays for counts as let, even if he moved in or
+  // out during it).
+  function monateOhneMiete(einheitId, von, bis) {
+    const vs = all('SELECT * FROM mietverhaeltnisse WHERE einheit_id = ?', einheitId);
+    const out = [];
+    for (let m = von.endsWith('-01') ? von.slice(0, 7) : monatPlus(von.slice(0, 7), 1); `${m}-01` <= bis; m = monatPlus(m, 1)) {
+      const a = `${m}-01`, b = `${m}-${pad(tageImMonat(m))}`;
+      if (!vs.some((v) => [monatPlus(m, -1), m].some((k) => { const p = periode(v, k); return p && p.von <= b && p.bis >= a; }))) out.push(m);
+    }
+    return out;
+  }
+  // Due date of a rent month starting on `von`: day 0 is the statutory rule (3rd working day of the rent month,
+  // § 556b BGB, Saturdays not counted), otherwise the first such day of a month on or after the start.
+  function faelligAb(tag, von) {
+    if (tag === 0) return kalender.mieteFaelligAb(von, land());
+    const n = Number(tag) || 1;
+    const amTag = (monat) => `${monat}-${pad(Math.min(n, tageImMonat(monat)))}`;
+    const d = amTag(von.slice(0, 7));
+    return d >= von ? d : amTag(monatPlus(von.slice(0, 7), 1));
   }
 
   function sollZeile({ monat, datum, konto, ertrag, v, typ, posten, betrag_ct, t }) {
     const vorhanden = get(`SELECT count(*) AS n, coalesce(sum(betrag_ct), 0) AS s FROM buchungen WHERE art = 'soll' AND soll_id = ? AND haben_id = ? AND monat = ?`,
       konto.id, ertrag.id, monat);
     return { monat, datum, konto_id: konto.id, name: v.name, einheit: v.einheit, typ, vertrag_id: v.id, einheit_id: v.einheit_id, person_id: v.person_id,
-      posten, betrag_ct, ertrag_id: ertrag.id, vorhanden: vorhanden.n > 0, vorhanden_ct: vorhanden.s, anteilig: t.anteil < 1, tage: t.tage, tage_monat: t.tage_monat };
+      posten, betrag_ct, ertrag_id: ertrag.id, vorhanden: vorhanden.n > 0, vorhanden_ct: vorhanden.s, periode_von: t.von, periode_bis: t.bis, anker: t.anker };
   }
 
   // Charge lines of one contract for one month; none when the contract does not run (or is not charged) that month.
   function sollZeilenVertrag(typ, v, monat) {
     const konto = kontoVon(typ, v.id);
-    const t = konto && teilmonat(v, monat);
+    const t = konto && periode(v, monat);
     if (!t) return [];
     const b = betraege(typ, v.id, t.stichtag);
     const zeilen = [];
     let netto = 0;
-    for (const [feld, kat, label] of POSTEN[typ]) {
-      const betrag = Math.round((b[feld] ?? 0) * t.anteil);
+    for (const [feld, kat0, label0] of POSTEN[typ]) {
+      // Operating costs as a flat fee go to their own income account (no statement); included in the rent: no charge.
+      const bk = typ === 'miete' && feld === 'bk_vz_ct';
+      if (bk && v.bk_art === 'inklusiv') continue;
+      const [kat, label] = bk && v.bk_art === 'pauschale' ? ['bk_pauschale', 'BK-Pauschale'] : [kat0, label0];
+      const betrag = b[feld] ?? 0;
       if (betrag <= 0) continue;
       const ertrag = kontoKat(konto.objekt_id, kat);
       if (!ertrag) continue;
@@ -314,10 +392,15 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
 
   const gesperrtBis = () => get(`SELECT wert FROM einstellungen WHERE schluessel = 'festgeschrieben_bis'`)?.wert ?? '0000-00-00';
   const summe = (xs) => xs.reduce((s, x) => s + x.betrag_ct, 0);
-  function sollEinfuegen(objektId, z) {
+  // Text of a charge: "Miete 10/2026"; a rent month from another day names its days: "Miete 10/2026 (15.10.–14.11.)".
+  const sollText = (z) => {
     const [y, m] = z.monat.split('-');
+    const kurz = (d) => `${d.slice(8, 10)}.${d.slice(5, 7)}.`;
+    return `${z.posten} ${m}/${y}${z.anker > 1 ? ` (${kurz(z.periode_von)}–${kurz(z.periode_bis)})` : ''}`;
+  };
+  function sollEinfuegen(objektId, z) {
     db.prepare(`INSERT INTO buchungen (objekt_id, datum, text, betrag_ct, soll_id, haben_id, art, monat) VALUES (?, ?, ?, ?, ?, ?, 'soll', ?)`)
-      .run(objektId, z.datum, `${z.posten} ${m}/${y}${z.anteilig ? ` (anteilig ${z.tage}/${z.tage_monat} Tage)` : ''}`, z.betrag_ct, z.konto_id, z.ertrag_id, z.monat);
+      .run(objektId, z.datum, sollText(z), z.betrag_ct, z.konto_id, z.ertrag_id, z.monat);
   }
   const vertragMitNamen = (typ, id) => get(`SELECT v.*, e.bezeichnung AS einheit, e.objekt_id, ${PERSON_NAME} AS name FROM ${vertragTabelle(typ)} v
     JOIN einheiten e ON e.id = v.einheit_id JOIN personen p ON p.id = v.person_id WHERE v.id = ?`, id);
@@ -325,8 +408,9 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
   // Compares a contract's booked monthly charges (from month `von` on) with what the contract says: amounts and their
   // changes, start, end and part months. Returns the months whose charges differ and the months from the start up to
   // the current month without any charge. `anwenden` rebooks the differing months, except in a locked period or where
-  // a charge was cancelled by hand; `nachholen` charges the missing months.
-  function sollAbgleich(typ, vertragId, { von = '0000-00', anwenden = false, nachholen = false } = {}) {
+  // a charge was cancelled by hand; `nachholen` charges the missing months. `nurTeilmonate`: rebook only months that
+  // were charged by day (before version 0.8).
+  function sollAbgleich(typ, vertragId, { von = '0000-00', anwenden = false, nachholen = false, nurTeilmonate = false } = {}) {
     const v = vertragMitNamen(typ, vertragId);
     const konto = v && kontoVon(typ, v.id);
     if (!konto) return { aenderungen: [], fehlend: [] };
@@ -345,7 +429,7 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
       if (kennung(alt) === kennung(neu)) continue;
       aenderungen.push({ monat, alt_ct: summe(alt), neu_ct: summe(neu), alt_datum: alt[0].datum, neu_datum: neu[0]?.datum ?? null,
         gesperrt: alt.some((b) => b.datum <= sperre) || neu.some((z) => z.datum <= sperre), manuell: alt.some((b) => b.storniert),
-        ids: alt.map((b) => b.id), zeilen: neu });
+        teilmonat: alt.some((b) => /\(anteilig \d/.test(b.text ?? '')), ids: alt.map((b) => b.id), zeilen: neu });
     }
     const start = [v.beginn.slice(0, 7), von].sort().at(-1);
     const ende = [(v.ende || '9999-12').slice(0, 7), jetzt].sort()[0];
@@ -355,7 +439,7 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
       .map((f) => ({ ...f, datum: f.zeilen[0].datum, betrag_ct: summe(f.zeilen) }));
     if (anwenden || nachholen) {
       tx(() => {
-        if (anwenden) for (const a of aenderungen.filter((a) => !a.gesperrt && !a.manuell)) {
+        if (anwenden) for (const a of aenderungen.filter((a) => !a.gesperrt && !a.manuell && (!nurTeilmonate || a.teilmonat))) {
           db.prepare(`DELETE FROM buchungen WHERE id IN (${a.ids.map(() => '?').join(', ')})`).run(...a.ids);
           for (const z of a.zeilen) sollEinfuegen(v.objekt_id, z);
         }
@@ -376,6 +460,26 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
     const ab = e.auto_soll_ab ?? new Date().toISOString().slice(0, 7);
     if (!e.auto_soll_ab) db.prepare(`INSERT INTO einstellungen (schluessel, wert) VALUES ('auto_soll_ab', ?) ON CONFLICT (schluessel) DO NOTHING`).run(ab);
     return sollAbgleich(typ, vertragId, { von: ab, anwenden: true, nachholen: true });
+  }
+
+  // One-time conversion (version 0.8): months that used to be charged by day are rebooked as full months, except in a
+  // locked period or where a charge was cancelled by hand. What changed is kept for a note in the cockpit.
+  function umstellungMonatlich() {
+    if (get(`SELECT 1 FROM einstellungen WHERE schluessel = 'umstellung_monatlich'`)) return null;
+    const liste = [];
+    tx(() => {
+      for (const typ of ['miete', 'weg']) {
+        for (const { id } of all(`SELECT id FROM ${vertragTabelle(typ)} ORDER BY id`)) {
+          const r = sollAbgleich(typ, id, { anwenden: true, nurTeilmonate: true });
+          for (const a of r.aenderungen.filter((a) => a.teilmonat)) {
+            liste.push({ typ, vertrag_id: id, name: r.name, einheit: r.einheit, monat: a.monat, alt_ct: a.alt_ct, neu_ct: a.neu_ct, gebucht: !a.gesperrt && !a.manuell });
+          }
+        }
+      }
+      db.prepare(`INSERT INTO einstellungen (schluessel, wert) VALUES ('umstellung_monatlich', ?) ON CONFLICT (schluessel) DO NOTHING`)
+        .run(JSON.stringify({ datum: new Date().toISOString().slice(0, 10), monate: liste }));
+    });
+    return liste;
   }
 
   // The next charge of a contract after the reference date (for "next due" hints).
@@ -445,7 +549,14 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
   return {
     syncKonten,
     ustKontenAnlegen,
-    teilmonat,
+    periode,
+    periodeAm,
+    erstePeriode,
+    letztePeriode,
+    doppelteMiete,
+    mietbeginnInfo,
+    monateOhneMiete,
+    umstellungMonatlich,
     kontoVon,
     buchenIntern: (b) => buchen(b, true),
     saldoBis: (kontoId, bis) => saldo(kontoId, bis),

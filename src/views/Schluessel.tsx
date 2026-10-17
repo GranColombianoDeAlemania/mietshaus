@@ -49,7 +49,7 @@ export function Schluessel(props: { objekt: Row }) {
       </div>
       <p className="hinweis klein">
         Diese Schlüssel verteilen in den Abrechnungen die Kosten auf die Einheiten. Fläche, MEA, Einheiten und Personen kommen
-        automatisch aus den Stammdaten (bei Personen tagegenau aus den Mietverhältnissen); nur „manuelle“ Schlüssel trägst du hier ein.
+        automatisch aus den Stammdaten (bei Personen nach der Zeit der Mietverhältnisse); nur „manuelle“ Schlüssel trägst du hier ein.
         Klick auf einen Spaltenkopf zum Bearbeiten des Schlüssels.
       </p>
       {keys && einheiten && (

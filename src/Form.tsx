@@ -45,13 +45,15 @@ export function FormDialog(props: {
   onSave: (row: Row) => Promise<unknown>;
   onDelete?: () => Promise<unknown>;
   onClose: () => void;
-  // Extra content below the fields; a function gets the values as currently entered (as text).
-  extra?: ReactNode | ((current: Row) => ReactNode);
+  // Extra content below the fields; a function gets the values as currently entered (as text) and can set some.
+  extra?: ReactNode | ((current: Row, setze: (werte: Row) => void) => ReactNode);
 }) {
   const felderFuer = (r: Row) => (typeof props.fields === 'function' ? props.fields(r) : props.fields);
-  const [f, setF] = useState(() => toForm(felderFuer(props.row), props.row));
+  const [f0, setF] = useState(() => toForm(felderFuer(props.row), props.row));
   const [fehler, setFehler] = useState('');
-  const fields = felderFuer({ ...props.row, ...f });
+  // A field that appears later (e.g. once a date is entered) starts with the stored value.
+  const fields = felderFuer({ ...props.row, ...f0 });
+  const f: Row = { ...toForm(fields.filter((d) => !(d.key in f0)), props.row), ...f0 };
 
   const missing = fields.filter((d) => d.required && (f[d.key] === '' || f[d.key] == null));
 
@@ -119,7 +121,7 @@ export function FormDialog(props: {
             )];
           })}
         </div>
-        {typeof props.extra === 'function' ? props.extra({ ...props.row, ...f }) : props.extra}
+        {typeof props.extra === 'function' ? props.extra({ ...props.row, ...f }, (werte) => setF({ ...f, ...werte })) : props.extra}
         {fehler && <p className="fehler">{fehler}</p>}
         <div className="buttons">
           {props.onDelete && props.row.id && (

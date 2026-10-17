@@ -3,6 +3,7 @@
 const { tageZwischen } = require('./buchhaltung.cjs');
 
 const tage = (von, bis) => tageZwischen(von, bis) + 1;
+const monatPlus = (monat, n) => new Date(Date.UTC(Number(monat.slice(0, 4)), Number(monat.slice(5, 7)) - 1 + n, 1)).toISOString().slice(0, 7);
 const max = (a, b) => (a > b ? a : b);
 const min = (a, b) => (a < b ? a : b);
 
@@ -13,11 +14,26 @@ const co2Vermieteranteil = (kgProQm) => CO2_STUFEN.find(([grenze]) => kgProQm < 
 module.exports = function abrechnung({ db, all, get, tx, PERSON_NAME, bh }) {
   const vertragTabelle = (typ) => (typ === 'weg' ? 'eigentum' : 'mietverhaeltnisse');
 
+  // Days a contract counts for in a statement. Rent and house money are monthly amounts, so by default these are the
+  // rent months it is charged for: moving in on the 15th with a full month counts from the 1st, moving out on the
+  // 15th up to the end of that month, a rent month from the 15th from the 15th on. A tenancy can instead be settled by
+  // the days from moving in to moving out (bk_abrechnung 'wohntage'); tagesgenau does that for every contract.
+  function zeitraum(typ, v, tagesgenau = false) {
+    const tageweise = { von: v.beginn, bis: v.ende || '9999-12-31' };
+    if (tagesgenau || (typ === 'miete' && v.bk_abrechnung === 'wohntage')) return tageweise;
+    const m = v.beginn.slice(0, 7);
+    const erste = bh.periode(v, m) ?? bh.periode(v, monatPlus(m, 1));
+    if (!erste) return tageweise;
+    const z = { von: erste.von, bis: v.ende ? bh.periodeAm(v, v.ende).bis : '9999-12-31' };
+    return z.von <= z.bis ? z : tageweise;
+  }
+
   // Splits each unit's use over the period into contract segments; gaps become vacancy segments (vertrag = null).
   // For tenancies a gap in which the landlord lives in the unit himself is a self-use segment (selbst = { personen }):
   // it takes part in every key like a tenancy, and its share is borne by the landlord.
   // annahme: { einheit_id, personen } treats that unit as self-used for the whole period (what the own flat would cost).
-  function abschnitte(objektId, typ, von, bis, annahme = null) {
+  // tagesgenau: contracts by their actual days (who owns the unit on a date, e.g. for a special levy).
+  function abschnitte(objektId, typ, von, bis, annahme = null, { tagesgenau = false } = {}) {
     const einheiten = all('SELECT * FROM einheiten WHERE objekt_id = ? ORDER BY nr', objektId);
     const out = [];
     for (const e of einheiten) {
@@ -39,12 +55,26 @@ module.exports = function abrechnung({ db, all, get, tx, PERSON_NAME, bh }) {
         if (c <= b) out.push({ einheit: e, vertrag: null, von: c, bis: b, tage: tage(c, b) });
       };
       const vs = all(`SELECT v.*, ${PERSON_NAME} AS name FROM ${vertragTabelle(typ)} v JOIN personen p ON p.id = v.person_id
-        WHERE v.einheit_id = ? AND v.beginn <= ? AND (v.ende IS NULL OR v.ende = '' OR v.ende >= ?) ORDER BY v.beginn`, e.id, bis, von);
-      let cursor = von;
-      for (const v of vs) {
-        const a = max(v.beginn, von), b = min(v.ende || '9999-12-31', bis);
+        WHERE v.einheit_id = ? ORDER BY v.beginn, v.id`, e.id)
+        .map((v) => ({ v, z: zeitraum(typ, v, tagesgenau) })).filter(({ z }) => z.von <= bis && z.bis >= von);
+      let cursor = von, letzte = null;
+      for (const { v, z } of vs) {
+        let a = max(z.von, von);
+        const b = min(z.bis, bis);
+        // Two contracts for the same days (e.g. both charged in full for the month of a change in mid-month): the
+        // earlier one ends the day before the later one moves in.
+        if (letzte && a <= letzte.bis) {
+          const wechsel = max(v.beginn, a);
+          if (wechsel > letzte.von && wechsel <= b) {
+            letzte.bis = vorTag(wechsel);
+            letzte.tage = tage(letzte.von, letzte.bis);
+            a = wechsel;
+          } else a = nachTag(letzte.bis);
+        }
+        if (a > b) continue;
         if (a > cursor) luecke(cursor, vorTag(a));
-        out.push({ einheit: e, vertrag: v, von: a, bis: b, tage: tage(a, b) });
+        letzte = { einheit: e, vertrag: v, von: a, bis: b, tage: tage(a, b) };
+        out.push(letzte);
         cursor = nachTag(b);
       }
       if (cursor <= bis) luecke(cursor, bis);
@@ -179,18 +209,24 @@ module.exports = function abrechnung({ db, all, get, tx, PERSON_NAME, bh }) {
       const heiz = a.reduce((sum, x, p) => sum + (posten[p].heizung || posten[p].co2 ? x.ct : 0), 0);
       const konto = s.vertrag ? bh.kontoVon('miete', s.vertrag.id) : null;
       const [bkVz, hkVz] = konto ? vorauszahlungen(konto.id, ['bk', 'hk'], s.von, s.bis) : [0, 0];
+      // Operating costs as a flat fee or included in the rent are not settled: the landlord bears that share, and
+      // only heating and hot water (always by consumption, HeizkostenV) are settled against the heating advance.
+      const bkArt = s.vertrag?.bk_art ?? 'vorauszahlung';
+      const pauschal = !!s.vertrag && bkArt !== 'vorauszahlung';
+      const umgelegt = pauschal ? heiz : kosten;
       const p35a = { dienstleistung: 0, handwerker: 0 };
-      a.forEach((x, p) => { if (posten[p].p35a) p35a[posten[p].p35a] += x.ct; });
+      a.forEach((x, p) => { if (posten[p].p35a && (!pauschal || posten[p].heizung)) p35a[posten[p].p35a] += x.ct; });
       // Suggested new monthly advance payments: this year's costs spread over 12 months, rounded up to whole euros.
       const monate = 12 * s.tage / tage(von, bis);
       // Commercial lettings with VAT: the result is net, VAT is added on top.
       const ustSatz = s.vertrag ? Number(s.vertrag.ust_satz) || 0 : 0;
-      const ergebnis = kosten - bkVz - hkVz;
+      const ergebnis = umgelegt - bkVz - hkVz;
       return {
         segment: { von: s.von, bis: s.bis, tage: s.tage, einheit: s.einheit, vertrag: s.vertrag, konto_id: konto?.id ?? null, selbst: s.selbst ?? null },
         anteile: a, kosten_ct: kosten, heiz_ct: heiz, bk_ct: kosten - heiz, bk_vz_ct: bkVz, hk_vz_ct: hkVz,
+        bk_art: s.vertrag ? bkArt : null, umgelegt_ct: umgelegt, nicht_umgelegt_ct: kosten - umgelegt,
         ergebnis_ct: ergebnis, ust_satz: ustSatz, ust_ct: ustSatz ? Math.round(ergebnis * ustSatz / 100) : 0, p35a,
-        neu_bk_vz_ct: Math.ceil((kosten - heiz) / Math.max(1, monate) / 100) * 100,
+        neu_bk_vz_ct: pauschal ? null : Math.ceil((kosten - heiz) / Math.max(1, monate) / 100) * 100,
         neu_hk_vz_ct: Math.ceil(heiz / Math.max(1, monate) / 100) * 100,
       };
     });
@@ -198,7 +234,8 @@ module.exports = function abrechnung({ db, all, get, tx, PERSON_NAME, bh }) {
     return { typ: 'nk', objekt_id: objektId, von, bis, optionen: o, posten, ergebnisse, heizung, co2,
       summe_ct: posten.reduce((s, p) => s + p.gesamt_ct, 0),
       leerstand_ct: ergebnisse.filter((e) => !e.segment.vertrag && !e.segment.selbst).reduce((s, e) => s + e.kosten_ct, 0),
-      eigenanteil_ct: ergebnisse.filter((e) => e.segment.selbst).reduce((s, e) => s + e.kosten_ct, 0) };
+      eigenanteil_ct: ergebnisse.filter((e) => e.segment.selbst).reduce((s, e) => s + e.kosten_ct, 0),
+      pauschal_ct: ergebnisse.filter((e) => e.segment.vertrag).reduce((s, e) => s + e.nicht_umgelegt_ct, 0) };
   }
 
   // ---------- Checks before a service-charge statement goes out ----------
@@ -280,6 +317,10 @@ module.exports = function abrechnung({ db, all, get, tx, PERSON_NAME, bh }) {
       'Bei Heizöl, Erdgas, Flüssiggas oder fossiler Fernwärme trägt der Vermieter je nach Ausstoß einen Teil der CO₂-Kosten (CO2KostAufG). Fehlt die Angabe, darf der Mieter seinen Heizkostenanteil um 3 % kürzen. CO₂-Menge und -Kosten stehen auf der Brennstoff- bzw. Fernwärmerechnung.');
     // Vacancy, § 35a.
     if (a.leerstand_ct) add('info', `Auf Leerstand entfallen ${euro(a.leerstand_ct)}; diese Kosten trägt der Vermieter.`);
+    const pauschale = a.ergebnisse.filter((e) => e.nicht_umgelegt_ct);
+    if (pauschale.length) add('info', `Bei ${pauschale.map((e) => `${e.segment.vertrag.name} (${e.bk_art === 'inklusiv' ? 'in der Miete enthalten' : 'Pauschale'})`).join(', ')} `
+      + `werden die Betriebskosten nicht abgerechnet: ${euro(a.pauschal_ct)} trägt der Vermieter, abgerechnet werden nur Heizung und Warmwasser.`,
+      'Bei einer Pauschale oder Inklusivmiete gibt es keine Betriebskostenabrechnung (§ 556 Abs. 2 BGB); Heizkosten müssen trotzdem nach Verbrauch abgerechnet werden (HeizkostenV).');
     if (a.eigenanteil_ct) add('info', `Auf die selbst genutzte Wohnung entfallen ${euro(a.eigenanteil_ct)} (Eigenanteil). Sie nimmt an allen Schlüsseln teil, nach Personen mit deiner Haushaltsgröße; den Anteil trägst du, kein Mieter zahlt dafür.`);
     const p35 = a.ergebnisse.reduce((s, e) => s + (e.p35a?.dienstleistung ?? 0) + (e.p35a?.handwerker ?? 0), 0);
     if (p35) add('info', `Die Anteile für haushaltsnahe Dienstleistungen und Handwerkerleistungen (${euro(p35)}) werden je Mieter ausgewiesen.`, '§ 35a EStG – Mieter können sie in der Steuererklärung geltend machen.');
@@ -503,7 +544,7 @@ module.exports = function abrechnung({ db, all, get, tx, PERSON_NAME, bh }) {
 
     // Special levy: a total amount split by key and charged to the current owners.
     sonderumlage: (objektId, { betrag_ct, schluessel_id, datum, text }) => tx(() => {
-      const segmente = abschnitte(objektId, 'weg', datum, datum).filter((s) => s.vertrag);
+      const segmente = abschnitte(objektId, 'weg', datum, datum, null, { tagesgenau: true }).filter((s) => s.vertrag);
       const r = schluesselRechner(objektId, datum, datum)(schluessel_id, segmente);
       if (!r || !r.gesamt) throw new Error('Der Schlüssel hat keine Werte.');
       const ertrag = get(`SELECT id FROM konten WHERE objekt_id = ? AND klasse = 'einnahme' AND kategorie = 'sonderumlage' ORDER BY nr LIMIT 1`, objektId);

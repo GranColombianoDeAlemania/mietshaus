@@ -78,6 +78,21 @@ self-use, N7 change assistant, Z2 explanation on every figure.
 | Listen | Mini rings in the tenant list (payment score) and the unit list (occupancy), rent per m² coloured against the rent index | done |
 | Tests | Calculation test section 16: every new figure recomputed on its own (FIFO payments, area-days, person-days, forecast events) | done |
 
+## Version 0.8 – rent is a monthly amount
+
+From the report of 17.10.2026 („800 € warm, 500 € gezahlt = 300 € offen, nicht anteilig täglich“) and the pick „1 ja, 2 ab dem 1. – änderbar bei
+Einzug am 10. oder 15., 3 V1“.
+
+| Area | Contents | Status |
+|------|----------|--------|
+| Sollstellung | Rent and house money are always full monthly amounts: the month of moving in or out is charged in full, never by day; moving in mid-month the contract may say „from the next month“; a tenancy's rent month can run from the day of moving in (e.g. 15th to 14th, due on the 3rd working day of that rent month or on a fixed day); charge texts and open items name such rent months | done |
+| Umstellung | Existing contracts with „tagegenau“ become „voller Monat“; months booked by day are rebooked once at the first start (locked or hand-cancelled months stay and appear in the check report); the cockpit says what was rebooked | done |
+| Mieterwechsel | A month charged twice on a change in mid-month is flagged in the contract form (one click: „from the next month“), on the contract page and in the check report; accepting an applicant after a move-out in the same month starts the rent with the next month | done |
+| Abrechnung | Tenants count for the rent months they pay for (moving in on the 15th with a full month: from the 1st), per contract switchable to the days lived there; contracts charged for the same days split at the move-in day; WEG owners likewise; a special levy goes to the owner on its date | done |
+| Betriebskosten (V1) | Per tenancy: advance payment, flat fee (own income account 60025, no statement) or included in the rent (no separate amount); for flat fee and inclusive rent only heating and hot water are settled, the landlord bears the rest; letters, Anlage V (flat fee counts as Umlagen), rent comparison and § 558 radar (gross rent not compared with the rent index) follow | done |
+| Kennzahlen | Vacancy costs whole months without any rent charge; „as if let“ counts whole months of self-use | done |
+| Tests | Calculation test section 17: Julian's case with every start and end, rent month from the 15th and the 31st, tenant change, statements by months and days, flat fee and inclusive rent, conversion of a 0.7 database | done |
+
 ## Development
 
 ```

@@ -299,7 +299,8 @@ export async function dauerrechnung(v: Row, e: Row) {
   const nr = einst.rechnungsnr_naechste || `${new Date().getFullYear()}-001`;
   const ab = heute() < v.beginn ? v.beginn : `${heute().slice(0, 7)}-01`;
   const satz = Number(v.ust_satz) || 19;
-  const posten: [string, number][] = [['Nettokaltmiete', b.kaltmiete_ct ?? 0], ['Betriebskosten-Vorauszahlung', b.bk_vz_ct ?? 0],
+  const posten: [string, number][] = [[v.bk_art === 'inklusiv' ? 'Kaltmiete inkl. Betriebskosten' : 'Nettokaltmiete', b.kaltmiete_ct ?? 0],
+    [v.bk_art === 'pauschale' ? 'Betriebskostenpauschale' : 'Betriebskosten-Vorauszahlung', b.bk_vz_ct ?? 0],
     ['Heizkosten-Vorauszahlung', b.hk_vz_ct ?? 0], ['Sonstiges', b.sonstiges_ct ?? 0]].filter(([, ct]) => ct) as [string, number][];
   const netto = posten.reduce((s, [, ct]) => s + ct, 0);
   const ust = Math.round(netto * satz / 100);

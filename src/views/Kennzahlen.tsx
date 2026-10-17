@@ -44,7 +44,7 @@ export function CockpitKpis(props: { c: Row; weg: boolean }) {
             <div className="kz-text">{[v.selbst ? `${v.selbst} selbst genutzt` : '', v.leer ? `${v.leer} leer` : 'keine leer'].filter(Boolean).join(' · ')}</div>
           </RingZeile>
           <div className="kz-text">{v.leerstand_ct > 0
-            ? <>Leerstand kostete <b>{euro0(v.leerstand_ct)}</b> Kaltmiete ({v.luecken.slice(0, 2).map((l: Row) => `${l.einheit}, ${l.tage} Tage`).join('; ')}).</>
+            ? <>Leerstand kostete <b>{euro0(v.leerstand_ct)}</b> Kaltmiete ({v.luecken.filter((l: Row) => l.monate).slice(0, 2).map((l: Row) => `${l.einheit}, ${l.monate} ${l.monate === 1 ? 'Monat' : 'Monate'} ohne Miete`).join('; ')}).</>
             : 'Kein Leerstand in den letzten 12 Monaten.'}{v.selbst ? ' Selbst genutzt zählt nicht als Leerstand.' : ''}</div>
         </Kennzahl>
       )}
@@ -212,11 +212,12 @@ export function MieteQm(props: { v: Row | null; titel?: string; breite?: number;
     <Kennzahl titel={props.titel ?? 'Miete je m² im Vergleich'} breite={props.breite ?? 3}>
       {v.qm_ct != null ? (
         <>
-          <div className="kz-wert">{qm(v.qm_ct)}<small>kalt</small></div>
+          <div className="kz-wert">{qm(v.qm_ct)}<small>{v.brutto ? 'inkl. Betriebskosten' : 'kalt'}</small></div>
           <Skala von={v.von_ct} bis={v.bis_ct} mitte={v.mittel_ct} format={(x) => (x / 100).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             marken={[{ wert: v.qm_ct, label: 'diese Wohnung', haupt: true }, { wert: v.haus_ct, label: 'Haus Ø' }]} />
           <div className="kz-text">{v.haus_ct != null ? `Haus Ø ${qm(v.haus_ct)}` : ''}{hatSpiegel ? ` · Mietspiegel ${qm(v.von_ct).replace(' €/m²', '')}–${qm(v.bis_ct)}` : ''}
-            {v.mittel_ct != null ? ` (Mitte ${qm(v.mittel_ct).replace(' €/m²', '')})` : ''}{!hatSpiegel && v.mittel_ct == null ? ' · Mietspiegel beim Objekt eintragen' : ''}</div>
+            {v.mittel_ct != null ? ` (Mitte ${qm(v.mittel_ct).replace(' €/m²', '')})` : ''}{v.brutto ? 'Bruttokaltmiete – kein Vergleich mit dem Mietspiegel (der gilt für Nettokaltmieten)'
+              : !hatSpiegel && v.mittel_ct == null ? ' · Mietspiegel beim Objekt eintragen' : ''}</div>
         </>
       ) : <p className="kz-text">{props.leer ?? 'Keine Kaltmiete oder keine Fläche.'}{v.mittel_ct != null ? ` Vergleichsmiete ${qm(v.mittel_ct)}.` : ''}</p>}
     </Kennzahl>
@@ -297,7 +298,8 @@ export function EinheitKennzahlen(props: { einheit: Row; selbstnutzung: Row[]; r
         <Zeitstrahl segmente={b.segmente} von={b.seit ?? heute()} bis={b.bis} />
         <div className="kz-text">{b.seit ? <>Belegt {prozent((b.quote ?? 0) * 100, 1)} seit {datum(b.seit)} · {b.wechsel} Mieterwechsel · Leerstand {b.jahr}: {b.leer_jahr} Tage</> : 'Noch kein Mietverhältnis und keine Selbstnutzung erfasst.'}</div>
         {b.segmente.filter((x: Row) => x.art === 'leer').slice(-3).reverse().map((x: Row) => (
-          <div key={x.von} className="kz-text"><span className="chip rot">leer</span> {datum(x.von)} – {datum(x.bis)}: {x.tage} Tage{x.entgangen_ct ? `, ${euro0(x.entgangen_ct)} Kaltmiete entgangen` : ''}</div>
+          <div key={x.von} className="kz-text"><span className="chip rot">leer</span> {datum(x.von)} – {datum(x.bis)}: {x.tage} Tage{x.monate
+            ? `, ${x.monate} ${x.monate === 1 ? 'Monat' : 'Monate'} ohne Miete = ${euro0(x.entgangen_ct)} Kaltmiete entgangen` : ', jeder Monat bezahlt'}</div>
         ))}
       </Kennzahl>
       {!s && (
@@ -353,6 +355,7 @@ export const BelegungMini = (props: { x: Row | undefined }) => props.x?.belegung
 export function QmMini(props: { x: Row | undefined }) {
   const x = props.x;
   if (x?.qm_ct == null) return <span className="hinweis">–</span>;
+  if (x.brutto) return <span className="hinweis" title="Bruttokaltmiete (Betriebskosten enthalten) – kein Vergleich mit dem Mietspiegel">{qm(x.qm_ct).replace(' €/m²', '')} brutto</span>;
   const lage = x.von_ct != null && x.bis_ct != null ? (x.qm_ct < x.von_ct ? 'unter dem Mietspiegel' : x.qm_ct > x.bis_ct ? 'über dem Mietspiegel' : 'im Mietspiegel') : null;
   return <span className={lage === 'unter dem Mietspiegel' ? 'qm-unter' : lage === 'über dem Mietspiegel' ? 'qm-ueber' : ''} title={lage ? `${qm(x.qm_ct)} – ${lage} (${qm(x.von_ct).replace(' €/m²', '')}–${qm(x.bis_ct)})` : undefined}>{qm(x.qm_ct).replace(' €/m²', '')}</span>;
 }

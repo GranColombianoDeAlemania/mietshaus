@@ -179,10 +179,13 @@ module.exports = function kennzahlen({ all, get, PERSON_NAME, bh, aw, ab, vw, dl
   }
 
   // ---------- rent per m² against the house and the rent index ----------
-  // The rent index applies to flats; other units only compare with their own values or the house.
-  function vergleich(einheitId, kaltCt, stichtag = heute()) {
+  // The rent index applies to flats; other units only compare with their own values or the house. A rent including
+  // operating costs (Bruttokaltmiete) is not compared: the rent index and the house figure are net cold rents.
+  function vergleich(einheitId, kaltCt, stichtag = heute(), brutto = false) {
     const e = get('SELECT * FROM einheiten WHERE id = ?', einheitId);
     if (!e) return null;
+    if (brutto) return { flaeche: e.wohnflaeche ?? null, kalt_ct: kaltCt ?? null, art: e.art ?? 'Wohnung', brutto: true,
+      qm_ct: kaltCt && e.wohnflaeche ? Math.round(kaltCt / e.wohnflaeche) : null, haus_ct: null, von_ct: null, bis_ct: null, mittel_ct: null, quelle: 'brutto' };
     const vgl = aw.vergleichsmieteQm(einheitId, stichtag);
     const spiegel = (e.art ?? 'Wohnung') === 'Wohnung' || e.vergleichsmiete_ct || e.mietspiegel_von_ct;
     return {
@@ -228,8 +231,8 @@ module.exports = function kennzahlen({ all, get, PERSON_NAME, bh, aw, ab, vw, dl
     const ab = maxD(p0.frueheste_wirkung, monatPlus(zugangMoeglich.slice(0, 7), 3) + '-01');
     const vgl = aw.vergleichsmieteQm(v.einheit_id, stichtag);
     const alt = bh.betraege('miete', v.id, vorTag(ab)).kaltmiete_ct ?? 0;
-    const x = { art: '558', ab, alt_ct: alt, letzte: p0.letzte_aenderung, zugang: zugangMoeglich, plus_ct: null, neu_ct: null };
-    if (vgl?.ct && vgl.quelle !== 'haus' && e.wohnflaeche) {
+    const x = { art: '558', ab, alt_ct: alt, letzte: p0.letzte_aenderung, zugang: zugangMoeglich, plus_ct: null, neu_ct: null, brutto: v.bk_art === 'inklusiv' };
+    if (!x.brutto && vgl?.ct && vgl.quelle !== 'haus' && e.wohnflaeche) {
       const ziel = Math.round(vgl.ct * e.wohnflaeche);
       const p = vw.mieterhoehungPruefen(v.id, ziel, ab, null, zugangMoeglich);
       x.neu_ct = Math.min(ziel, p.grenze_ct);
@@ -239,7 +242,8 @@ module.exports = function kennzahlen({ all, get, PERSON_NAME, bh, aw, ab, vw, dl
       x.ziel_ct = ziel;
       x.kappung = p.kappung;
     }
-    x.text = x.plus_ct == null ? 'Mieterhöhung bis zur Vergleichsmiete (§ 558)' : x.gekappt ? `§ 558 bis zur Kappungsgrenze (${x.kappung} %)` : '§ 558 bis zur Vergleichsmiete';
+    x.text = x.brutto ? 'Mieterhöhung § 558 – bei der Bruttokaltmiete zuerst den Betriebskostenanteil herausrechnen'
+      : x.plus_ct == null ? 'Mieterhöhung bis zur Vergleichsmiete (§ 558)' : x.gekappt ? `§ 558 bis zur Kappungsgrenze (${x.kappung} %)` : '§ 558 bis zur Vergleichsmiete';
     out.push(x);
     return out;
   }
@@ -258,7 +262,8 @@ module.exports = function kennzahlen({ all, get, PERSON_NAME, bh, aw, ab, vw, dl
     const schritte = [];
     for (const x of erhoehungen(v, stichtag)) {
       schritte.push({ datum: x.ab, art: x.art, plus_ct: x.plus_ct, text: x.art === '558'
-        ? (x.plus_ct == null ? `Mieterhöhung § 558 möglich – 15 Monate seit der letzten Änderung (${datumDe(x.letzte)}). Vergleichsmiete beim Objekt eintragen, dann steht hier der Betrag.`
+        ? (x.brutto ? `Mieterhöhung § 558 möglich – 15 Monate seit der letzten Änderung (${datumDe(x.letzte)}). Die Miete enthält die Betriebskosten: für den Vergleich mit dem Mietspiegel (Nettokaltmiete) erst deren Anteil herausrechnen.`
+          : x.plus_ct == null ? `Mieterhöhung § 558 möglich – 15 Monate seit der letzten Änderung (${datumDe(x.letzte)}). Vergleichsmiete beim Objekt eintragen, dann steht hier der Betrag.`
           : x.plus_ct > 0 ? `Mieterhöhung § 558 möglich: +${euro(x.plus_ct)} ${x.gekappt ? `(Kappungsgrenze ${x.kappung} %)` : 'bis zur Vergleichsmiete'}, letzte Änderung ${datumDe(x.letzte)}`
             : 'Die Miete liegt schon bei oder über der Vergleichsmiete.')
         : x.art === 'index' ? `Indexanpassung möglich: +${euro(x.plus_ct)}` : `Nächste Staffel: +${euro(x.plus_ct)}` });
@@ -287,7 +292,7 @@ module.exports = function kennzahlen({ all, get, PERSON_NAME, bh, aw, ab, vw, dl
       zahlung: zahlungsverhalten('miete', v.id, { stichtag }),
       verlauf: kontoverlauf('miete', v.id, { stichtag }),
       fakten: mietverhaeltnisFakten(v, stichtag),
-      vergleich: vergleich(v.einheit_id, bh.betraege('miete', v.id, bis).kaltmiete_ct, stichtag),
+      vergleich: vergleich(v.einheit_id, bh.betraege('miete', v.id, bis).kaltmiete_ct, stichtag, v.bk_art === 'inklusiv'),
       kaution: kaution(v.id, stichtag),
     };
   }
@@ -339,7 +344,12 @@ module.exports = function kennzahlen({ all, get, PERSON_NAME, bh, aw, ab, vw, dl
     const vgl = aw.vergleichsmieteQm(einheitId);
     return vgl?.ct && e?.wohnflaeche ? Math.round(vgl.ct * e.wohnflaeche) : 0;
   }
-  const entgangen = (monatCt, tage) => Math.round(monatCt * 12 * tage / 365);
+  // Rent lost to a vacancy: the reference rent for every calendar month in it without any rent charge and without the
+  // landlord's own use (whole months only – a month a tenant pays for counts as let).
+  function leerMonate(einheitId, von, bis) {
+    const selbst = all(`SELECT beginn, ende FROM selbstnutzung WHERE einheit_id = ?1 UNION ALL SELECT beginn, ende FROM eigentum WHERE einheit_id = ?1 AND selbstnutzer = 1`, einheitId);
+    return bh.monateOhneMiete(einheitId, von, bis).filter((m) => !selbst.some((x) => x.beginn <= monatsEnde(m) && (!x.ende || x.ende >= `${m}-01`))).length;
+  }
 
   // ---------- the unit page ----------
   function einheitKennzahlen(einheitId, stichtag = heute()) {
@@ -354,7 +364,10 @@ module.exports = function kennzahlen({ all, get, PERSON_NAME, bh, aw, ab, vw, dl
     const belegt = segmente.filter((x) => x.art !== 'leer').reduce((s, x) => s + x.tage, 0);
     const jahrVon = `${jahr}-01-01`;
     const leerJahr = segmente.filter((x) => x.art === 'leer').reduce((s, x) => s + Math.max(0, tageZwischen(maxD(x.von, jahrVon), x.bis) + 1), 0);
-    for (const x of segmente.filter((s) => s.art === 'leer')) x.entgangen_ct = entgangen(referenzmiete(einheitId, x.von, x.bis), x.tage);
+    for (const x of segmente.filter((s) => s.art === 'leer')) {
+      x.monate = leerMonate(einheitId, x.von, x.bis);
+      x.entgangen_ct = x.monate ? referenzmiete(einheitId, x.von, x.bis) * x.monate : 0;
+    }
     const mieten = segmente.filter((x) => x.art === 'miete');
     const belegungInfo = { seit: erst ?? null, bis: stichtag, segmente, quote: gesamt ? belegt / gesamt : null, wechsel: Math.max(0, mieten.length - 1), leer_jahr: leerJahr, jahr };
 
@@ -381,11 +394,11 @@ module.exports = function kennzahlen({ all, get, PERSON_NAME, bh, aw, ab, vw, dl
     // E4: the last change of tenant: vacancy, renovation and agent costs booked for the unit.
     const wechsel = mieterwechselKosten(e, segmente, stichtag);
 
-    const aktuell = get(`SELECT id FROM mietverhaeltnisse WHERE einheit_id = ?1 AND beginn <= ?2 AND (ende IS NULL OR ende = '' OR ende >= ?2) ORDER BY beginn DESC LIMIT 1`, einheitId, stichtag);
+    const aktuell = get(`SELECT id, bk_art FROM mietverhaeltnisse WHERE einheit_id = ?1 AND beginn <= ?2 AND (ende IS NULL OR ende = '' OR ende >= ?2) ORDER BY beginn DESC LIMIT 1`, einheitId, stichtag);
     const angebot = get('SELECT kaltmiete_ct FROM angebote WHERE einheit_id = ? AND aktiv = 1', einheitId)?.kaltmiete_ct ?? null;
     return {
       einheit_id: einheitId, belegung: belegungInfo, ertrag, verbrauch, wechsel,
-      vergleich: vergleich(einheitId, aktuell ? bh.betraege('miete', aktuell.id, stichtag).kaltmiete_ct : angebot, stichtag),
+      vergleich: vergleich(einheitId, aktuell ? bh.betraege('miete', aktuell.id, stichtag).kaltmiete_ct : angebot, stichtag, aktuell?.bk_art === 'inklusiv'),
       vergleich_quelle: aktuell ? 'miete' : angebot ? 'angebot' : null,
       selbst: selbstKosten(einheitId, stichtag),
     };
@@ -432,11 +445,11 @@ module.exports = function kennzahlen({ all, get, PERSON_NAME, bh, aw, ab, vw, dl
     const kostenIm = (von, bis) => all(`SELECT b.datum, b.text, k.bezeichnung, CASE WHEN k.id = b.soll_id THEN b.betrag_ct ELSE -b.betrag_ct END AS ct FROM buchungen b
       JOIN konten k ON k.id IN (b.soll_id, b.haben_id) WHERE k.objekt_id = ? AND k.klasse = 'kosten' AND k.umlagefaehig = 0 AND k.kategorie <> 'zinsen'
       AND b.datum BETWEEN ? AND ? AND ${einheitVonSql('b')} = ? ORDER BY b.datum`, e.objekt_id, von, bis, e.id);
-    const posten = (leerTage, leerCt, kosten) => {
+    const posten = (leerTage, leerMonate, leerCt, kosten) => {
       const makler = kosten.filter((k) => /makler/i.test(`${k.text ?? ''} ${k.bezeichnung}`)).reduce((s, k) => s + k.ct, 0);
       const rest = kosten.reduce((s, k) => s + k.ct, 0) - makler;
       return [
-        { label: `Leerstand ${leerTage} Tage`, ct: leerCt },
+        { label: `Leerstand ${leerTage} Tage (${leerMonate} ${leerMonate === 1 ? 'Monat' : 'Monate'} ohne Miete)`, ct: leerCt },
         ...(rest ? [{ label: 'Renovierung und Reparaturen', ct: rest }] : []),
         ...(makler ? [{ label: 'Makler', ct: makler }] : []),
       ];
@@ -445,7 +458,7 @@ module.exports = function kennzahlen({ all, get, PERSON_NAME, bh, aw, ab, vw, dl
     // Vacant now after a tenancy: what the vacancy has cost so far.
     if (letzte?.art === 'leer' && vs.length && vs.at(-1).ende && vs.at(-1).ende < letzte.von) {
       const leerCt = letzte.entgangen_ct ?? 0;
-      const p = posten(letzte.tage, leerCt, kostenIm(plusTage(vs.at(-1).ende, -30), stichtag));
+      const p = posten(letzte.tage, letzte.monate ?? 0, leerCt, kostenIm(plusTage(vs.at(-1).ende, -30), stichtag));
       return { laufend: true, von_name: vs.at(-1).name, seit: letzte.von, tage: letzte.tage, posten: p, summe_ct: p.reduce((s, x) => s + x.ct, 0), schnitt_jahre: schnitt };
     }
     if (vs.length < 2) return { laufend: false, posten: [], summe_ct: 0, schnitt_jahre: schnitt, keiner: true };
@@ -453,7 +466,7 @@ module.exports = function kennzahlen({ all, get, PERSON_NAME, bh, aw, ab, vw, dl
     if (!alt.ende) return { laufend: false, posten: [], summe_ct: 0, schnitt_jahre: schnitt, keiner: true };
     const leer = segmente.filter((x) => x.art === 'leer' && x.von > alt.ende && x.bis < neu.beginn);
     const leerTage = leer.reduce((s, x) => s + x.tage, 0);
-    const p = posten(leerTage, leer.reduce((s, x) => s + (x.entgangen_ct ?? 0), 0), kostenIm(plusTage(alt.ende, -30), plusTage(neu.beginn, 60)));
+    const p = posten(leerTage, leer.reduce((s, x) => s + (x.monate ?? 0), 0), leer.reduce((s, x) => s + (x.entgangen_ct ?? 0), 0), kostenIm(plusTage(alt.ende, -30), plusTage(neu.beginn, 60)));
     return { laufend: false, von_name: alt.name, nach_name: neu.name, ende: alt.ende, beginn: neu.beginn, tage: leerTage, posten: p,
       summe_ct: p.reduce((s, x) => s + x.ct, 0), schnitt_jahre: schnitt };
   }
@@ -586,9 +599,10 @@ module.exports = function kennzahlen({ all, get, PERSON_NAME, bh, aw, ab, vw, dl
         if (s.art === 'miete') vermietet += f * s.tage;
         if (s.art !== 'selbst') basis += f * s.tage;
         if (s.art === 'leer') {
-          const ct = entgangen(referenzmiete(e.id, s.von, s.bis), s.tage);
+          const monate = leerMonate(e.id, s.von, s.bis);
+          const ct = monate ? referenzmiete(e.id, s.von, s.bis) * monate : 0;
           leerCt += ct;
-          luecken.push({ einheit_id: e.id, einheit: e.bezeichnung, tage: s.tage, ct, von: s.von, bis: s.bis });
+          luecken.push({ einheit_id: e.id, einheit: e.bezeichnung, tage: s.tage, monate, ct, von: s.von, bis: s.bis });
         }
       }
       const jetzt = seg.at(-1)?.art;
@@ -688,7 +702,7 @@ module.exports = function kennzahlen({ all, get, PERSON_NAME, bh, aw, ab, vw, dl
   // K5: income, operating costs and surplus since 1 January against the same days of last year; after interest and repayment.
   function jahresvergleich(objekte, typ, t) {
     const ids = idListe(objekte);
-    const kat = typ === 'weg' ? ['hausgeld', 'ruecklage', 'sonderumlage', 'weg_ergebnis'] : ['miete', 'sonst', 'bk', 'hk', 'nk_ergebnis'];
+    const kat = typ === 'weg' ? ['hausgeld', 'ruecklage', 'sonderumlage', 'weg_ergebnis'] : ['miete', 'sonst', 'bk', 'bk_pauschale', 'hk', 'nk_ergebnis'];
     const werte = (von, bis) => {
       let ein = 0;
       for (const k of all(`SELECT id FROM konten WHERE objekt_id IN (${ids}) AND klasse = 'person' AND vertrag_typ = ?`, typ)) {
@@ -816,21 +830,21 @@ module.exports = function kennzahlen({ all, get, PERSON_NAME, bh, aw, ab, vw, dl
   // ---------- small gauges in the lists ----------
   function listenKennzahlen(objektId, stichtag = heute()) {
     const vertraege = {};
-    for (const v of all(`SELECT m.id, m.einheit_id FROM mietverhaeltnisse m JOIN einheiten e ON e.id = m.einheit_id WHERE e.objekt_id = ?1
+    for (const v of all(`SELECT m.id, m.einheit_id, m.bk_art FROM mietverhaeltnisse m JOIN einheiten e ON e.id = m.einheit_id WHERE e.objekt_id = ?1
         AND (m.ende IS NULL OR m.ende = '' OR m.ende >= ?2)`, objektId, stichtag)) {
       const z = zahlungsverhalten('miete', v.id, { stichtag });
-      const vg = vergleich(v.einheit_id, bh.betraege('miete', v.id, stichtag).kaltmiete_ct, stichtag);
-      vertraege[v.id] = { score: z?.score ?? null, label: z?.label ?? null, qm_ct: vg?.qm_ct ?? null, von_ct: vg?.von_ct ?? null, bis_ct: vg?.bis_ct ?? null, mittel_ct: vg?.mittel_ct ?? null };
+      const vg = vergleich(v.einheit_id, bh.betraege('miete', v.id, stichtag).kaltmiete_ct, stichtag, v.bk_art === 'inklusiv');
+      vertraege[v.id] = { score: z?.score ?? null, label: z?.label ?? null, qm_ct: vg?.qm_ct ?? null, von_ct: vg?.von_ct ?? null, bis_ct: vg?.bis_ct ?? null, mittel_ct: vg?.mittel_ct ?? null, brutto: !!vg?.brutto };
     }
     const einheiten = {};
     const von = plusTage(plusJahre(stichtag, -1), 1);
     for (const e of all('SELECT * FROM einheiten WHERE objekt_id = ?', objektId)) {
       const seg = belegung(e.id, von, stichtag);
       const tage = seg.reduce((s, x) => s + x.tage, 0);
-      const m = get(`SELECT id FROM mietverhaeltnisse WHERE einheit_id = ?1 AND beginn <= ?2 AND (ende IS NULL OR ende = '' OR ende >= ?2) ORDER BY beginn DESC LIMIT 1`, e.id, stichtag);
-      const vg = m ? vergleich(e.id, bh.betraege('miete', m.id, stichtag).kaltmiete_ct, stichtag) : null;
+      const m = get(`SELECT id, bk_art FROM mietverhaeltnisse WHERE einheit_id = ?1 AND beginn <= ?2 AND (ende IS NULL OR ende = '' OR ende >= ?2) ORDER BY beginn DESC LIMIT 1`, e.id, stichtag);
+      const vg = m ? vergleich(e.id, bh.betraege('miete', m.id, stichtag).kaltmiete_ct, stichtag, m.bk_art === 'inklusiv') : null;
       einheiten[e.id] = { belegung: tage ? seg.filter((x) => x.art !== 'leer').reduce((s, x) => s + x.tage, 0) / tage : null,
-        selbst: seg.at(-1)?.art === 'selbst', qm_ct: vg?.qm_ct ?? null, von_ct: vg?.von_ct ?? null, bis_ct: vg?.bis_ct ?? null, mittel_ct: vg?.mittel_ct ?? null };
+        selbst: seg.at(-1)?.art === 'selbst', qm_ct: vg?.qm_ct ?? null, von_ct: vg?.von_ct ?? null, bis_ct: vg?.bis_ct ?? null, mittel_ct: vg?.mittel_ct ?? null, brutto: !!vg?.brutto };
     }
     return { vertraege, einheiten };
   }
