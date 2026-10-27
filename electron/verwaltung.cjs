@@ -243,7 +243,7 @@ module.exports = function verwaltung({ db, all, get, tx, PERSON_NAME, bh }) {
       const d8 = (iso) => iso.replace(/-/g, '');
       const jetzt = new Date().toISOString().replace(/\D/g, '').slice(0, 17);
       const kopf = ['"EXTF"', 700, 21, '"Buchungsstapel"', 13, jetzt, '', '"RE"', '""', '""', berater || 0, mandant || 0,
-        d8(wjBeginn || `${von.slice(0, 4)}-01-01`), 5, d8(von), d8(bis), q(`Hausverwalter ${o.bezeichnung}`.slice(0, 30)), '""', 1, 0, 0, '"EUR"'].join(';');
+        d8(wjBeginn || `${von.slice(0, 4)}-01-01`), 5, d8(von), d8(bis), q(`Mietshaus ${o.bezeichnung}`.slice(0, 30)), '""', 1, 0, 0, '"EUR"'].join(';');
       const spalten = ['Umsatz (ohne Soll/Haben-Kz)', 'Soll/Haben-Kennzeichen', 'WKZ Umsatz', 'Kurs', 'Basis-Umsatz', 'WKZ Basis-Umsatz',
         'Konto', 'Gegenkonto (ohne BU-Schlüssel)', 'BU-Schlüssel', 'Belegdatum', 'Belegfeld 1', 'Belegfeld 2', 'Skonto', 'Buchungstext'].join(';');
       const zeilen = rows.map((b) => [

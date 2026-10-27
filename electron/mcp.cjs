@@ -1,5 +1,5 @@
 // MCP server for Claude Desktop: lets Claude work through the document inbox and file the results
-// in Hausverwalter. Started by Claude Desktop as: Hausverwalter (ELECTRON_RUN_AS_NODE=1) electron/mcp.cjs
+// in Mietshaus. Started by Claude Desktop as: Mietshaus (ELECTRON_RUN_AS_NODE=1) electron/mcp.cjs
 // Talks JSON-RPC over stdin/stdout, so nothing else may be printed to stdout.
 const path = require('node:path');
 const os = require('node:os');
@@ -10,14 +10,14 @@ const z = require('zod');
 const { open, api } = require('./db.cjs');
 
 // Same locations Electron uses for the app's userData folder.
-const userData = process.env.HAUSVERWALTER_DATEN || (process.platform === 'darwin'
-  ? path.join(os.homedir(), 'Library', 'Application Support', 'Hausverwalter')
-  : process.platform === 'win32' ? path.join(process.env.APPDATA ?? os.homedir(), 'Hausverwalter')
-    : path.join(process.env.XDG_CONFIG_HOME ?? path.join(os.homedir(), '.config'), 'Hausverwalter'));
-const dbFile = process.env.HAUSVERWALTER_DB || path.join(userData, 'hausverwalter.sqlite');
+const userData = process.env.MIETSHAUS_DATEN || (process.platform === 'darwin'
+  ? path.join(os.homedir(), 'Library', 'Application Support', 'Mietshaus')
+  : process.platform === 'win32' ? path.join(process.env.APPDATA ?? os.homedir(), 'Mietshaus')
+    : path.join(process.env.XDG_CONFIG_HOME ?? path.join(os.homedir(), '.config'), 'Mietshaus'));
+const dbFile = process.env.MIETSHAUS_DB || path.join(userData, 'mietshaus.sqlite');
 const dokumente = path.join(userData, 'dokumente');
 
-const ANWEISUNGEN = `Hausverwalter ist die Hausverwaltungs-Software des Nutzers (Mietverwaltung und WEG-Verwaltung).
+const ANWEISUNGEN = `Mietshaus ist die Hausverwaltungs-Software des Nutzers (Mietverwaltung und WEG-Verwaltung).
 Typischer Auftrag: „Arbeite das Postfach ab“. Vorgehen:
 1. postfach_liste aufrufen.
 2. Je Dokument dokument_lesen; der erkannte Text ist dabei, bei Scans und Fotos zusätzlich die Seitenbilder.
@@ -39,11 +39,11 @@ const MIME = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
 
 function starten() {
   if (!fs.existsSync(dbFile)) {
-    process.stderr.write(`Hausverwalter-Datenbank nicht gefunden: ${dbFile}. Bitte das Programm einmal starten.\n`);
+    process.stderr.write(`Mietshaus-Datenbank nicht gefunden: ${dbFile}. Bitte das Programm einmal starten.\n`);
     process.exit(1);
   }
   const db = api(open(dbFile, 'claude'));
-  const server = new McpServer({ name: 'hausverwalter', version: '1.0.0' }, { instructions: ANWEISUNGEN });
+  const server = new McpServer({ name: 'mietshaus', version: '1.0.0' }, { instructions: ANWEISUNGEN });
   const werkzeug = (name, beschreibung, schema, fn, nurLesen = false) =>
     server.registerTool(name, { description: beschreibung, inputSchema: schema, annotations: { readOnlyHint: nurLesen } }, async (args) => {
       try {

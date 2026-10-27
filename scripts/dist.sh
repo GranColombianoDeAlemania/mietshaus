@@ -4,11 +4,11 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 PLATTFORM="$1"; ARCH="${2:-x64}"
 npx vite build
-rm -rf "release/Hausverwalter-$PLATTFORM-$ARCH"
-npx electron-packager . Hausverwalter --platform="$PLATTFORM" --arch="$ARCH" --out=release \
+rm -rf "release/Mietshaus-$PLATTFORM-$ARCH"
+npx electron-packager . Mietshaus --platform="$PLATTFORM" --arch="$ARCH" --out=release \
   --ignore='^/(src|scripts|release|resources|node_modules/\.vite)' --ignore='\.ts$' --overwrite \
   --extra-resource=resources/tessdata --no-asar
 cd release
-rm -f "Hausverwalter-$PLATTFORM-$ARCH.zip"
-zip -qry "Hausverwalter-$PLATTFORM-$ARCH.zip" "Hausverwalter-$PLATTFORM-$ARCH"
-echo "Fertig: release/Hausverwalter-$PLATTFORM-$ARCH.zip"
+rm -f "Mietshaus-$PLATTFORM-$ARCH.zip"
+zip -qry "Mietshaus-$PLATTFORM-$ARCH.zip" "Mietshaus-$PLATTFORM-$ARCH"
+echo "Fertig: release/Mietshaus-$PLATTFORM-$ARCH.zip"

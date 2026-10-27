@@ -224,7 +224,7 @@ export function Postfach() {
       </div>
       <p className="hinweis klein">
         Das Programm hat die Dokumente gelesen und Vorschläge eingetragen. Nichts wird abgelegt oder gebucht, bevor du es prüfst:
-        einzeln rechts, oder mehrere links anhaken und gemeinsam zuordnen. Alternativ in Claude Desktop: „Arbeite das Postfach im Hausverwalter ab“.
+        einzeln rechts, oder mehrere links anhaken und gemeinsam zuordnen. Alternativ in Claude Desktop: „Arbeite das Postfach im Mietshaus ab“.
       </p>
       {liste && !liste.length ? (
         <div className="leer"><p>Das Postfach ist leer.</p></div>

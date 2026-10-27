@@ -1,4 +1,4 @@
-# Hausverwalter – Roadmap
+# Mietshaus – Roadmap
 
 A personal Mac app with Win-CASA's range of features. It uses its own code and its own data model.
 Win-CASA (template database `../db/schema.sql`, form inventory `../forms_own.txt`) is used only

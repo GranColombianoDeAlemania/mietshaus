@@ -20,6 +20,19 @@ protocol.registerSchemesAsPrivileged([analyse.SCHEMA]);
 // German date inputs and number formats regardless of the system language.
 app.commandLine.appendSwitch('lang', 'de-DE');
 
+// The app was called Hausverwalter until 0.8.1: its data folder is copied over once, the old one stays as a backup.
+function alteDatenUebernehmen() {
+  const alt = path.join(app.getPath('appData'), 'Hausverwalter');
+  const neu = app.getPath('userData');
+  if (process.env.MIETSHAUS_DB || fs.existsSync(path.join(neu, 'mietshaus.sqlite')) || !fs.existsSync(path.join(alt, 'hausverwalter.sqlite'))) return;
+  fs.cpSync(alt, neu, { recursive: true, force: false, filter: (q) => !path.basename(q).startsWith('Singleton') });
+  for (const endung of ['', '-wal', '-shm']) {
+    const q = path.join(neu, `hausverwalter.sqlite${endung}`);
+    if (fs.existsSync(q)) fs.renameSync(q, path.join(neu, `mietshaus.sqlite${endung}`));
+  }
+}
+alteDatenUebernehmen();
+
 const dokumentOrdner = () => path.join(app.getPath('userData'), 'dokumente');
 const vorschauOrdner = () => path.join(dokumentOrdner(), 'vorschau');
 const seite = (name) => (process.env.VITE_DEV_SERVER_URL ? new URL(name, process.env.VITE_DEV_SERVER_URL).href : pathToFileURL(path.join(__dirname, '..', 'dist', name)).href);
@@ -31,7 +44,7 @@ function createWindow() {
     height: 900,
     minWidth: 1000,
     minHeight: 640,
-    title: 'Hausverwalter',
+    title: 'Mietshaus',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     // The traffic lights sit on the charcoal sidebar; the same colour avoids a white flash while loading.
     trafficLightPosition: { x: 18, y: 18 },
@@ -106,7 +119,7 @@ async function steuerpaket(objektId, jahr, anlageVHtml) {
     'Journal: alle Buchungen des Jahres. Saldenliste: Stand aller Konten. Kontenblätter: jede Buchung je Konto.',
     `Belege: ${d.belege.length - fehlend} Dokumente (Rechnungen, Bescheide, Kontoauszüge und mit Buchungen verknüpfte Belege).`,
     'CSV-Dateien: Semikolon getrennt, Beträge mit Komma, UTF-8 – öffnen mit Excel oder Numbers.', '',
-    `Erstellt am ${new Date().toLocaleDateString('de-DE')} mit Hausverwalter.`].join('\r\n') });
+    `Erstellt am ${new Date().toLocaleDateString('de-DE')} mit Mietshaus.`].join('\r\n') });
   const ziel = await dialog.showSaveDialog({ defaultPath: path.join(app.getPath('documents'), `Steuerunterlagen ${d.objekt} ${jahr}.zip`), filters: [{ name: 'ZIP-Archiv', extensions: ['zip'] }] });
   if (ziel.canceled || !ziel.filePath) return null;
   fs.writeFileSync(ziel.filePath, zip(dateien));
@@ -167,7 +180,7 @@ async function oeffnen(filter) {
 }
 
 async function sicherung() {
-  const name = `Hausverwalter-Sicherung-${new Date().toISOString().slice(0, 10)}.sqlite`;
+  const name = `Mietshaus-Sicherung-${new Date().toISOString().slice(0, 10)}.sqlite`;
   const ziel = await dialog.showSaveDialog({ defaultPath: path.join(app.getPath('documents'), name), filters: [{ name: 'Sicherung', extensions: ['sqlite'] }] });
   if (ziel.canceled || !ziel.filePath) return null;
   fs.rmSync(ziel.filePath, { force: true });
@@ -206,7 +219,7 @@ async function dokumentAblegen() {
 // Only plain file names inside the document folder are accepted.
 const sichererDokPfad = (datei) => path.join(dokumentOrdner(), path.basename(datei));
 
-// Claude Desktop starts Hausverwalter's MCP server from this entry in its configuration file.
+// Claude Desktop starts Mietshaus's MCP server from this entry in its configuration file.
 const claudeKonfig = () => (process.platform === 'darwin'
   ? path.join(app.getPath('home'), 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json')
   : process.platform === 'win32' ? path.join(app.getPath('appData'), 'Claude', 'claude_desktop_config.json')
@@ -214,30 +227,37 @@ const claudeKonfig = () => (process.platform === 'darwin'
 const mcpEintrag = () => ({
   command: process.execPath,
   args: [path.join(app.getAppPath(), 'electron', 'mcp.cjs')],
-  env: { ELECTRON_RUN_AS_NODE: '1', HAUSVERWALTER_DATEN: app.getPath('userData'), HAUSVERWALTER_DB: dbFile },
+  env: { ELECTRON_RUN_AS_NODE: '1', MIETSHAUS_DATEN: app.getPath('userData'), MIETSHAUS_DB: dbFile },
 });
 function claudeStatus() {
   const datei = claudeKonfig();
   let k = null;
   try { k = JSON.parse(fs.readFileSync(datei, 'utf8')); } catch {}
-  return { datei, installiert: fs.existsSync(path.dirname(datei)), verbunden: !!k?.mcpServers?.hausverwalter, eintrag: mcpEintrag() };
+  return { datei, installiert: fs.existsSync(path.dirname(datei)), verbunden: !!k?.mcpServers?.mietshaus, eintrag: mcpEintrag() };
 }
 function claudeVerbinden() {
   const datei = claudeKonfig();
   fs.mkdirSync(path.dirname(datei), { recursive: true });
   let k = {};
   if (fs.existsSync(datei)) {
-    fs.copyFileSync(datei, `${datei}.vor-hausverwalter`);
+    fs.copyFileSync(datei, `${datei}.vor-mietshaus`);
     k = JSON.parse(fs.readFileSync(datei, 'utf8'));
   }
-  k.mcpServers = { ...(k.mcpServers ?? {}), hausverwalter: mcpEintrag() };
+  // The entry from the Hausverwalter days points at the old app and database, so it is replaced.
+  const { hausverwalter: _alt, ...andere } = k.mcpServers ?? {};
+  k.mcpServers = { ...andere, mietshaus: mcpEintrag() };
   fs.writeFileSync(datei, JSON.stringify(k, null, 2));
   return claudeStatus();
 }
+// A connection set up under the old name is carried over to the new one.
+function claudeUmziehen() {
+  try { if (JSON.parse(fs.readFileSync(claudeKonfig(), 'utf8')).mcpServers?.hausverwalter) claudeVerbinden(); } catch {}
+}
 
 app.whenReady().then(() => {
-  dbFile = process.env.HAUSVERWALTER_DB || path.join(app.getPath('userData'), 'hausverwalter.sqlite');
+  dbFile = process.env.MIETSHAUS_DB || path.join(app.getPath('userData'), 'mietshaus.sqlite');
   oeffneDb();
+  claudeUmziehen();
   analyse.protokollRegistrieren(dokumentOrdner, vorschauOrdner);
   ana = analyse({ db: new Proxy({}, { get: (_t, k) => db[k] }), dokumentOrdner, vorschauOrdner, analyseUrl: () => seite('analyse.html'),
     onFertig: (id) => melden('dokumentAnalysiert', id) });
@@ -257,7 +277,10 @@ app.whenReady().then(() => {
   const passwort = {
     lesen: () => {
       const e = db.einstellungen();
-      if (e.mail_passwort_enc && safeStorage.isEncryptionAvailable()) return safeStorage.decryptString(Buffer.from(e.mail_passwort_enc, 'base64'));
+      // A password encrypted under the old app name cannot be decrypted any more and has to be entered again.
+      if (e.mail_passwort_enc && safeStorage.isEncryptionAvailable()) {
+        try { return safeStorage.decryptString(Buffer.from(e.mail_passwort_enc, 'base64')); } catch { return ''; }
+      }
       return e.mail_passwort_klar ? Buffer.from(e.mail_passwort_klar, 'base64').toString('utf8') : '';
     },
     setzen: (pw) => {

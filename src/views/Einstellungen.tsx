@@ -90,8 +90,8 @@ function ClaudeVerbindung() {
     <div className="block">
       <h3>Claude Desktop</h3>
       <p className="hinweis">
-        Verbindet Hausverwalter mit der Claude-Desktop-App (dein Claude-Abo genügt, kein API-Schlüssel nötig). Danach kannst du in
-        Claude z. B. sagen: „Arbeite das Postfach im Hausverwalter ab“ – Claude liest die Dokumente, legt sie ab und überträgt Rechnungen,
+        Verbindet Mietshaus mit der Claude-Desktop-App (dein Claude-Abo genügt, kein API-Schlüssel nötig). Danach kannst du in
+        Claude z. B. sagen: „Arbeite das Postfach im Mietshaus ab“ – Claude liest die Dokumente, legt sie ab und überträgt Rechnungen,
         Verträge, Zählerstände und Termine ins Programm. Jede Änderung bestätigst du in Claude.
       </p>
       {st && (

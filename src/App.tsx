@@ -412,7 +412,7 @@ export default function App() {
       <div className={`app${ziehen ? ' ziehen' : ''}`} onDragOver={ueber}
         onDragLeave={(e) => { if (e.currentTarget === e.target) { setZiehen(false); dropZiel.current?.classList.remove('drop-ziel'); dropZiel.current = null; } }} onDrop={abgelegt}>
         <aside className="seitenleiste">
-          <div className="marke"><I.House size={17} strokeWidth={2.2} /><span>Hausverwalter</span></div>
+          <div className="marke"><I.House size={17} strokeWidth={2.2} /><span>Mietshaus</span></div>
           <div className="modi" role="tablist">
             {([['miete', 'Miete', I.KeyRound], ['weg', 'WEG', I.Building2], ['projekt', 'Projekte', I.Hammer]] as [Modus, string, I.LucideIcon][]).map(([m, l, Icon]) => (
               <button key={m} role="tab" className={`modus-${m}`} aria-selected={modus === m} onClick={() => wechsle(m)}><Icon size={18} strokeWidth={1.8} /><span>{l}</span></button>
