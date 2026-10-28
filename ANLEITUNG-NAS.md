@@ -54,16 +54,31 @@ Auf dem Mac, der bisher die Daten hatte: Mac-App mit dem (noch leeren) Server ve
 das klappt nur, solange dort noch kein Objekt angelegt ist. Die Daten auf dem Mac bleiben unverändert („Lokal
 arbeiten“ zeigt sie weiter, aber ohne Abgleich).
 
+## 6b. Auf dem iPhone und iPad
+1. Tailscale-App installieren und anmelden.
+2. In Safari `https://<synology>.<tailnet>.ts.net` öffnen, anmelden.
+3. **Teilen → Zum Home-Bildschirm**. Mietshaus ab jetzt von dort öffnen – wie eine App.
+4. Dort **Einstellungen → Mitteilungen auf diesem Gerät → Einschalten**: neue Dokumente, zugewiesene Vorgänge,
+   Morgenübersicht ab 7 Uhr, Probleme mit der Sicherung – auch wenn Mietshaus geschlossen ist.
+5. **Einstellungen → Benutzer → Passkey für dieses Gerät hinzufügen**: danach Anmeldung mit Face ID statt Passwort.
+
 ## 7. Claude
 In der Mac-App (mit Server verbunden): **Einstellungen → Claude Desktop → Verbindung erneuern**. Die App holt für
 dich einen eigenen Claude-Schlüssel vom Server und trägt ihn in Claude Desktop ein; Claude arbeitet dann über den Server
 (Vorschläge von Claude, Protokoll „Claude für <dein Name>“). Ein neuer Schlüssel macht den alten ungültig.
+
+## 7b. E-Mails senden
+**Einstellungen → E-Mail-Versand**: SMTP-Server deines Postfachs (z. B. GMX: `mail.gmx.net`, Port 587, STARTTLS),
+Benutzer, Passwort, Absender. Danach öffnet „E-Mail“ bei Personen und „Per E-Mail…“ bei Dokumenten einen Dialog;
+der Server sendet und legt die E-Mail mit Anhängen im Archiv ab.
 
 ## 8. Sicherung
 - Der Server sichert täglich nach `docker/mietshaus/sicherungen` (14 Tage, danach eine je Monat für ein Jahr) und vor
   jedem Update.
 - **Hyper Backup** (Paket-Zentrum): den Ordner `docker/mietshaus` regelmäßig auf eine externe Platte oder in die Cloud
   sichern – erst das schützt vor Ausfall der Synology.
+- **Einstellungen → Status** zeigt letzte Sicherung, den monatlichen Test der Wiederherstellung, Speicherplatz und
+  angemeldete Geräte; das Cockpit warnt, wenn etwas nicht stimmt.
 
 ## 9. Updates
 **Server – automatisch nachts.** Die Synology nimmt das Image `stable`; das rückt nur weiter, wenn eine neue Version
@@ -92,3 +107,6 @@ selten ein Update; ist sie zu alt für den Server, sagt sie das.
 - [ ] Ein Scan in `eingang` erscheint nach spätestens einer Minute im Postfach.
 - [ ] Unter `docker/mietshaus/sicherungen` liegt am nächsten Tag eine automatische Sicherung.
 - [ ] Hyper Backup sichert `docker/mietshaus`.
+- [ ] Auf dem iPhone (Home-Bildschirm) kommt „Test senden“ als Mitteilung an.
+- [ ] Anmeldung mit Passkey (Face ID) klappt über die Tailscale-Adresse.
+- [ ] Der Aufgabenplaner holt nachts das neue Image (Container Manager zeigt danach die neue Version).

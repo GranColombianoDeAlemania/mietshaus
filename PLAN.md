@@ -132,6 +132,21 @@ stays, also in the browser). Instead of merging copies of several users there is
 | Tests | `scripts/servertest.cjs` (HTTP, users, events, upload, restore, local mode), Claude test also through the server and the forwarding, click and screenshot tests through the embedded server (`scripts/harness.cjs`), container checked locally (OCR of a scan and the inbox folder under Linux) | done |
 | Offen | Checks on the real Synology (checklist in ANLEITUNG-NAS.md); pain.001/pain.008 schemas for the click test | open |
 
+## Version 0.11 – updates, traffic light, working together
+
+From the pick of 28.10.2026 („Paket 1 – ich will nichts bezahlen; Paket 2 so ok; Paket 3 so ok“).
+
+| Area | Contents | Status |
+|------|----------|--------|
+| Updates | GitHub Action „Bauen“: tests on every push, image `latest` from master only when green; a tag vX.Y.Z builds image X.Y.Z / X.Y / `stable` and a release with the Mac app (+ SHA-256); compose uses `stable`, nightly update by the DSM task scheduler; the server tells about a newer version; the Mac app updates itself from the release without a paid certificate (checksum, signature, swap after quitting; `scripts/updatetest.sh`); an app too old for the server says so | done |
+| Ampel | Traffic light in the header (green connected and up to date, yellow working/reconnecting/reading documents, red no connection, grey local) with details; sign of life from the server every 15 s | done |
+| Zusammenarbeit | Conflict protection when two users edit the same record (409 with name; overwrite on purpose or see the new state); cases assigned to a user, „Meine Aufgaben“ in the cockpit | done |
+| Status | Status page: version/update, automatic backup, monthly restore test, space, text recognition, signed-in devices with log-out; cockpit warnings about backups | done |
+| E-Mail | Sending mails via SMTP with archive documents attached; every mail sent filed as .eml in the archive | done |
+| Mitteilungen | Web Push (browser, iPhone/iPad home-screen app; manifest, service worker, icons) and macOS notifications in the app: new documents, assigned cases, morning overview, backup problems | done |
+| Passkeys | Login with Touch ID / Face ID / security key (WebAuthn), password stays | done |
+| Offen | FinTS (automatic bank statements) – own plan; checks on the real Synology and iPhone (checklist in ANLEITUNG-NAS.md) | open |
+
 ## Development
 
 ```
