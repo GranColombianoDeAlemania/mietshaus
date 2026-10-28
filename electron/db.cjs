@@ -746,10 +746,33 @@ const MIGRATIONS = [
       ALTER TABLE protokoll ADD COLUMN geraet TEXT;
       INSERT INTO einstellungen (schluessel, wert) VALUES ('datenbank_id', lower(hex(randomblob(16)))) ON CONFLICT (schluessel) DO NOTHING;`);
   },
+  // Version 0.10: users of the server (2–3 people with the same rights) and their sessions; every record and log entry
+  // names the user of its last change. Neither table is reachable through the generic save/get/liste (not in TABLES).
+  (db) => {
+    for (const t of aenderungsTabellen(db)) db.exec(`ALTER TABLE ${t} ADD COLUMN geaendert_benutzer INTEGER`);
+    db.exec(`
+      ALTER TABLE protokoll ADD COLUMN benutzer INTEGER;
+      CREATE TABLE benutzer (
+        id INTEGER PRIMARY KEY,
+        login TEXT NOT NULL UNIQUE COLLATE NOCASE,
+        name TEXT NOT NULL,
+        passwort_hash TEXT NOT NULL,
+        aktiv INTEGER NOT NULL DEFAULT 1,
+        claude_token_hash TEXT,
+        erstellt TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+      );
+      CREATE TABLE sitzungen (
+        token_hash TEXT PRIMARY KEY,
+        benutzer_id INTEGER NOT NULL REFERENCES benutzer(id) ON DELETE CASCADE,
+        erstellt TEXT NOT NULL,
+        zuletzt TEXT NOT NULL,
+        geraet TEXT
+      );`);
+  },
 ];
 
 // Tables without change time: the log itself, settings of this installation and page state.
-const AENDERUNG_AUSGENOMMEN = new Set(['protokoll', 'einstellungen', 'hinweis_status', 'checkliste', 'geraete']);
+const AENDERUNG_AUSGENOMMEN = new Set(['protokoll', 'einstellungen', 'hinweis_status', 'checkliste', 'geraete', 'benutzer', 'sitzungen']);
 const UTC_JETZT = `strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`;
 
 // Ordinary tables holding user data; with vorMigration the columns need not exist yet.
@@ -760,16 +783,26 @@ function aenderungsTabellen(db, vorMigration = false) {
     .filter((t) => vorMigration || db.prepare(`PRAGMA table_info(${t})`).all().some((c) => c.name === 'geaendert_am'));
 }
 
-// Stamps every insert and change with time and device. Like the log these are temporary triggers of this connection;
-// the inner UPDATE leaves the logged columns alone, so it adds no second log entry.
-function aenderungenAktivieren(db, geraetId) {
-  const g = geraetId ? `'${String(geraetId).replace(/'/g, '')}'` : 'NULL';
+// Who is changing data right now: source (app or Claude), device and user. A temporary table of this connection, read by
+// the triggers; the server sets it before every request (kontextSetzen), the Mac app and the MCP server once.
+const KONTEXT = (k) => `(SELECT wert FROM temp.kontext WHERE schluessel = '${k}')`;
+function kontextSetzen(db, werte) {
+  const st = db.prepare('INSERT INTO temp.kontext (schluessel, wert) VALUES (?, ?) ON CONFLICT (schluessel) DO UPDATE SET wert = excluded.wert');
+  for (const [k, v] of Object.entries(werte)) st.run(k, v == null ? null : String(v));
+}
+
+// Stamps every insert and change with time, device and user. Like the log these are temporary triggers of this
+// connection; the inner UPDATE leaves the logged columns alone, so it adds no second log entry.
+function aenderungenAktivieren(db) {
+  const benutzerSpalte = (t) => db.prepare(`PRAGMA table_info(${t})`).all().some((c) => c.name === 'geaendert_benutzer');
   for (const t of aenderungsTabellen(db)) {
+    const b = benutzerSpalte(t) ? `, geaendert_benutzer = ${KONTEXT('benutzer')}` : '';
+    const setzen = `geaendert_am = ${UTC_JETZT}, geaendert_von = ${KONTEXT('geraet')}${b}`;
     db.exec(`
       CREATE TEMP TRIGGER IF NOT EXISTS stand_${t}_i AFTER INSERT ON main.${t} WHEN NEW.geaendert_am IS NULL BEGIN
-        UPDATE main.${t} SET geaendert_am = ${UTC_JETZT}, geaendert_von = ${g} WHERE rowid = NEW.rowid; END;
+        UPDATE main.${t} SET ${setzen} WHERE rowid = NEW.rowid; END;
       CREATE TEMP TRIGGER IF NOT EXISTS stand_${t}_u AFTER UPDATE ON main.${t} WHEN NEW.geaendert_am IS OLD.geaendert_am BEGIN
-        UPDATE main.${t} SET geaendert_am = ${UTC_JETZT}, geaendert_von = ${g} WHERE rowid = NEW.rowid; END;`);
+        UPDATE main.${t} SET ${setzen} WHERE rowid = NEW.rowid; END;`);
   }
 }
 
@@ -889,8 +922,10 @@ function open(file, quelle = 'app', geraet = null, { ohneUpdateSicherung = false
     db.prepare(`INSERT INTO geraete (id, name, zuletzt) VALUES (?, ?, ${UTC_JETZT})
       ON CONFLICT (id) DO UPDATE SET name = excluded.name, zuletzt = excluded.zuletzt`).run(geraet.id, geraet.name ?? geraet.id);
   }
-  protokollAktivieren(db, quelle, geraet?.id);
-  aenderungenAktivieren(db, geraet?.id);
+  db.exec('CREATE TEMP TABLE IF NOT EXISTS kontext (schluessel TEXT PRIMARY KEY, wert TEXT)');
+  kontextSetzen(db, { quelle, geraet: geraet?.id ?? null, benutzer: null });
+  protokollAktivieren(db);
+  aenderungenAktivieren(db);
   return db;
 }
 
@@ -902,20 +937,19 @@ const NICHT_PROTOKOLLIEREN = new Set(['daten', 'erfasst', 'unterschrift_mieter',
 // The recognised text of a document is large; the text of a booking or a dunning letter belongs in the log.
 const nichtProtokollieren = (tabelle, spalte) => NICHT_PROTOKOLLIEREN.has(spalte) || (tabelle === 'dokumente' && spalte === 'text');
 
-// Temporary triggers belong to this connection only, so each process records its own source (app or Claude) and device.
-function protokollAktivieren(db, quelle, geraetId = null) {
-  const q = quelle.replace(/'/g, '');
-  const g = geraetId ? `'${String(geraetId).replace(/'/g, '')}'` : 'NULL';
+// Temporary triggers belong to this connection only; source, device and user come from temp.kontext.
+function protokollAktivieren(db) {
+  const q = KONTEXT('quelle'), g = KONTEXT('geraet'), b = KONTEXT('benutzer');
   for (const t of PROTOKOLLIERT) {
     const spalten = db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name).filter((c) => !nichtProtokollieren(t, c));
     const json = (alias) => `json_object(${spalten.map((c) => `'${c}', ${alias}.${c}`).join(', ')})`;
     db.exec(`
       CREATE TEMP TRIGGER IF NOT EXISTS log_${t}_i AFTER INSERT ON main.${t} BEGIN
-        INSERT INTO main.protokoll (quelle, geraet, tabelle, datensatz, aktion, neu) VALUES ('${q}', ${g}, '${t}', NEW.id, 'angelegt', ${json('NEW')}); END;
+        INSERT INTO main.protokoll (quelle, geraet, benutzer, tabelle, datensatz, aktion, neu) VALUES (${q}, ${g}, ${b}, '${t}', NEW.id, 'angelegt', ${json('NEW')}); END;
       CREATE TEMP TRIGGER IF NOT EXISTS log_${t}_u AFTER UPDATE ON main.${t} WHEN ${json('OLD')} IS NOT ${json('NEW')} BEGIN
-        INSERT INTO main.protokoll (quelle, geraet, tabelle, datensatz, aktion, alt, neu) VALUES ('${q}', ${g}, '${t}', NEW.id, 'geändert', ${json('OLD')}, ${json('NEW')}); END;
+        INSERT INTO main.protokoll (quelle, geraet, benutzer, tabelle, datensatz, aktion, alt, neu) VALUES (${q}, ${g}, ${b}, '${t}', NEW.id, 'geändert', ${json('OLD')}, ${json('NEW')}); END;
       CREATE TEMP TRIGGER IF NOT EXISTS log_${t}_d AFTER DELETE ON main.${t} BEGIN
-        INSERT INTO main.protokoll (quelle, geraet, tabelle, datensatz, aktion, alt) VALUES ('${q}', ${g}, '${t}', OLD.id, 'gelöscht', ${json('OLD')}); END;`);
+        INSERT INTO main.protokoll (quelle, geraet, benutzer, tabelle, datensatz, aktion, alt) VALUES (${q}, ${g}, ${b}, '${t}', OLD.id, 'gelöscht', ${json('OLD')}); END;`);
   }
 }
 
@@ -1332,4 +1366,4 @@ function api(db) {
   return alles;
 }
 
-module.exports = { open, api, datenStand, sicherungsOrdner, SCHEMA_VERSION: MIGRATIONS.length };
+module.exports = { open, api, datenStand, sicherungsOrdner, kontextSetzen, SCHEMA_VERSION: MIGRATIONS.length };

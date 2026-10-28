@@ -91,7 +91,7 @@ pruefe('Danach wird weiter gestempelt', raw.prepare('SELECT geaendert_von FROM o
   fs.copyFileSync(path.join(__dirname, 'testdaten', 'mietshaus-0.9.0.sqlite'), sAlt);
   fs.copyFileSync(sAlt, alt);
   const pAlt = sicherung.pruefen(sAlt);
-  pruefe('0.9.0-Sicherung lesbar, Stand aus dem Protokoll', !!pAlt.zeit && pAlt.datenbank_id == null && pAlt.version === SCHEMA_VERSION - 1, JSON.stringify(pAlt));
+  pruefe('0.9.0-Sicherung lesbar, Stand aus dem Protokoll', !!pAlt.zeit && pAlt.datenbank_id == null && pAlt.version === 19, JSON.stringify(pAlt));
   const idVorher = datenStand(raw).datenbank_id;
   einspielen(sAlt);
   pruefe('0.9.0-Sicherung eingespielt und umgestellt', db.objekte('miete').some((x) => x.bezeichnung === 'Altbau 3')

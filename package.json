@@ -30,6 +30,8 @@
   "private": true,
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.2",
+    "@napi-rs/canvas": "^1.0.11",
+    "heic-convert": "^2.1.0",
     "imapflow": "2.1.2",
     "pdfjs-dist": "6.3.289",
     "tesseract.js": "7.0.0",

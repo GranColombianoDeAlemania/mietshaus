@@ -1,44 +1,32 @@
-// File intake and text recognition for the document archive.
-// PDFs are read (and rendered when scanned) in a hidden window with pdf.js; images and scanned pages go through Tesseract OCR.
-const { app, BrowserWindow, protocol, net } = require('electron');
-const { pathToFileURL } = require('node:url');
+// File intake and text recognition for the document archive, in plain Node (Mac app and server alike).
+// PDFs are read with pdf.js (pdf.cjs, scans rendered as images); images and scanned pages go through Tesseract OCR.
 const path = require('node:path');
 const fs = require('node:fs');
+const os = require('node:os');
 const crypto = require('node:crypto');
 
 const erechnung = require('./erechnung.cjs');
+const { pdfLesen } = require('./pdf.cjs');
 
 const BILDER = new Set(['.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp', '.webp', '.gif']);
 const TEXT = new Set(['.txt', '.csv', '.md', '.xml', '.json', '.eml', '.html', '.htm']);
 
-// hvdok://dokument/<file> and hvdok://vorschau/<file>. CORS is allowed because pages load from http:// (dev) or file://.
-function protokollRegistrieren(dokumentOrdner, vorschauOrdner) {
-  protocol.handle('hvdok', async (req) => {
-    const u = new URL(req.url);
-    const ordner = u.hostname === 'vorschau' ? vorschauOrdner() : dokumentOrdner();
-    const r = await net.fetch(pathToFileURL(path.join(ordner, path.basename(decodeURIComponent(u.pathname)))).href);
-    const headers = new Headers(r.headers);
-    headers.set('Access-Control-Allow-Origin', '*');
-    return new Response(r.body, { status: r.status, headers });
-  });
-}
-
-module.exports = function analyse({ db, dokumentOrdner, vorschauOrdner, analyseUrl, onFertig }) {
-  let fenster = null;
+// tessdata: folder with the Tesseract language files (resources/tessdata); cacheOrdner: Tesseract's cache.
+module.exports = function analyse({ db, dokumentOrdner, vorschauOrdner, onFertig, tessdata = path.join(__dirname, '..', 'resources', 'tessdata'),
+  cacheOrdner = path.join(os.tmpdir(), 'mietshaus-ocr') }) {
   let ocrWorker = null;
   let laeuft = false;
 
   // Files inside the packaged app archive cannot be loaded by worker threads, so they are read from the unpacked copy.
   const ausserhalbAsar = (p) => p.replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
-  const tessdata = () => (app.isPackaged ? path.join(process.resourcesPath, 'tessdata') : path.join(__dirname, '..', 'resources', 'tessdata'));
 
   async function ocr(bild) {
     if (!ocrWorker) {
       const { createWorker } = require('tesseract.js');
       ocrWorker = await createWorker(['deu', 'eng'], 1, {
-        langPath: tessdata(),
+        langPath: tessdata,
         gzip: false,
-        cachePath: path.join(app.getPath('userData'), 'ocr-cache'),
+        cachePath: cacheOrdner,
         workerPath: ausserhalbAsar(require.resolve('tesseract.js/src/worker-script/node/index.js')),
       });
     }
@@ -46,27 +34,19 @@ module.exports = function analyse({ db, dokumentOrdner, vorschauOrdner, analyseU
     return data.text ?? '';
   }
 
-  async function analyseFenster() {
-    if (fenster && !fenster.isDestroyed()) return fenster;
-    fenster = new BrowserWindow({ show: false, webPreferences: { sandbox: true, contextIsolation: true, offscreen: true } });
-    await fenster.loadURL(analyseUrl());
-    return fenster;
-  }
-
   // Reads one stored document: returns its text, page count and whether OCR was needed.
   async function lesen(datei) {
     const ext = path.extname(datei).toLowerCase();
     const voll = path.join(dokumentOrdner(), datei);
     if (ext === '.pdf') {
-      const w = await analyseFenster();
-      const r = await w.webContents.executeJavaScript(`window.pdfLesen(${JSON.stringify(`hvdok://dokument/${encodeURIComponent(datei)}`)})`);
+      const r = await pdfLesen(fs.readFileSync(voll));
       let ocrNoetig = false;
       const seiten = [];
       for (const s of r.seiten) {
         // Pages without a text layer are scans: their rendering is recognised and kept as a preview for Claude.
         if (s.bild) {
           ocrNoetig = true;
-          const png = Buffer.from(s.bild.split(',')[1], 'base64');
+          const png = s.bild;
           fs.mkdirSync(vorschauOrdner(), { recursive: true });
           fs.writeFileSync(path.join(vorschauOrdner(), `${path.parse(datei).name}-${s.nr}.png`), png);
           seiten.push(await ocr(png));
@@ -117,14 +97,10 @@ module.exports = function analyse({ db, dokumentOrdner, vorschauOrdner, analyseU
       let daten = fs.readFileSync(p);
       const sha256 = crypto.createHash('sha256').update(daten).digest('hex');
       let ext = path.extname(p).toLowerCase();
-      // iPhone photos (HEIC) cannot be shown or read by the app; macOS converts them to JPEG with its built-in sips tool.
-      if ((ext === '.heic' || ext === '.heif') && process.platform === 'darwin') {
-        const tmp = path.join(app.getPath('temp'), `${crypto.randomUUID()}.jpg`);
-        try {
-          require('node:child_process').execFileSync('/usr/bin/sips', ['-s', 'format', 'jpeg', p, '--out', tmp], { stdio: 'ignore' });
-          daten = fs.readFileSync(tmp);
-          ext = '.jpg';
-        } catch {} finally { fs.rmSync(tmp, { force: true }); }
+      // iPhone photos (HEIC) cannot be shown or read by the app: they become JPEG (macOS: built-in sips; elsewhere heic-convert).
+      if (ext === '.heic' || ext === '.heif') {
+        const jpeg = heicZuJpeg(p, daten);
+        if (jpeg) { daten = jpeg; ext = '.jpg'; }
       }
       const datei = `${crypto.randomUUID()}${ext}`;
       const name = path.basename(p);
@@ -145,10 +121,23 @@ module.exports = function analyse({ db, dokumentOrdner, vorschauOrdner, analyseU
     },
     beenden: async () => {
       if (ocrWorker) await ocrWorker.terminate();
-      if (fenster && !fenster.isDestroyed()) fenster.destroy();
     },
   };
 };
 
-module.exports.protokollRegistrieren = protokollRegistrieren;
-module.exports.SCHEMA = { scheme: 'hvdok', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true } };
+// HEIC/HEIF → JPEG, or null when it cannot be converted (the file is then kept as it is).
+function heicZuJpeg(datei, daten) {
+  if (process.platform === 'darwin') {
+    const tmp = path.join(os.tmpdir(), `${crypto.randomUUID()}.jpg`);
+    try {
+      require('node:child_process').execFileSync('/usr/bin/sips', ['-s', 'format', 'jpeg', datei, '--out', tmp], { stdio: 'ignore' });
+      return fs.readFileSync(tmp);
+    } catch { return null; } finally { fs.rmSync(tmp, { force: true }); }
+  }
+  try {
+    // heic-convert works in pure JavaScript but returns a promise; run it in a child process to keep importieren synchronous.
+    const skript = `require(${JSON.stringify(require.resolve('heic-convert'))})({ buffer: require('fs').readFileSync(process.argv[1]), format: 'JPEG', quality: 0.9 })
+      .then((b) => process.stdout.write(Buffer.from(b)))`;
+    return require('node:child_process').execFileSync(process.execPath, ['-e', skript, datei], { maxBuffer: 200 * 1024 * 1024, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } });
+  } catch { return null; }
+}

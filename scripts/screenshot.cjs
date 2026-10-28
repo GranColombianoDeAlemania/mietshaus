@@ -4,9 +4,10 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { open, api } = require('../electron/db.cjs');
 const analyse = require('../electron/analyse.cjs');
+const hvdok = require('../electron/hvdok.cjs');
 const { protocol } = require('electron');
 const { pathToFileURL } = require('node:url');
-protocol.registerSchemesAsPrivileged([analyse.SCHEMA]);
+protocol.registerSchemesAsPrivileged([hvdok.SCHEMA]);
 
 const out = process.argv[process.argv.length - 1];
 const db = api(open(':memory:'));
@@ -83,9 +84,8 @@ app.whenReady().then(async () => {
   fs.mkdirSync(out, { recursive: true });
   // Documents from the archive test (scripts/archivtest.cjs) go into the inbox.
   const docs = path.join(out, 'dokumente');
-  analyse.protokollRegistrieren(() => docs, () => path.join(docs, 'vorschau'));
-  const ana = analyse({ db, dokumentOrdner: () => docs, vorschauOrdner: () => path.join(docs, 'vorschau'),
-    analyseUrl: () => pathToFileURL(path.join(__dirname, '..', 'dist', 'analyse.html')).href });
+  hvdok.protokollRegistrieren(() => docs, () => path.join(docs, 'vorschau'));
+  const ana = analyse({ db, dokumentOrdner: () => docs, vorschauOrdner: () => path.join(docs, 'vorschau') });
   const testDocs = process.env.TESTDOKS ? fs.readdirSync(process.env.TESTDOKS).filter((f) => /\.(pdf|png)$/.test(f)).map((f) => path.join(process.env.TESTDOKS, f)) : [];
   ana.importieren(testDocs);
   // A few photos filed directly with the house, a unit and the project for the galleries.

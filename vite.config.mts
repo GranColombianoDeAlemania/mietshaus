@@ -7,7 +7,7 @@ export default defineConfig({
   base: './',
   build: {
     rollupOptions: {
-      input: { index: resolve(__dirname, 'index.html'), analyse: resolve(__dirname, 'analyse.html') },
+      input: { index: resolve(__dirname, 'index.html') },
     },
   },
 });

@@ -4,7 +4,8 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { open, api } = require('../electron/db.cjs');
 const analyse = require('../electron/analyse.cjs');
-protocol.registerSchemesAsPrivileged([analyse.SCHEMA]);
+const hvdok = require('../electron/hvdok.cjs');
+protocol.registerSchemesAsPrivileged([hvdok.SCHEMA]);
 const out = process.argv[process.argv.length - 1];
 const db = api(open(':memory:'));
 const o = db.neuesObjekt({ bezeichnung: 'Lindenstraße 5', art: 'gemischt', strasse: 'Lindenstraße 5', plz: '10115', ort: 'Berlin' });
@@ -66,7 +67,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 app.on('window-all-closed', () => {});
 app.whenReady().then(async () => {
   fs.mkdirSync(out, { recursive: true });
-  analyse.protokollRegistrieren(() => path.join(out, 'dok'), () => path.join(out, 'dok', 'vorschau'));
+  hvdok.protokollRegistrieren(() => path.join(out, 'dok'), () => path.join(out, 'dok', 'vorschau'));
   db.automatikLauf();
   const breite = Number(process.env.BREITE) || 1400, hoehe = Number(process.env.HOEHE) || 900;
   const win = new BrowserWindow({ width: breite, height: hoehe, show: false,

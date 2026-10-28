@@ -8,7 +8,8 @@ const fs = require('node:fs');
 const { execFileSync } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
 const analyse = require('../electron/analyse.cjs');
-protocol.registerSchemesAsPrivileged([analyse.SCHEMA]);
+const hvdok = require('../electron/hvdok.cjs');
+protocol.registerSchemesAsPrivileged([hvdok.SCHEMA]);
 
 const out = path.resolve(process.argv[process.argv.length - 1]);
 const { db, o, w, V } = require('./rechentest.cjs');
@@ -41,9 +42,8 @@ app.commandLine.appendSwitch('lang', 'de-DE');
 app.on('window-all-closed', () => {});
 app.whenReady().then(async () => {
   const docs = path.join(out, 'dokumente');
-  analyse.protokollRegistrieren(() => docs, () => path.join(docs, 'vorschau'));
-  const ana = analyse({ db, dokumentOrdner: () => docs, vorschauOrdner: () => path.join(docs, 'vorschau'),
-    analyseUrl: () => pathToFileURL(path.join(__dirname, '..', 'dist', 'analyse.html')).href });
+  hvdok.protokollRegistrieren(() => docs, () => path.join(docs, 'vorschau'));
+  const ana = analyse({ db, dokumentOrdner: () => docs, vorschauOrdner: () => path.join(docs, 'vorschau') });
 
   ipcMain.handle('db', (_e, fn, args) => {
     if (typeof db[fn] !== 'function') { meldeFehler('Unbekannte Funktion', fn); throw new Error(`db.${fn} fehlt`); }

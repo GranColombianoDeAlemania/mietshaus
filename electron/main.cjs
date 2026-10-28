@@ -7,6 +7,7 @@ const { open, api, datenStand, sicherungsOrdner } = require('./db.cjs');
 const sicherung = require('./sicherung.cjs');
 const { geraet: geraetLesen } = require('./geraet.cjs');
 const analyse = require('./analyse.cjs');
+const hvdok = require('./hvdok.cjs');
 const eingang = require('./eingang.cjs');
 const { zip } = require('./zip.cjs');
 const ortszeit = require('./zeit.cjs');
@@ -29,7 +30,7 @@ app.on('second-instance', () => {
 });
 
 // Stored documents and previews are served to the windows under hvdok:// (also for the built-in PDF viewer).
-protocol.registerSchemesAsPrivileged([analyse.SCHEMA]);
+protocol.registerSchemesAsPrivileged([hvdok.SCHEMA]);
 
 // German date inputs and number formats regardless of the system language.
 app.commandLine.appendSwitch('lang', 'de-DE');
@@ -288,8 +289,10 @@ app.whenReady().then(() => {
   geraet = geraetLesen(app.getPath('userData'));
   oeffneDb();
   claudeUmziehen();
-  analyse.protokollRegistrieren(dokumentOrdner, vorschauOrdner);
-  ana = analyse({ db: new Proxy({}, { get: (_t, k) => db[k] }), dokumentOrdner, vorschauOrdner, analyseUrl: () => seite('analyse.html'),
+  hvdok.protokollRegistrieren(dokumentOrdner, vorschauOrdner);
+  ana = analyse({ db: new Proxy({}, { get: (_t, k) => db[k] }), dokumentOrdner, vorschauOrdner,
+    tessdata: app.isPackaged ? path.join(process.resourcesPath, 'tessdata') : path.join(__dirname, '..', 'resources', 'tessdata'),
+    cacheOrdner: path.join(app.getPath('userData'), 'ocr-cache'),
     onFertig: (id) => melden('dokumentAnalysiert', id) });
   ana.warteschlange();
   // Routine work (monthly charges) at start and then hourly.
