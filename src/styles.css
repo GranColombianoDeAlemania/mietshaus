@@ -667,13 +667,13 @@ textarea.brieftext { width: 100%; padding: 10px 12px; border: 1px solid var(--li
 .webmenue hr { border: 0; border-top: 1px solid var(--line); margin: 4px 0; }
 
 /* Phone and small tablet: one column; the sidebar slides in as a menu (button in the header). */
-.menueknopf, .menuehintergrund { display: none; }
+.kopfleiste .menueknopf, .menuehintergrund { display: none; }
 @media (max-width: 800px) {
   .app { grid-template: 'kopf' auto 'main' 1fr 'foot' auto / minmax(0, 1fr); }
   .seitenleiste { position: fixed; z-index: 45; inset: 0 auto 0 0; width: min(290px, 86vw); transform: translateX(-100%); transition: transform 0.2s; }
   .seitenleiste.offen { transform: none; box-shadow: var(--schatten-gross); }
   .menuehintergrund { display: block; position: fixed; inset: 0; z-index: 44; background: rgba(20, 26, 27, 0.45); }
-  .menueknopf { display: inline-flex; }
+  .kopfleiste .menueknopf { display: inline-flex; }
   .kopfleiste { padding: 0 10px; gap: 8px; }
   .kopfleiste .navknoepfe { display: none; }
   .kopfleiste .pfad { display: none; }

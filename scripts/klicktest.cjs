@@ -35,7 +35,12 @@ app.whenReady().then(async () => {
     speichern: (inhalt, name) => { fs.writeFileSync(path.join(DATEIEN, sauber(name)), typeof inhalt === 'string' ? inhalt : Buffer.from(inhalt)); return name; },
     kontextmenue: (eintraege) => { const a = menueAntwort; menueAntwort = null; return a && eintraege.some((x) => x.id === a) ? a : null; },
     // Letters filed in the archive and then opened: a copy goes to the output folder for the content checks.
-    dateiOeffnen: (_url, name) => { fs.copyFileSync(path.join(out, 'dokumente', path.basename(name)), path.join(DATEIEN, `archiv-${path.basename(name)}`)); return name; },
+    dateiOeffnen: (_url, name) => {
+      const datei = path.basename(name);
+      const titel = db.dokumentListe({ q: '' }).find((d) => d.datei === datei)?.titel ?? datei;
+      fs.copyFileSync(path.join(out, 'dokumente', datei), path.join(DATEIEN, sauber(`${titel}${path.extname(datei)}`)));
+      return name;
+    },
     extern: () => {},
     ordnerWaehlen: () => null,
   } });
