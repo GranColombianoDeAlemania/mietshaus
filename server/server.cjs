@@ -16,11 +16,12 @@ const ortszeit = require('../electron/zeit.cjs');
 const authModul = require('./auth.cjs');
 const geheim = require('./geheim.cjs');
 const versandModul = require('./versand.cjs');
+const pushModul = require('./push.cjs');
 
 const { VERSION, DESKTOP_SCHNITTSTELLE, vergleichen, neuesteVersion } = require('../electron/version.cjs');
 const TYPEN = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml',
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.pdf': 'application/pdf', '.json': 'application/json',
-  '.txt': 'text/plain; charset=utf-8', '.csv': 'text/csv; charset=utf-8', '.xml': 'application/xml', '.woff2': 'font/woff2', '.ico': 'image/x-icon', '.tif': 'image/tiff', '.tiff': 'image/tiff' };
+  '.webmanifest': 'application/manifest+json', '.txt': 'text/plain; charset=utf-8', '.csv': 'text/csv; charset=utf-8', '.xml': 'application/xml', '.woff2': 'font/woff2', '.ico': 'image/x-icon', '.tif': 'image/tiff', '.tiff': 'image/tiff' };
 const SICHERHEIT = { 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'SAMEORIGIN', 'Cross-Origin-Opener-Policy': 'same-origin' };
 const MAX_UPLOAD = 300 * 1024 * 1024;
 // Functions answered by the server itself, not by the database API.
@@ -92,9 +93,17 @@ async function starten(o) {
   const ana = analyse({ db: dbSystem, dokumentOrdner, vorschauOrdner, tessdata: o.tessdata, cacheOrdner: path.join(daten, 'ocr-cache'),
     onFertig: (id) => { senden('dokumentAnalysiert', id); pulsSenden(); } });
   ana.warteschlange();
+  const push = pushModul({ daten, raw: () => raw, senden });
+  const benachrichtigen = (n) => push.benachrichtigen(n).catch((e) => console.error('Benachrichtigung', e));
   const ein = eingang({
     db: dbSystem,
-    importieren: (pfade, opt) => { const r = ana.importieren(pfade, opt); senden('aktualisiert'); return r; },
+    importieren: (pfade, opt) => {
+      const r = ana.importieren(pfade, opt);
+      senden('aktualisiert');
+      const neu = r.filter((x) => !x.doppelt).length;
+      if (neu) benachrichtigen({ art: 'postfach', titel: 'Neue Dokumente im Postfach', text: `${neu} ${neu === 1 ? 'neues Dokument' : 'neue Dokumente'} von ${opt?.quelle === 'email' ? 'E-Mail' : 'Eingangsordner'}.` });
+      return r;
+    },
     melden: (text) => senden('meldung', text),
     passwort,
   });
@@ -112,6 +121,7 @@ async function starten(o) {
       console.error('Automatische Sicherung', e);
       dbSystem.setzeEinstellungen({ letzter_sicherungsfehler: JSON.stringify({ zeit: new Date().toISOString(), fehler: String(e?.message ?? e) }) });
       senden('meldung', `Automatische Sicherung fehlgeschlagen: ${e?.message ?? e}`);
+      benachrichtigen({ art: 'sicherung', titel: 'Sicherung fehlgeschlagen', text: String(e?.message ?? e).slice(0, 200) });
       return;
     }
     // Once a month the newest backup is restored on trial (into a temporary copy).
@@ -123,7 +133,10 @@ async function starten(o) {
   const sicherungTesten = () => {
     const r = sicherung.testen(sicherungsOrdner(dbFile));
     dbSystem.setzeEinstellungen({ sicherungstest: JSON.stringify(r) });
-    if (!r.ok) senden('meldung', `Sicherungstest fehlgeschlagen: ${r.fehler}`);
+    if (!r.ok) {
+      senden('meldung', `Sicherungstest fehlgeschlagen: ${r.fehler}`);
+      benachrichtigen({ art: 'sicherung', titel: 'Sicherungstest fehlgeschlagen', text: String(r.fehler).slice(0, 200) });
+    }
     return r;
   };
   // Folder sizes for the status page (documents can be many; this runs only when the page asks).
@@ -141,9 +154,24 @@ async function starten(o) {
     const n = await neuesteVersion();
     if (n) neueste = vergleichen(n.version, VERSION) > 0 ? n : null;
   };
+  // Morning overview from 7 o'clock, once a day, to every user who wants it: urgent points, today's appointments, own
+  // cases due. Nothing is sent when there is nothing to do.
+  const morgenUebersicht = async () => {
+    if (o.modus !== 'server' || new Date().getHours() < 7) return;
+    const heute = ortszeit.heute();
+    if (dbSystem.einstellungen().push_morgen === heute) return;
+    dbSystem.setzeEinstellungen({ push_morgen: heute });
+    const dringend = dbSystem.hinweise().filter((h) => h.stufe === 'rot').length;
+    const termine = dbSystem.termineListe(heute, heute).filter((t) => !t.erledigt).length;
+    for (const b of raw.prepare(`SELECT DISTINCT b.id FROM benutzer b JOIN push_abos a ON a.benutzer_id = b.id WHERE b.aktiv = 1`).all()) {
+      const faellig = dbSystem.meineAufgaben(b.id).filter((v) => v.faellig && v.faellig <= heute).length;
+      const teile = [dringend && `${dringend} dringend`, termine && `${termine} ${termine === 1 ? 'Termin' : 'Termine'} heute`, faellig && `${faellig} ${faellig === 1 ? 'Aufgabe' : 'Aufgaben'} fällig`].filter(Boolean);
+      if (teile.length) await benachrichtigen({ art: 'morgen', benutzer: b.id, titel: 'Guten Morgen – Mietshaus', text: `${teile.join(', ')}.` });
+    }
+  };
   automatik();
-  const t1 = setTimeout(() => { autoSicherung(); updatePruefen(); }, 60_000);
-  const t2 = setInterval(() => { automatik(); autoSicherung(); }, 3600_000);
+  const t1 = setTimeout(() => { autoSicherung(); updatePruefen(); morgenUebersicht(); }, 60_000);
+  const t2 = setInterval(() => { automatik(); autoSicherung(); morgenUebersicht(); }, 3600_000);
   const t3 = setInterval(updatePruefen, 24 * 3600_000);
 
   // ---------- helpers ----------
@@ -186,7 +214,9 @@ async function starten(o) {
     if (!datei.startsWith(dist) || !fs.existsSync(datei) || fs.statSync(datei).isDirectory()) datei = path.join(dist, 'index.html');
     if (!fs.existsSync(datei)) return json(res, 503, { fehler: 'Die Oberfläche ist nicht gebaut (npm run build).' });
     const ext = path.extname(datei).toLowerCase();
-    res.writeHead(200, { 'Content-Type': TYPEN[ext] ?? 'application/octet-stream', 'Cache-Control': ext === '.html' ? 'no-cache' : 'public, max-age=31536000, immutable', ...SICHERHEIT });
+    // Only the built files with a hash in their name (assets/) may be kept for long; sw.js, icons and the page are checked each time.
+    const lange = datei.startsWith(path.join(dist, 'assets') + path.sep);
+    res.writeHead(200, { 'Content-Type': TYPEN[ext] ?? 'application/octet-stream', 'Cache-Control': lange ? 'public, max-age=31536000, immutable' : 'no-cache', ...SICHERHEIT });
     fs.createReadStream(datei).pipe(res);
   }
 
@@ -302,7 +332,15 @@ async function starten(o) {
       if (typeof fn !== 'string' || typeof roh[fn] !== 'function') throw new Fehler(400, `Unbekannte Funktion: ${fn}`);
       const vorher = aenderungen();
       kontext(req, w);
+      // A case assigned to someone else: that user gets a notification.
+      const zuweisung = fn === 'save' && args[0] === 'vorgaenge' && args[1]?.zustaendig && Number(args[1].zustaendig) !== w.benutzer?.id
+        ? { neu: Number(args[1].zustaendig), alt: args[1].id ? raw.prepare('SELECT zustaendig FROM vorgaenge WHERE id = ?').get(args[1].id)?.zustaendig : null } : null;
       let wert = await fachlich(() => roh[fn](...args));
+      if (zuweisung && zuweisung.neu !== zuweisung.alt) {
+        const v = raw.prepare('SELECT v.titel, v.faellig, o.bezeichnung AS objekt FROM vorgaenge v LEFT JOIN objekte o ON o.id = v.objekt_id WHERE v.id = ?').get(args[1].id ?? wert);
+        if (v) benachrichtigen({ art: 'aufgaben', benutzer: zuweisung.neu, titel: `${w.benutzer?.name ?? 'Jemand'} hat dir einen Vorgang zugewiesen`,
+          text: `${v.titel}${v.objekt ? ` · ${v.objekt}` : ''}${v.faellig ? ` · fällig ${v.faellig.split('-').reverse().join('.')}` : ''}` });
+      }
       // Stored mail passwords (encrypted) stay on the server; the page only learns that one is set.
       if (fn === 'einstellungen') wert = Object.fromEntries(Object.entries(wert).map(([k, v]) => [k, /_passwort_(server|enc|klar)$/.test(k) && v ? 'gesetzt' : v]));
       if (aenderungen() !== vorher) { senden('aktualisiert', null, req.headers['x-client'] ?? null); pulsSenden(); }
@@ -333,6 +371,19 @@ async function starten(o) {
       });
     }
     if (post && p === '/api/sicherungstest') return json(res, 200, sicherungTesten());
+    // ---------- notifications ----------
+    if (p === '/api/push/schluessel') return json(res, 200, { schluessel: push.oeffentlich() });
+    if (post && p === '/api/push/abo') {
+      const { abo, arten } = await jsonLesen(req);
+      fachlich(() => push.abonnieren(w.benutzer?.id ?? null, abo, arten, req.headers['user-agent']));
+      return json(res, 200, { ok: true });
+    }
+    if (post && p === '/api/push/abmelden') { push.abbestellen((await jsonLesen(req)).endpoint); return json(res, 200, { ok: true }); }
+    if (post && p === '/api/push/status') return json(res, 200, push.abo((await jsonLesen(req)).endpoint));
+    if (post && p === '/api/push/test') {
+      const n = await push.benachrichtigen({ art: 'test', benutzer: w.benutzer?.id ?? null, titel: 'Mietshaus', text: 'Benachrichtigungen funktionieren.' });
+      return json(res, 200, { gesendet: n });
+    }
     if (post && p === '/api/jetzt-sichern') {
       sicherung.automatisch(raw, sicherungsOrdner(dbFile), o.geraet, new Date(), true);
       dbSystem.setzeEinstellungen({ letzte_auto_sicherung: new Date().toISOString(), letzter_sicherungsfehler: null });

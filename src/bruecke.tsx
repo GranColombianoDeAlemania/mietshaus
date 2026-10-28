@@ -127,7 +127,7 @@ function ereignisse() {
     zustand.pulsAm = Date.now();
     melden();
   });
-  for (const kanal of ['aktualisiert', 'dokumentAnalysiert', 'meldung']) {
+  for (const kanal of ['aktualisiert', 'dokumentAnalysiert', 'meldung', 'benachrichtigung']) {
     quelle.addEventListener(kanal, (e) => {
       const wert = JSON.parse((e as MessageEvent).data ?? 'null');
       for (const fn of hoerer.get(kanal) ?? []) fn(wert);

@@ -771,10 +771,20 @@ const MIGRATIONS = [
   },
   // Cases can be assigned to a user of the server (no foreign key: users exist only there).
   `ALTER TABLE vorgaenge ADD COLUMN zustaendig INTEGER;`,
+  // Push notifications: one subscription per device and user (Web Push), with the kinds of notes it wants.
+  `CREATE TABLE push_abos (
+    id INTEGER PRIMARY KEY,
+    benutzer_id INTEGER REFERENCES benutzer(id) ON DELETE CASCADE,
+    endpoint TEXT NOT NULL UNIQUE,
+    schluessel TEXT NOT NULL,
+    arten TEXT NOT NULL DEFAULT 'postfach,aufgaben,morgen,sicherung',
+    geraet TEXT,
+    erstellt TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  );`,
 ];
 
 // Tables without change time: the log itself, settings of this installation and page state.
-const AENDERUNG_AUSGENOMMEN = new Set(['protokoll', 'einstellungen', 'hinweis_status', 'checkliste', 'geraete', 'benutzer', 'sitzungen']);
+const AENDERUNG_AUSGENOMMEN = new Set(['protokoll', 'einstellungen', 'hinweis_status', 'checkliste', 'geraete', 'benutzer', 'sitzungen', 'push_abos']);
 const UTC_JETZT = `strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`;
 
 // Ordinary tables holding user data; with vorMigration the columns need not exist yet.

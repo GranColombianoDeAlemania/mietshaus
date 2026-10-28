@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { call, fehler, type Row } from '../api';
 import { abmelden, anfrage, dateienWaehlen } from '../bruecke';
+import { ARTEN, homeBildschirmNoetig, pushAbo, pushAusschalten, pushEinschalten, pushMoeglich } from '../mitteilungen';
 import { useLoad } from '../useLoad';
 import { anzeige, SCHRIFTGROESSEN, type Thema } from '../anzeige';
 import { Tabs } from '../ui';
@@ -61,6 +62,7 @@ export function Einstellungen() {
       {window.hvDesktop && <ClaudeVerbindung />}
       <Dokumenteneingang />
       <EmailVersand />
+      <Mitteilungen />
       <div className="block">
         <h3>Datensicherung</h3>
         <p className="hinweis">
@@ -442,6 +444,50 @@ function EmailVersand() {
         {meldung && <span className="meldung">{meldung}</span>}<span className="spacer" />
         <button className="primary" onClick={speichernUndTesten}>Speichern & testen</button>
       </div>
+    </div>
+  );
+}
+
+// Notifications on this device: Web Push in the browser / home-screen app, macOS notifications in the Mac app.
+function Mitteilungen() {
+  const [abo, ladeAbo] = useLoad(() => pushAbo().then(async (a) => (a ? { a, arten: (await (await anfrage('/api/push/status', { json: { endpoint: a.endpoint } })).json())?.arten?.split(',') ?? [] } : null)), []);
+  const [arten, setArten] = useState<string[] | null>(null);
+  const [meldung, setMeldung] = useState('');
+  const [desktopAn, setDesktopAn] = useState(() => { try { return localStorage.getItem('mitteilungen') !== '0'; } catch { return true; } });
+  const gewaehlt: string[] = arten ?? abo?.arten ?? ARTEN.map(([k]) => k);
+  const tun = async (fn: () => Promise<unknown>, text: string) => {
+    try { await fn(); setMeldung(text); ladeAbo(); } catch (e) { setMeldung(`Fehler: ${(e as Error).message}`); }
+  };
+  if (window.hvDesktop) {
+    return (
+      <div className="block">
+        <h3>Mitteilungen</h3>
+        <label className="check"><input type="checkbox" checked={desktopAn} onChange={(e) => {
+          setDesktopAn(e.target.checked);
+          try { localStorage.setItem('mitteilungen', e.target.checked ? '1' : '0'); } catch {}
+        }} /> macOS-Mitteilungen zeigen (neue Dokumente, zugewiesene Vorgänge, Probleme mit der Sicherung), solange Mietshaus läuft und nicht im Vordergrund ist</label>
+        <p className="klein hinweis">Auf dem iPhone kommen Mitteilungen auch bei geschlossener App: Mietshaus dort im Browser öffnen, zum Home-Bildschirm hinzufügen und hier unter Einstellungen einschalten.</p>
+      </div>
+    );
+  }
+  return (
+    <div className="block">
+      <h3>Mitteilungen auf diesem Gerät</h3>
+      {!pushMoeglich() ? <p className="hinweis">Dieser Browser kann keine Mitteilungen empfangen.</p>
+        : homeBildschirmNoetig() ? <p className="hinweis">Auf iPhone und iPad gehen Mitteilungen nur für Mietshaus auf dem Home-Bildschirm: unten auf <b>Teilen → Zum Home-Bildschirm</b> tippen, Mietshaus von dort öffnen und hier einschalten.</p>
+          : <>
+            <p className="hinweis">Mitteilungen kommen auch, wenn Mietshaus geschlossen ist.</p>
+            {ARTEN.map(([k, l]) => (
+              <label key={k} className="check"><input type="checkbox" checked={gewaehlt.includes(k)}
+                onChange={(e) => setArten(e.target.checked ? [...gewaehlt, k] : gewaehlt.filter((x: string) => x !== k))} /> {l}</label>
+            ))}
+            <div className="buttons">
+              {meldung && <span className="meldung">{meldung}</span>}<span className="spacer" />
+              {abo && <button onClick={() => tun(pushAusschalten, 'Ausgeschaltet.')}>Ausschalten</button>}
+              {abo && <button onClick={() => tun(async () => { const r = await (await anfrage('/api/push/test', { json: {} })).json(); if (!r.gesendet) throw new Error('nichts gesendet'); }, 'Test gesendet.')}>Test senden</button>}
+              <button className="primary" onClick={() => tun(() => pushEinschalten(gewaehlt), 'Eingeschaltet.')}>{abo ? 'Auswahl speichern' : 'Einschalten'}</button>
+            </div>
+          </>}
     </div>
   );
 }

@@ -160,6 +160,37 @@ function client(url) {
   pruefe('Meine Aufgaben: nur die eigenen', bensAufgaben.length === 1 && bensAufgaben[0].titel === 'Heizung prüfen', JSON.stringify(bensAufgaben));
   pruefe('Liste nennt den Zuständigen', (await anna.call('vorgaengeListe', o, true)).find((v) => v.titel === 'Heizung prüfen')?.zustaendig_name === 'Ben Becker');
 
+  // ---------- 5a2. notifications (Web Push to a stand-in push service over HTTPS) ----------
+  {
+    const crypto = require('node:crypto');
+    const { execFileSync } = require('node:child_process');
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mh-push-'));
+    execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', path.join(tmp, 'k.pem'), '-out', path.join(tmp, 'c.pem'), '-days', '1', '-subj', '/CN=localhost'], { stdio: 'ignore' });
+    const pushes = [];
+    const dienst = require('node:https').createServer({ key: fs.readFileSync(path.join(tmp, 'k.pem')), cert: fs.readFileSync(path.join(tmp, 'c.pem')) }, (req, res) => {
+      const t = []; req.on('data', (c) => t.push(c)); req.on('end', () => { pushes.push({ pfad: req.url, kodierung: req.headers['content-encoding'], vapid: /^vapid /.test(req.headers.authorization ?? '') }); res.writeHead(201); res.end(); });
+    });
+    await new Promise((ok) => dienst.listen(0, '127.0.0.1', ok));
+    process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+    const ecdh = crypto.createECDH('prime256v1'); ecdh.generateKeys();
+    const abo = (name) => ({ endpoint: `https://127.0.0.1:${dienst.address().port}/push/${name}`, keys: { p256dh: ecdh.getPublicKey().toString('base64url'), auth: crypto.randomBytes(16).toString('base64url') } });
+    pruefe('VAPID-Schlüssel', (await (await ben.anfrage('/api/push/schluessel')).json()).schluessel?.length > 80);
+    await ben.anfrage('/api/push/abo', { methode: 'POST', json: { abo: abo('ben'), arten: ['aufgaben'] } });
+    await anna.anfrage('/api/push/abo', { methode: 'POST', json: { abo: abo('anna'), arten: ['postfach'] } });
+    await anna.call('save', 'vorgaenge', { objekt_id: o, titel: 'Dachrinne reinigen', status: 'offen', prioritaet: 2, zustaendig: benId });
+    await warte(400);
+    pruefe('Zuweisung: Push an Ben', pushes.some((x) => x.pfad === '/push/ben' && x.kodierung === 'aes128gcm' && x.vapid), JSON.stringify(pushes));
+    pruefe('… nicht an Anna', !pushes.some((x) => x.pfad === '/push/anna'));
+    pruefe('… und als Ereignis für offene Fenster', ereignisse.join('').includes('event: benachrichtigung'));
+    const vorher = pushes.length;
+    pruefe('Test-Push', (await (await anna.anfrage('/api/push/test', { methode: 'POST', json: {} })).json()).gesendet === 1 && pushes.length === vorher + 1);
+    await anna.anfrage('/api/push/abmelden', { methode: 'POST', json: { endpoint: abo('anna').endpoint } });
+    pruefe('Abgemeldet: kein Push mehr', (await (await anna.anfrage('/api/push/test', { methode: 'POST', json: {} })).json()).gesendet === 0);
+    delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+    dienst.close();
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+
   // ---------- 5b. status page ----------
   pruefe('Jetzt sichern', (await anna.anfrage('/api/jetzt-sichern', { methode: 'POST', json: {} })).ok);
   const test = await (await anna.anfrage('/api/sicherungstest', { methode: 'POST', json: {} })).json();
