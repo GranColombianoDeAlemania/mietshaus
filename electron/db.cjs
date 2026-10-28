@@ -1,5 +1,7 @@
 // Local SQLite database: schema migrations and a small whitelisted CRUD layer.
 const { DatabaseSync } = require('node:sqlite');
+const fs = require('node:fs');
+const path = require('node:path');
 const buchhaltung = require('./buchhaltung.cjs');
 const ortszeit = require('./zeit.cjs');
 const { selbstSql } = buchhaltung;
@@ -722,7 +724,62 @@ const MIGRATIONS = [
   -- day (teilmonat_ende 'teilbetrag'). Agreed amount in cents, without VAT; empty means by days.
   ALTER TABLE mietverhaeltnisse ADD COLUMN teilbetrag_beginn_ct INTEGER;
   `,
+  // Version 0.9.1: every record carries the time (UTC) and device of its last change, so copies of several users can
+  // later be merged record by record, keeping the newest change. The data set gets an id, so backups can be matched
+  // to it. Tables created by later migrations need the two columns as well (see AENDERUNG_AUSGENOMMEN).
+  (db) => {
+    for (const t of aenderungsTabellen(db, true)) db.exec(`ALTER TABLE ${t} ADD COLUMN geaendert_am TEXT; ALTER TABLE ${t} ADD COLUMN geaendert_von TEXT;`);
+    db.exec(`
+      CREATE TABLE geraete (id TEXT PRIMARY KEY, name TEXT NOT NULL, zuletzt TEXT);
+      ALTER TABLE protokoll ADD COLUMN geraet TEXT;
+      INSERT INTO einstellungen (schluessel, wert) VALUES ('datenbank_id', lower(hex(randomblob(16)))) ON CONFLICT (schluessel) DO NOTHING;`);
+  },
 ];
+
+// Tables without change time: the log itself, settings of this installation and page state.
+const AENDERUNG_AUSGENOMMEN = new Set(['protokoll', 'einstellungen', 'hinweis_status', 'checkliste', 'geraete']);
+const UTC_JETZT = `strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`;
+
+// Ordinary tables holding user data; with vorMigration the columns need not exist yet.
+function aenderungsTabellen(db, vorMigration = false) {
+  return db.prepare(`SELECT name, sql FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name`).all()
+    .filter((t) => !/^CREATE VIRTUAL/i.test(t.sql) && !/WITHOUT ROWID/i.test(t.sql) && !/_fts(_\w+)?$/.test(t.name) && !AENDERUNG_AUSGENOMMEN.has(t.name))
+    .map((t) => t.name)
+    .filter((t) => vorMigration || db.prepare(`PRAGMA table_info(${t})`).all().some((c) => c.name === 'geaendert_am'));
+}
+
+// Stamps every insert and change with time and device. Like the log these are temporary triggers of this connection;
+// the inner UPDATE leaves the logged columns alone, so it adds no second log entry.
+function aenderungenAktivieren(db, geraetId) {
+  const g = geraetId ? `'${String(geraetId).replace(/'/g, '')}'` : 'NULL';
+  for (const t of aenderungsTabellen(db)) {
+    db.exec(`
+      CREATE TEMP TRIGGER IF NOT EXISTS stand_${t}_i AFTER INSERT ON main.${t} WHEN NEW.geaendert_am IS NULL BEGIN
+        UPDATE main.${t} SET geaendert_am = ${UTC_JETZT}, geaendert_von = ${g} WHERE rowid = NEW.rowid; END;
+      CREATE TEMP TRIGGER IF NOT EXISTS stand_${t}_u AFTER UPDATE ON main.${t} WHEN NEW.geaendert_am IS OLD.geaendert_am BEGIN
+        UPDATE main.${t} SET geaendert_am = ${UTC_JETZT}, geaendert_von = ${g} WHERE rowid = NEW.rowid; END;`);
+  }
+}
+
+// Newest change of a database (also of a backup): time (UTC), device, data set and schema version.
+// Deletions and changes from before 0.9.1 are only found in the change log, which is kept in local time.
+function datenStand(db) {
+  const hat = (t) => !!db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`).get(t);
+  const einstellung = (k) => (hat('einstellungen') ? db.prepare('SELECT wert FROM einstellungen WHERE schluessel = ?').get(k)?.wert ?? null : null);
+  let neu = { zeit: null, geraet: null };
+  const nimm = (r) => { if (r?.zeit && (!neu.zeit || r.zeit > neu.zeit)) neu = { zeit: r.zeit, geraet: r.geraet ?? null }; };
+  for (const t of aenderungsTabellen(db)) nimm(db.prepare(`SELECT geaendert_am AS zeit, geaendert_von AS geraet FROM ${t} WHERE geaendert_am IS NOT NULL ORDER BY geaendert_am DESC LIMIT 1`).get());
+  if (hat('protokoll')) {
+    const mitGeraet = db.prepare('PRAGMA table_info(protokoll)').all().some((c) => c.name === 'geraet');
+    nimm(db.prepare(`SELECT strftime('%Y-%m-%dT%H:%M:%fZ', zeit, 'utc') AS zeit, ${mitGeraet ? 'geraet' : 'NULL'} AS geraet FROM protokoll ORDER BY id DESC LIMIT 1`).get());
+  }
+  const name = neu.geraet && hat('geraete') ? db.prepare('SELECT name FROM geraete WHERE id = ?').get(neu.geraet)?.name : null;
+  return {
+    zeit: neu.zeit, geraet: neu.geraet, geraet_name: name ?? neu.geraet,
+    datenbank_id: einstellung('datenbank_id'), version: db.prepare('PRAGMA user_version').get().user_version,
+    sicherung_erstellt: einstellung('sicherung_erstellt'), sicherung_geraet: einstellung('sicherung_geraet'),
+  };
+}
 
 // Columns the renderer may write, per table. Everything else is rejected.
 const TABLES = {
@@ -781,15 +838,33 @@ const PERSON_NAME = `CASE WHEN coalesce(p.nachname, '') = '' AND coalesce(p.vorn
 // A contract is current when it has started and not yet ended.
 const aktuell = (a) => `${a}.beginn <= date('now', 'localtime') AND (${a}.ende IS NULL OR ${a}.ende = '' OR ${a}.ende >= date('now', 'localtime'))`;
 
-function open(file, quelle = 'app') {
+// Backups live next to the database (automatic ones, before updates and before a restore).
+const sicherungsOrdner = (file) => path.join(path.dirname(path.resolve(file)), 'sicherungen');
+
+// geraet: { id, name } of this installation (see geraet.cjs); stamps changes for a later merge.
+function open(file, quelle = 'app', geraet = null, { ohneUpdateSicherung = false } = {}) {
   const db = new DatabaseSync(file);
   // Foreign keys stay off while migrations rebuild tables, so cascades cannot fire.
   db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = OFF; PRAGMA busy_timeout = 5000;');
   const version = db.prepare('PRAGMA user_version').get().user_version;
+  if (version > MIGRATIONS.length) {
+    db.close();
+    throw new Error(`Die Datenbank stammt aus einer neueren Mietshaus-Version (Schema ${version}, dieses Programm kennt ${MIGRATIONS.length}). Bitte Mietshaus aktualisieren.`);
+  }
+  // A copy of the old state before the schema is changed.
+  if (version > 0 && version < MIGRATIONS.length && file !== ':memory:' && !ohneUpdateSicherung) {
+    const ordner = sicherungsOrdner(file);
+    fs.mkdirSync(ordner, { recursive: true });
+    const ziel = path.join(ordner, `Mietshaus-vor-Update-Schema${version}-${ortszeit.lokalZeit().replace(/:/g, '-')}.sqlite`);
+    if (!fs.existsSync(ziel)) db.prepare('VACUUM INTO ?').run(ziel);
+  }
   for (let v = version; v < MIGRATIONS.length; v++) {
-    db.exec('BEGIN');
+    db.exec('BEGIN IMMEDIATE');
     try {
-      db.exec(MIGRATIONS[v]);
+      // Another process (Claude, a second device) may have migrated meanwhile.
+      if (db.prepare('PRAGMA user_version').get().user_version > v) { db.exec('ROLLBACK'); continue; }
+      if (typeof MIGRATIONS[v] === 'function') MIGRATIONS[v](db);
+      else db.exec(MIGRATIONS[v]);
       db.exec(`PRAGMA user_version = ${v + 1}`);
       db.exec('COMMIT');
     } catch (e) {
@@ -798,7 +873,12 @@ function open(file, quelle = 'app') {
     }
   }
   db.exec('PRAGMA foreign_keys = ON;');
-  protokollAktivieren(db, quelle);
+  if (geraet?.id) {
+    db.prepare(`INSERT INTO geraete (id, name, zuletzt) VALUES (?, ?, ${UTC_JETZT})
+      ON CONFLICT (id) DO UPDATE SET name = excluded.name, zuletzt = excluded.zuletzt`).run(geraet.id, geraet.name ?? geraet.id);
+  }
+  protokollAktivieren(db, quelle, geraet?.id);
+  aenderungenAktivieren(db, geraet?.id);
   return db;
 }
 
@@ -806,21 +886,22 @@ function open(file, quelle = 'app') {
 const PROTOKOLLIERT = ['interessenten', 'uebergaben', 'objekte', 'einheiten', 'personen', 'mietverhaeltnisse', 'eigentum', 'konten', 'buchungen', 'anpassungen',
   'kautionen', 'kautionsbewegungen', 'dokumente', 'darlehen', 'beschluesse', 'projekte', 'projektposten', 'zaehlerstaende', 'mahnungen', 'abrechnungen',
   'ratenplaene', 'erhaltungsverteilung', 'selbstnutzung'];
-const NICHT_PROTOKOLLIEREN = new Set(['text', 'daten', 'erfasst', 'unterschrift_mieter', 'unterschrift_vermieter', 'erechnung']);
+const NICHT_PROTOKOLLIEREN = new Set(['text', 'daten', 'erfasst', 'unterschrift_mieter', 'unterschrift_vermieter', 'erechnung', 'geaendert_am', 'geaendert_von']);
 
-// Temporary triggers belong to this connection only, so each process records its own source (app or Claude).
-function protokollAktivieren(db, quelle) {
+// Temporary triggers belong to this connection only, so each process records its own source (app or Claude) and device.
+function protokollAktivieren(db, quelle, geraetId = null) {
   const q = quelle.replace(/'/g, '');
+  const g = geraetId ? `'${String(geraetId).replace(/'/g, '')}'` : 'NULL';
   for (const t of PROTOKOLLIERT) {
     const spalten = db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name).filter((c) => !NICHT_PROTOKOLLIEREN.has(c));
     const json = (alias) => `json_object(${spalten.map((c) => `'${c}', ${alias}.${c}`).join(', ')})`;
     db.exec(`
       CREATE TEMP TRIGGER IF NOT EXISTS log_${t}_i AFTER INSERT ON main.${t} BEGIN
-        INSERT INTO main.protokoll (quelle, tabelle, datensatz, aktion, neu) VALUES ('${q}', '${t}', NEW.id, 'angelegt', ${json('NEW')}); END;
+        INSERT INTO main.protokoll (quelle, geraet, tabelle, datensatz, aktion, neu) VALUES ('${q}', ${g}, '${t}', NEW.id, 'angelegt', ${json('NEW')}); END;
       CREATE TEMP TRIGGER IF NOT EXISTS log_${t}_u AFTER UPDATE ON main.${t} WHEN ${json('OLD')} IS NOT ${json('NEW')} BEGIN
-        INSERT INTO main.protokoll (quelle, tabelle, datensatz, aktion, alt, neu) VALUES ('${q}', '${t}', NEW.id, 'geändert', ${json('OLD')}, ${json('NEW')}); END;
+        INSERT INTO main.protokoll (quelle, geraet, tabelle, datensatz, aktion, alt, neu) VALUES ('${q}', ${g}, '${t}', NEW.id, 'geändert', ${json('OLD')}, ${json('NEW')}); END;
       CREATE TEMP TRIGGER IF NOT EXISTS log_${t}_d AFTER DELETE ON main.${t} BEGIN
-        INSERT INTO main.protokoll (quelle, tabelle, datensatz, aktion, alt) VALUES ('${q}', '${t}', OLD.id, 'gelöscht', ${json('OLD')}); END;`);
+        INSERT INTO main.protokoll (quelle, geraet, tabelle, datensatz, aktion, alt) VALUES ('${q}', ${g}, '${t}', OLD.id, 'gelöscht', ${json('OLD')}); END;`);
   }
 }
 
@@ -1171,4 +1252,4 @@ function api(db) {
   };
 }
 
-module.exports = { open, api };
+module.exports = { open, api, datenStand, sicherungsOrdner, SCHEMA_VERSION: MIGRATIONS.length };

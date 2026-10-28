@@ -3,7 +3,9 @@ const { pathToFileURL } = require('node:url');
 const path = require('node:path');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
-const { open, api } = require('./db.cjs');
+const { open, api, datenStand, sicherungsOrdner } = require('./db.cjs');
+const sicherung = require('./sicherung.cjs');
+const { geraet: geraetLesen } = require('./geraet.cjs');
 const analyse = require('./analyse.cjs');
 const eingang = require('./eingang.cjs');
 const { zip } = require('./zip.cjs');
@@ -14,6 +16,17 @@ let rawDb;
 let dbFile;
 let ana;
 let hauptfenster;
+let geraet;
+
+// One running copy per computer: a second start brings the window to the front instead of watching the same inbox
+// folder, fetching the same mails and running the monthly charges twice.
+const ersteInstanz = !!process.env.MIETSHAUS_MEHRFACH || app.requestSingleInstanceLock();
+if (!ersteInstanz) app.exit(0);
+app.on('second-instance', () => {
+  if (!hauptfenster || hauptfenster.isDestroyed()) return;
+  if (hauptfenster.isMinimized()) hauptfenster.restore();
+  hauptfenster.focus();
+});
 
 // Stored documents and previews are served to the windows under hvdok:// (also for the built-in PDF viewer).
 protocol.registerSchemesAsPrivileged([analyse.SCHEMA]);
@@ -32,7 +45,7 @@ function alteDatenUebernehmen() {
     if (fs.existsSync(q)) fs.renameSync(q, path.join(neu, `mietshaus.sqlite${endung}`));
   }
 }
-alteDatenUebernehmen();
+if (ersteInstanz) alteDatenUebernehmen();
 
 const dokumentOrdner = () => path.join(app.getPath('userData'), 'dokumente');
 const vorschauOrdner = () => path.join(dokumentOrdner(), 'vorschau');
@@ -73,7 +86,7 @@ ipcMain.handle('kontextmenue', (e, eintraege) => new Promise((resolve) => {
 }));
 
 function oeffneDb() {
-  rawDb = open(dbFile);
+  rawDb = open(dbFile, 'app', geraet);
   db = api(rawDb);
 }
 
@@ -180,29 +193,58 @@ async function oeffnen(filter) {
   return { name: path.basename(p), base64: fs.readFileSync(p).toString('base64') };
 }
 
-async function sicherung() {
+async function sicherungErstellen() {
   const name = `Mietshaus-Sicherung-${ortszeit.heute()}.sqlite`;
   const ziel = await dialog.showSaveDialog({ defaultPath: path.join(app.getPath('documents'), name), filters: [{ name: 'Sicherung', extensions: ['sqlite'] }] });
   if (ziel.canceled || !ziel.filePath) return null;
-  fs.rmSync(ziel.filePath, { force: true });
-  // VACUUM INTO writes a consistent copy even while the database is open.
-  rawDb.prepare('VACUUM INTO ?').run(ziel.filePath);
+  sicherung.schreiben(rawDb, ziel.filePath, geraet);
   db.setzeEinstellungen({ letzte_sicherung: new Date().toISOString() });
   return ziel.filePath;
 }
 
+const zeitDe = (iso) => (iso ? new Date(iso).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' }) : 'unbekannt');
+const standText = (s) => `${zeitDe(s.zeit)}${s.geraet_name ? ` (${s.geraet_name})` : ''}`;
+
+// Restores a backup. The file is checked first; when it is older than the data in use, or a newer backup of the same
+// data set exists (e.g. made by another user), the newest state is offered instead.
 async function wiederherstellen() {
-  const r = await dialog.showOpenDialog({ properties: ['openFile'], filters: [{ name: 'Sicherung', extensions: ['sqlite'] }] });
-  if (r.canceled || !r.filePaths[0]) return false;
-  const quelle = r.filePaths[0];
-  // Keep the current state next to the database in case the restore was a mistake.
-  const vorher = `${dbFile}.vor-wiederherstellung-${Date.now()}`;
-  rawDb.prepare('VACUUM INTO ?').run(vorher);
-  rawDb.close();
-  for (const s of ['', '-wal', '-shm']) fs.rmSync(dbFile + s, { force: true });
-  fs.copyFileSync(quelle, dbFile);
-  oeffneDb();
-  return true;
+  const ordner = sicherungsOrdner(dbFile);
+  const r = await dialog.showOpenDialog(hauptfenster, { defaultPath: fs.existsSync(ordner) ? ordner : app.getPath('documents'), properties: ['openFile'],
+    filters: [{ name: 'Sicherung', extensions: ['sqlite'] }] });
+  if (r.canceled || !r.filePaths[0]) return null;
+  let gewaehlt = sicherung.pruefen(r.filePaths[0]);
+  const jetzt = datenStand(rawDb);
+  const gleicherBestand = (s) => !s.datenbank_id || !jetzt.datenbank_id || s.datenbank_id === jetzt.datenbank_id;
+  const neueste = sicherung.liste([ordner, path.dirname(gewaehlt.datei), app.getPath('documents')], { ohne: [dbFile] })
+    .filter((s) => s.datei !== gewaehlt.datei && gleicherBestand(s))[0];
+  const zeilen = [`Gewählte Sicherung: Stand ${standText(gewaehlt)}`, `Aktueller Datenbestand: Stand ${standText(jetzt)}`];
+  if (!gleicherBestand(gewaehlt)) zeilen.push('', 'Achtung: Die Sicherung gehört zu einem anderen Datenbestand.');
+  const aelter = !!(jetzt.zeit && gewaehlt.zeit < jetzt.zeit);
+  const besser = neueste && neueste.zeit > gewaehlt.zeit ? neueste : null;
+  if (aelter) zeilen.push('', 'Die Sicherung ist älter als der aktuelle Datenbestand. Alles, was danach eingetragen wurde – auch von anderen Nutzern –, ginge verloren.');
+  if (besser) zeilen.push('', `Neuere Sicherung gefunden: ${path.basename(besser.datei)}, Stand ${standText(besser)}.`);
+  const knoepfe = [...(besser ? ['Neueste Sicherung verwenden'] : []), aelter ? 'Trotzdem diese wiederherstellen' : 'Wiederherstellen', 'Abbrechen'];
+  const antwort = await dialog.showMessageBox(hauptfenster, {
+    type: aelter || besser ? 'warning' : 'question', message: 'Sicherung wiederherstellen?', detail: zeilen.join('\n'),
+    buttons: knoepfe, defaultId: 0, cancelId: knoepfe.length - 1,
+  });
+  const wahl = knoepfe[antwort.response];
+  if (wahl === 'Abbrechen') return null;
+  if (wahl === 'Neueste Sicherung verwenden') gewaehlt = sicherung.pruefen(besser.datei);
+  const { vorher } = sicherung.einspielen({ quelle: gewaehlt.datei, dbFile, rawDb, geraet, schliessen: () => rawDb.close(), oeffnen: oeffneDb });
+  return { datei: gewaehlt.datei, stand: standText(gewaehlt), vorher };
+}
+
+// Daily copy into the backup folder (unless switched off); checked at start and every hour.
+function autoSicherung() {
+  try {
+    if (db.einstellungen().auto_sicherung === '0') return;
+    const ziel = sicherung.automatisch(rawDb, sicherungsOrdner(dbFile), geraet);
+    if (ziel) db.setzeEinstellungen({ letzte_auto_sicherung: new Date().toISOString() });
+  } catch (e) {
+    console.error('Automatische Sicherung', e);
+    melden('meldung', `Automatische Sicherung fehlgeschlagen: ${e?.message ?? e}`);
+  }
 }
 
 // Copies a file into the app's document folder; the database stores only the relative name.
@@ -256,7 +298,9 @@ function claudeUmziehen() {
 }
 
 app.whenReady().then(() => {
+  if (!ersteInstanz) return;
   dbFile = process.env.MIETSHAUS_DB || path.join(app.getPath('userData'), 'mietshaus.sqlite');
+  geraet = geraetLesen(app.getPath('userData'));
   oeffneDb();
   claudeUmziehen();
   analyse.protokollRegistrieren(dokumentOrdner, vorschauOrdner);
@@ -266,7 +310,8 @@ app.whenReady().then(() => {
   // Routine work (monthly charges) at start and then hourly.
   const automatik = () => { try { if (db.automatikLauf().erzeugt) melden('aktualisiert'); } catch (e) { console.error('Automatik', e); } };
   automatik();
-  setInterval(automatik, 3600_000);
+  setTimeout(autoSicherung, 60_000);
+  setInterval(() => { automatik(); autoSicherung(); }, 3600_000);
   ipcMain.handle('importieren', (_e, pfade, opt) => ana.importieren(pfade, opt));
   ipcMain.handle('dateienImportieren', async (_e, opt) => {
     const r = await dialog.showOpenDialog({ properties: ['openFile', 'multiSelections'] });
@@ -324,7 +369,7 @@ app.whenReady().then(() => {
   ipcMain.handle('pdfAblegen', (_e, html, name, meta) => pdfAblegen(html, name, meta));
   ipcMain.handle('speichern', (_e, inhalt, name, filter) => speichern(inhalt, name, filter));
   ipcMain.handle('oeffnen', (_e, filter) => oeffnen(filter));
-  ipcMain.handle('sicherung', () => sicherung());
+  ipcMain.handle('sicherung', () => sicherungErstellen());
   ipcMain.handle('wiederherstellen', () => wiederherstellen());
   ipcMain.handle('dokumentAblegen', () => dokumentAblegen());
   ipcMain.handle('dokumentOeffnen', (_e, datei) => shell.openPath(sichererDokPfad(datei)));
@@ -337,7 +382,9 @@ app.whenReady().then(() => {
   });
   ipcMain.handle('claudeStatus', () => claudeStatus());
   ipcMain.handle('claudeVerbinden', () => claudeVerbinden());
-  ipcMain.handle('info', () => ({ dbFile, dokumente: dokumentOrdner(), version: app.getVersion() }));
+  ipcMain.handle('info', () => ({ dbFile, dokumente: dokumentOrdner(), version: app.getVersion(), sicherungen: sicherungsOrdner(dbFile),
+    geraet: geraet.name, stand: datenStand(rawDb), letzte_auto_sicherung: db.einstellungen().letzte_auto_sicherung ?? null }));
+  ipcMain.handle('sicherungsOrdnerOeffnen', () => { fs.mkdirSync(sicherungsOrdner(dbFile), { recursive: true }); return shell.openPath(sicherungsOrdner(dbFile)); });
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

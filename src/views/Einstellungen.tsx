@@ -20,6 +20,8 @@ const FELDER: [string, string][] = [
   ['datev_mandant', 'DATEV Mandantennummer'],
 ];
 
+const zeitpunkt = (iso: string | null) => (iso ? new Date(iso).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' }) : '–');
+
 export function Einstellungen() {
   const [e, reload] = useLoad<Row>(() => call('einstellungen'), []);
   const [info] = useLoad(() => window.hv.info(), []);
@@ -56,9 +58,17 @@ export function Einstellungen() {
       <div className="block">
         <h3>Datensicherung</h3>
         <p className="hinweis">
-          Alle Daten liegen in einer einzigen Datei. Sichere sie regelmäßig, z. B. auf einen USB-Stick oder in die iCloud.
-          Abgelegte Dokumente liegen zusätzlich im Ordner „dokumente“ daneben.
+          Alle Daten liegen in einer einzigen Datei. Mietshaus legt jeden Tag automatisch eine Sicherung im Ordner „sicherungen“
+          daneben ab (die letzten 14 Tage, danach eine je Monat für ein Jahr) und zusätzlich vor jedem Programm-Update.
+          Weil diese Sicherungen auf demselben Rechner liegen, sichere zusätzlich regelmäßig auf einen USB-Stick oder in die iCloud.
+          Abgelegte Dokumente liegen im Ordner „dokumente“.
         </p>
+        <label className="check">
+          <input type="checkbox" checked={e?.auto_sicherung !== '0'} onChange={async (ev) => {
+            await call('setzeEinstellungen', { auto_sicherung: ev.target.checked ? '1' : '0' });
+            reload();
+          }} /> Täglich automatisch sichern
+        </label>
         <div className="buttons">
           <button className="primary" onClick={async () => {
             try {
@@ -67,15 +77,18 @@ export function Einstellungen() {
             } catch (err) { fehler(err); }
           }}>Sicherung erstellen…</button>
           <button onClick={async () => {
-            if (!confirm('Den aktuellen Datenbestand durch eine Sicherung ersetzen? Der jetzige Stand wird vorher automatisch daneben abgelegt.')) return;
+            // The main process checks the file, compares it with the data in use and asks before anything is replaced.
             try {
               if (await window.hv.wiederherstellen()) location.reload();
             } catch (err) { fehler(err); }
           }}>Sicherung wiederherstellen…</button>
+          <button onClick={() => window.hv.sicherungsOrdnerOeffnen()}>Sicherungsordner öffnen</button>
         </div>
         {info && (
           <p className="klein hinweis">
-            Datenbank: {info.dbFile}<br />Dokumente: {info.dokumente}<br />Version {info.version}
+            Datenbank: {info.dbFile}<br />Dokumente: {info.dokumente}<br />Sicherungen: {info.sicherungen}<br />
+            Letzte Änderung: {zeitpunkt(info.stand.zeit)}{info.stand.geraet_name ? ` (${info.stand.geraet_name})` : ''} · Dieses Gerät: {info.geraet}<br />
+            Letzte automatische Sicherung: {zeitpunkt(info.letzte_auto_sicherung)} · Version {info.version}
           </p>
         )}
       </div>

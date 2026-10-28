@@ -8,6 +8,7 @@ const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
 const { StdioServerTransport } = require('@modelcontextprotocol/sdk/server/stdio.js');
 const z = require('zod');
 const { open, api } = require('./db.cjs');
+const { geraet: geraetLesen } = require('./geraet.cjs');
 
 // Same locations Electron uses for the app's userData folder.
 const userData = process.env.MIETSHAUS_DATEN || (process.platform === 'darwin'
@@ -42,7 +43,20 @@ function starten() {
     process.stderr.write(`Mietshaus-Datenbank nicht gefunden: ${dbFile}. Bitte das Programm einmal starten.\n`);
     process.exit(1);
   }
-  const db = api(open(dbFile, 'claude'));
+  // The app may replace the database file (restoring a backup): then the next call opens the new file.
+  const geraet = geraetLesen(userData);
+  let offen = null;
+  const aktuelleDb = () => {
+    const ino = fs.statSync(dbFile).ino;
+    if (!offen || offen.ino !== ino) {
+      try { offen?.raw.close(); } catch {}
+      const raw = open(dbFile, 'claude', geraet);
+      offen = { ino, raw, api: api(raw) };
+    }
+    return offen.api;
+  };
+  aktuelleDb();
+  const db = new Proxy({}, { get: (_t, k) => aktuelleDb()[k] });
   const server = new McpServer({ name: 'mietshaus', version: '1.0.0' }, { instructions: ANWEISUNGEN });
   const werkzeug = (name, beschreibung, schema, fn, nurLesen = false) =>
     server.registerTool(name, { description: beschreibung, inputSchema: schema, annotations: { readOnlyHint: nurLesen } }, async (args) => {

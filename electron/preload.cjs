@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('hv', {
   oeffnen: (filter) => ipcRenderer.invoke('oeffnen', filter),
   sicherung: () => ipcRenderer.invoke('sicherung'),
   wiederherstellen: () => ipcRenderer.invoke('wiederherstellen'),
+  sicherungsOrdnerOeffnen: () => ipcRenderer.invoke('sicherungsOrdnerOeffnen'),
   dokumentAblegen: () => ipcRenderer.invoke('dokumentAblegen'),
   dokumentOeffnen: (datei) => ipcRenderer.invoke('dokumentOeffnen', datei),
   dokumentLoeschen: (id) => ipcRenderer.invoke('dokumentLoeschen', id),
