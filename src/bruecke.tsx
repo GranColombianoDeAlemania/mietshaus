@@ -334,3 +334,18 @@ export const status = (): Promise<{ modus: 'server' | 'lokal'; version: string; 
 export const anmelden = (login: string, passwort: string) => anfrage('/api/anmelden', { json: { login, passwort } }).then((r) => r.json());
 export const einrichten = (login: string, name: string, passwort: string) => anfrage('/api/einrichten', { json: { login, name, passwort } }).then((r) => r.json());
 export const abmelden = () => anfrage('/api/abmelden', { json: {} });
+
+// Passkeys (WebAuthn) – only where the browser offers them; the Mac app's window does not.
+export const passkeyMoeglich = () => !window.hvDesktop && typeof window.PublicKeyCredential === 'function' && window.isSecureContext;
+export async function passkeyAnmelden() {
+  const { startAuthentication } = await import('@simplewebauthn/browser');
+  const { vorgang, optionen } = await (await anfrage('/api/passkey/anmelden/optionen', { json: {} })).json();
+  const antwort = await startAuthentication({ optionsJSON: optionen });
+  return (await anfrage('/api/passkey/anmelden', { json: { vorgang, antwort } })).json();
+}
+export async function passkeyHinzufuegen(name: string) {
+  const { startRegistration } = await import('@simplewebauthn/browser');
+  const optionen = await (await anfrage('/api/passkey/registrieren/optionen', { json: {} })).json();
+  const antwort = await startRegistration({ optionsJSON: optionen });
+  return (await anfrage('/api/passkey/registrieren', { json: { antwort, name } })).json();
+}

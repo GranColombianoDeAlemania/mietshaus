@@ -17,6 +17,7 @@ const authModul = require('./auth.cjs');
 const geheim = require('./geheim.cjs');
 const versandModul = require('./versand.cjs');
 const pushModul = require('./push.cjs');
+const passkeyModul = require('./passkey.cjs');
 
 const { VERSION, DESKTOP_SCHNITTSTELLE, vergleichen, neuesteVersion } = require('../electron/version.cjs');
 const TYPEN = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml',
@@ -25,7 +26,7 @@ const TYPEN = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '
 const SICHERHEIT = { 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'SAMEORIGIN', 'Cross-Origin-Opener-Policy': 'same-origin' };
 const MAX_UPLOAD = 300 * 1024 * 1024;
 // Functions answered by the server itself, not by the database API.
-const NUR_SERVER = new Set(['benutzerListe', 'benutzerAnlegen', 'benutzerAendern', 'claudeToken', 'meineAufgaben']);
+const NUR_SERVER = new Set(['benutzerListe', 'benutzerAnlegen', 'benutzerAendern', 'claudeToken', 'meineAufgaben', 'passkeyListe', 'passkeyLoeschen']);
 
 class Fehler extends Error { constructor(status, text) { super(text); this.status = status; } }
 
@@ -63,6 +64,7 @@ async function starten(o) {
   // Background work goes through this proxy: it marks its changes as the server's own (no user).
   const dbSystem = new Proxy({}, { get: (_t, k) => { kontextSetzen(raw, SYSTEM); return roh[k]; } });
   const auth = authModul(() => raw);
+  const passkeys = passkeyModul(() => raw);
   const passwort = o.passwort ?? geheim(daten, () => dbSystem);
 
   // ---------- events (Server-Sent Events) ----------
@@ -301,6 +303,19 @@ async function starten(o) {
       auth.bremse.erfolg(schluessel);
       return json(res, 200, { benutzer: b }, { 'Set-Cookie': cookie(req, 'mietshaus', auth.sitzungAnlegen(b.id, req.headers['user-agent']), 30) });
     }
+    // Login with a passkey: options (challenge), then the signed answer of the device.
+    if (o.modus === 'server' && post && p === '/api/passkey/anmelden/optionen') return json(res, 200, await passkeys.anmeldenOptionen(req));
+    if (o.modus === 'server' && post && p === '/api/passkey/anmelden') {
+      const { vorgang, antwort } = await jsonLesen(req);
+      const schluessel = `${ip(req)}|passkey`;
+      const warten = auth.bremse.gesperrt(schluessel);
+      if (warten) throw new Fehler(429, `Zu viele Versuche. Bitte in ${warten} Sekunden noch einmal.`);
+      let id;
+      try { id = await passkeys.anmelden(req, vorgang, antwort); } catch (e) { auth.bremse.fehler(schluessel); throw new Fehler(401, e.message); }
+      auth.bremse.erfolg(schluessel);
+      const b = auth.benutzer(id);
+      return json(res, 200, { benutzer: b }, { 'Set-Cookie': cookie(req, 'mietshaus', auth.sitzungAnlegen(id, req.headers['user-agent']), 30) });
+    }
     if (!p.startsWith('/api/') && !p.startsWith('/dateien/') && p !== '/mcp') return statisch(req, res, p);
 
     const w = wer(req);
@@ -371,6 +386,14 @@ async function starten(o) {
       });
     }
     if (post && p === '/api/sicherungstest') return json(res, 200, sicherungTesten());
+    if (post && p === '/api/passkey/registrieren/optionen') {
+      if (!w.token) throw new Fehler(400, 'Passkeys gibt es nur auf dem Server.');
+      return json(res, 200, await passkeys.registrierenOptionen(req, w.benutzer, w.token));
+    }
+    if (post && p === '/api/passkey/registrieren') {
+      const { antwort, name } = await jsonLesen(req);
+      return json(res, 200, await fachlich(() => passkeys.registrieren(req, w.benutzer, w.token, antwort, name)));
+    }
     // ---------- notifications ----------
     if (p === '/api/push/schluessel') return json(res, 200, { schluessel: push.oeffentlich() });
     if (post && p === '/api/push/abo') {
@@ -554,6 +577,8 @@ async function starten(o) {
     if (fn === 'benutzerAnlegen') return auth.anlegen(args[0] ?? {});
     if (fn === 'benutzerAendern') return auth.aendern(Number(args[0]), args[1] ?? {});
     if (fn === 'claudeToken') return auth.claudeToken(w.benutzer.id);
+    if (fn === 'passkeyListe') return passkeys.liste(w.benutzer.id);
+    if (fn === 'passkeyLoeschen') return passkeys.loeschen(w.benutzer.id, args[0]);
     throw new Fehler(400, `Unbekannte Funktion: ${fn}`);
   }
 

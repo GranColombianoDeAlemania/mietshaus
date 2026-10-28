@@ -1,7 +1,7 @@
 // Start screen of the server: set up the first user, or log in. The Mac app in local mode never sees it.
 import { useEffect, useState, type ReactNode } from 'react';
 import * as I from 'lucide-react';
-import { anmelden, einrichten, status } from '../bruecke';
+import { anmelden, einrichten, passkeyAnmelden, passkeyMoeglich, status } from '../bruecke';
 
 type Status = Awaited<ReturnType<typeof status>>;
 
@@ -60,6 +60,16 @@ function Anmelden(props: { einrichtung: boolean; fertig: () => void }) {
       {props.einrichtung && <p className="klein hinweis">Mindestens 10 Zeichen.</p>}
       {fehler && <p className="fehlertext">{fehler}</p>}
       <button type="submit" className="primary" disabled={laeuft || !login || !pw} onClick={los}>{props.einrichtung ? 'Anlegen und anmelden' : 'Anmelden'}</button>
+      {!props.einrichtung && passkeyMoeglich() && (
+        <button type="button" disabled={laeuft} onClick={async () => {
+          setFehler('');
+          setLaeuft(true);
+          try { await passkeyAnmelden(); props.fertig(); } catch (e) {
+            // Cancelling the system dialog is no error worth showing.
+            if ((e as Error).name !== 'NotAllowedError') setFehler(String((e as Error).message));
+          } finally { setLaeuft(false); }
+        }}>Mit Passkey anmelden (Touch ID / Face ID)</button>
+      )}
     </Rahmen>
   );
 }

@@ -781,10 +781,21 @@ const MIGRATIONS = [
     geraet TEXT,
     erstellt TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
   );`,
+  // Passkeys (Touch ID, Face ID, security keys) as a login without password: the public key per device and user.
+  `CREATE TABLE passkeys (
+    id TEXT PRIMARY KEY,
+    benutzer_id INTEGER NOT NULL REFERENCES benutzer(id) ON DELETE CASCADE,
+    oeffentlich TEXT NOT NULL,
+    zaehler INTEGER NOT NULL DEFAULT 0,
+    transporte TEXT,
+    name TEXT,
+    erstellt TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    zuletzt TEXT
+  );`,
 ];
 
 // Tables without change time: the log itself, settings of this installation and page state.
-const AENDERUNG_AUSGENOMMEN = new Set(['protokoll', 'einstellungen', 'hinweis_status', 'checkliste', 'geraete', 'benutzer', 'sitzungen', 'push_abos']);
+const AENDERUNG_AUSGENOMMEN = new Set(['protokoll', 'einstellungen', 'hinweis_status', 'checkliste', 'geraete', 'benutzer', 'sitzungen', 'push_abos', 'passkeys']);
 const UTC_JETZT = `strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`;
 
 // Ordinary tables holding user data; with vorMigration the columns need not exist yet.

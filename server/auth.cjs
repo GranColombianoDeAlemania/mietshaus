@@ -44,6 +44,7 @@ module.exports = function auth(rawDb) {
 
   return {
     anzahl: () => db().prepare('SELECT count(*) AS n FROM benutzer').get().n,
+    benutzer: (id) => oeffentlich(db().prepare('SELECT * FROM benutzer WHERE id = ? AND aktiv = 1').get(id)),
     liste: () => db().prepare('SELECT * FROM benutzer ORDER BY name').all().map(oeffentlich),
     anlegen: ({ login, name, passwort }) => {
       if (!/^[a-z0-9._-]{2,40}$/i.test(login ?? '')) throw new Error('Der Login darf nur Buchstaben, Ziffern, Punkt, Minus und Unterstrich enthalten (2–40 Zeichen).');

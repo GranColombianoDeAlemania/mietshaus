@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { call, fehler, type Row } from '../api';
-import { abmelden, anfrage, dateienWaehlen } from '../bruecke';
+import { abmelden, anfrage, dateienWaehlen, passkeyHinzufuegen, passkeyMoeglich } from '../bruecke';
 import { ARTEN, homeBildschirmNoetig, pushAbo, pushAusschalten, pushEinschalten, pushMoeglich } from '../mitteilungen';
 import { useLoad } from '../useLoad';
 import { anzeige, SCHRIFTGROESSEN, type Thema } from '../anzeige';
@@ -360,6 +360,7 @@ function Benutzer() {
         <label>Name<input value={neu.name} onChange={(ev) => setNeu({ ...neu, name: ev.target.value })} /></label>
         <label>Passwort<input type="password" autoComplete="new-password" value={neu.passwort} onChange={(ev) => setNeu({ ...neu, passwort: ev.target.value })} /></label>
       </div>
+      <Passkeys />
       <div className="buttons">
         <button className="primary" disabled={!neu.login || !neu.passwort} onClick={() => tun(async () => { await call('benutzerAnlegen', neu); setNeu({ login: '', name: '', passwort: '' }); }, 'Benutzer angelegt.')}>Benutzer anlegen</button>
         <button onClick={() => abmelden().then(() => location.reload())}>Abmelden</button>
@@ -488,6 +489,37 @@ function Mitteilungen() {
               <button className="primary" onClick={() => tun(() => pushEinschalten(gewaehlt), 'Eingeschaltet.')}>{abo ? 'Auswahl speichern' : 'Einschalten'}</button>
             </div>
           </>}
+    </div>
+  );
+}
+
+// The logged-in user's passkeys: add one for this device (Touch ID / Face ID), remove old ones.
+function Passkeys() {
+  const [liste, reload] = useLoad<Row[]>(() => call('passkeyListe'), []);
+  const [meldung, setMeldung] = useState('');
+  const zeit = (iso?: string | null) => (iso ? new Date(iso).toLocaleDateString('de-DE') : '–');
+  return (
+    <div className="panel">
+      <b>Meine Passkeys</b>
+      <p className="klein hinweis">Anmelden mit Touch ID, Face ID oder einem Sicherheitsschlüssel statt Passwort – im Browser und auf dem iPhone (über HTTPS, also die Tailscale-Adresse).
+        Das Passwort bleibt als Ersatz.</p>
+      {!!liste?.length && (
+        <table className="klein"><tbody>{liste.map((p) => (
+          <tr key={p.id}><td>{p.name}</td><td>angelegt {zeit(p.erstellt)}</td><td>zuletzt {zeit(p.zuletzt)}</td>
+            <td className="aktionen"><button onClick={async () => { if (await bestaetigen(`Passkey „${p.name}“ entfernen?`)) { await call('passkeyLoeschen', p.id); reload(); } }}>Entfernen</button></td></tr>
+        ))}</tbody></table>
+      )}
+      <div className="buttons">
+        {meldung && <span className="meldung">{meldung}</span>}<span className="spacer" />
+        {passkeyMoeglich() ? <button onClick={async () => {
+          const name = window.prompt('Name für diesen Passkey, z. B. „iPhone Julian“:', /iPhone/.test(navigator.userAgent) ? 'iPhone' : /iPad/.test(navigator.userAgent) ? 'iPad' : 'Mac');
+          if (!name) return;
+          try { await passkeyHinzufuegen(name); setMeldung('Passkey gespeichert.'); reload(); } catch (e) {
+            if ((e as Error).name !== 'NotAllowedError') setMeldung(`Fehler: ${(e as Error).message}`);
+          }
+        }}>Passkey für dieses Gerät hinzufügen</button>
+          : <span className="klein hinweis">{window.hvDesktop ? 'In der Mac-App nicht möglich – im Browser (Safari) unter der Server-Adresse einrichten.' : 'Nur über HTTPS möglich (Tailscale-Adresse).'}</span>}
+      </div>
     </div>
   );
 }

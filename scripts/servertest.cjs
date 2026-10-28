@@ -191,6 +191,27 @@ function client(url) {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 
+  // ---------- 5a3. passkeys (software authenticator) ----------
+  {
+    const { authenticator } = require('./authenticator.cjs');
+    const geraet = authenticator();
+    const optReg = await (await anna.anfrage('/api/passkey/registrieren/optionen', { methode: 'POST', json: {} })).json();
+    pruefe('Passkey: Optionen', optReg.rp?.id === '127.0.0.1' && optReg.authenticatorSelection?.residentKey === 'required', JSON.stringify(optReg.rp));
+    const reg = await anna.anfrage('/api/passkey/registrieren', { methode: 'POST', json: { antwort: geraet.registrieren(optReg, s.url), name: 'Testgerät' } });
+    pruefe('Passkey registriert', reg.ok && (await anna.call('passkeyListe')).length === 1, await reg.text());
+    const fremdGeraet = client(s.url);
+    const optAnm = await (await fremdGeraet.anfrage('/api/passkey/anmelden/optionen', { methode: 'POST', json: {} })).json();
+    const anm = await fremdGeraet.anfrage('/api/passkey/anmelden', { methode: 'POST', json: { vorgang: optAnm.vorgang, antwort: geraet.anmelden(optAnm.optionen, s.url) } });
+    pruefe('Mit Passkey angemeldet', anm.ok && (await anm.json()).benutzer?.login === 'anna' && Array.isArray(await fremdGeraet.call('objekte', 'miete')));
+    const optAlt = await (await fremd.anfrage('/api/passkey/anmelden/optionen', { methode: 'POST', json: {} })).json();
+    const falsch = geraet.anmelden({ ...optAlt.optionen, challenge: 'ZmFsc2NoZXMtcmFldHNlbA' }, s.url);
+    pruefe('Falsche Challenge abgelehnt', (await fremd.anfrage('/api/passkey/anmelden', { methode: 'POST', json: { vorgang: optAlt.vorgang, antwort: falsch } })).status === 401);
+    pruefe('Vorgang nur einmal', (await fremd.anfrage('/api/passkey/anmelden', { methode: 'POST', json: { vorgang: optAnm.vorgang, antwort: geraet.anmelden(optAnm.optionen, s.url) } })).status === 401);
+    await anna.call('passkeyLoeschen', (await anna.call('passkeyListe'))[0].id);
+    const opt3 = await (await fremd.anfrage('/api/passkey/anmelden/optionen', { methode: 'POST', json: {} })).json();
+    pruefe('Entfernter Passkey gilt nicht mehr', (await fremd.anfrage('/api/passkey/anmelden', { methode: 'POST', json: { vorgang: opt3.vorgang, antwort: geraet.anmelden(opt3.optionen, s.url) } })).status === 401);
+  }
+
   // ---------- 5b. status page ----------
   pruefe('Jetzt sichern', (await anna.anfrage('/api/jetzt-sichern', { methode: 'POST', json: {} })).ok);
   const test = await (await anna.anfrage('/api/sicherungstest', { methode: 'POST', json: {} })).json();
