@@ -1,3 +1,4 @@
+const ortszeit = require('./zeit.cjs');
 // Document archive: inbox, recognised fields, full-text index and the global search.
 // Used by the app and by the Claude Desktop connection (MCP), so it only touches the database.
 
@@ -124,7 +125,7 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME }) {
       const vorhanden = row.sha256 ? get('SELECT id, titel, status FROM dokumente WHERE sha256 = ?', row.sha256) : null;
       if (vorhanden) return { id: vorhanden.id, doppelt: true, titel: vorhanden.titel };
       const id = Number(db.prepare(`INSERT INTO dokumente (objekt_id, einheit_id, projekt_id, person_id, buchung_id, typ, titel, datei, name, groesse, sha256, status, quelle, erfasst, analyse)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, date('now'), 'offen')`).run(row.objekt_id ?? null, row.einheit_id ?? null, row.projekt_id ?? null,
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, date('now', 'localtime'), 'offen')`).run(row.objekt_id ?? null, row.einheit_id ?? null, row.projekt_id ?? null,
         row.person_id ?? null, row.buchung_id ?? null, row.typ ?? null, row.titel, row.datei, row.name, row.groesse, row.sha256 ?? null, row.status ?? 'postfach', row.quelle ?? 'upload').lastInsertRowid);
       indexieren(id);
       return { id, doppelt: false };

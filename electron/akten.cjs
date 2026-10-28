@@ -1,9 +1,10 @@
 // Overviews that pull everything together: object tiles for the cockpit, the object fact sheet
 // and the person file, each with a timeline of what happened.
 const { selbstSql } = require('./buchhaltung.cjs');
+const ortszeit = require('./zeit.cjs');
 
 module.exports = function akten({ db, all, get, PERSON_NAME, bh }) {
-  const heute = () => new Date().toISOString().slice(0, 10);
+  const heute = () => ortszeit.heute();
   const BILD = `(lower(d.datei) GLOB '*.jp*g' OR lower(d.datei) GLOB '*.png' OR lower(d.datei) GLOB '*.webp')`;
 
   // Title photo: the chosen one, otherwise the newest photo of the house itself (not of a unit).

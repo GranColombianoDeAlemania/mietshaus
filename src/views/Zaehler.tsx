@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { call, datum, heute, parseZahl, zahl, type Row } from '../api';
+import { call, datum, heute, inTagen, parseZahl, zahl, type Row } from '../api';
 import { FormDialog, type Field } from '../Form';
 import { useLoad } from '../useLoad';
 import { L } from '../navi';
@@ -30,7 +30,7 @@ export function Zaehler(props: { objekt: Row }) {
     { key: 'ausbau', label: 'Ausgebaut am', type: 'date' },
     { key: 'notiz', label: 'Notiz', type: 'textarea' },
   ];
-  const eichungFaellig = (z: Row) => z.eichung_bis && z.eichung_bis <= new Date(Date.now() + 180 * 864e5).toISOString().slice(0, 10);
+  const eichungFaellig = (z: Row) => z.eichung_bis && z.eichung_bis <= inTagen(180);
 
   return (
     <section>

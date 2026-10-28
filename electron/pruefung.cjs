@@ -1,8 +1,9 @@
 // Data check report: completeness and plausibility of master data, postings, statements and documents.
 // Every point has a stable key so it can be hidden; texts are plain German with the reason and what to do.
 const { tageZwischen, monatsliste } = require('./buchhaltung.cjs');
+const ortszeit = require('./zeit.cjs');
 
-const heute = () => new Date().toISOString().slice(0, 10);
+const heute = () => ortszeit.heute();
 const plusTage = (iso, n) => new Date(Date.parse(iso) + n * 864e5).toISOString().slice(0, 10);
 const euro = (ct) => new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format((ct ?? 0) / 100);
 const datumDe = (iso) => (iso ? iso.slice(0, 10).split('-').reverse().join('.') : '');

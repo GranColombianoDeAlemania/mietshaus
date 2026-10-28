@@ -1,6 +1,6 @@
 // Deposits, rent adjustments (index, stepped, increase), keys and insurance policies.
 import { useEffect, useState } from 'react';
-import { anrede, call, datum, euro, fehler, heute, parseZahl, personName, zahl, type Row } from '../api';
+import { anrede, call, datum, euro, fehler, heute, inTagen, monatJetzt, parseZahl, personName, zahl, type Row } from '../api';
 import { useLoad } from '../useLoad';
 import { L } from '../navi';
 import { Liste } from '../Liste';
@@ -224,7 +224,7 @@ function Anpassungen(props: { vertrag: Row; objekt: Row; vorlage?: Row | null; o
 
 function Indexwerte() {
   const [rows, reload] = useLoad<Row[]>(() => call('indexwerte'), []);
-  const [neu, setNeu] = useState({ monat: new Date().toISOString().slice(0, 7), wert: '' });
+  const [neu, setNeu] = useState({ monat: monatJetzt(), wert: '' });
   const [text, setText] = useState('');
   return (
     <>
@@ -287,7 +287,7 @@ function Schluesselausgaben(props: { schluessel: Row; onClose: () => void }) {
 }
 
 export function Versicherungen(props: { objekt: Row }) {
-  const bald = (d?: string) => d && d <= new Date(Date.now() + 60 * 864e5).toISOString().slice(0, 10) && d >= heute();
+  const bald = (d?: string) => d && d <= inTagen(60) && d >= heute();
   return (
     <Liste titel="Versicherungen & Verträge" table="versicherungen" filter={{ objekt_id: props.objekt.id }} order="art"
       neuLabel="Neuer Vertrag"

@@ -1,7 +1,7 @@
 // Cockpit: what needs attention, what is coming up, opportunities, key figures and cash flow.
 import { useState } from 'react';
 import * as I from 'lucide-react';
-import { call, datum, euro, type Modus, type Row } from '../api';
+import { call, datum, euro, inTagen, type Modus, type Row } from '../api';
 import { useLoad } from '../useLoad';
 import { ObjektKacheln } from './Steckbrief';
 import { L, mitLinks, useNavi } from '../navi';
@@ -28,7 +28,7 @@ export function Uebersicht(props: { modus: Modus; objekte: Row[]; oeffne: (seite
   const handeln = meine.filter((h) => h.stufe !== 'gelb');
   const chancen = meine.filter((h) => h.stufe === 'gelb');
   const rot = handeln.filter((h) => h.stufe === 'rot').length;
-  const offeneVorgaenge = (vorgaenge ?? []).filter((v) => v.faellig && v.faellig <= new Date(Date.now() + 7 * 864e5).toISOString().slice(0, 10));
+  const offeneVorgaenge = (vorgaenge ?? []).filter((v) => v.faellig && v.faellig <= inTagen(7));
   const verlauf = <Kennzahl titel="Ein- und Auszahlungen der letzten 12 Monate" breite={weg ? 7 : 12}><Zahlungsverlauf verlauf={k.verlauf} /></Kennzahl>;
 
   return (

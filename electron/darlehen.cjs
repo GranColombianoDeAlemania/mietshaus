@@ -1,3 +1,4 @@
+const ortszeit = require('./zeit.cjs');
 // Loans: annuity repayment schedule, loan and interest accounts, splitting each instalment into interest
 // (expense, flows into Anlage V) and repayment (reduces the loan account).
 const monatPlus = (iso, n) => {
@@ -57,7 +58,7 @@ module.exports = function darlehen({ db, all, get, tx, bh }) {
   return {
     darlehenListe: (objektId) => all(`SELECT d.*, o.bezeichnung AS objekt FROM darlehen d JOIN objekte o ON o.id = d.objekt_id
       WHERE (?1 IS NULL OR d.objekt_id = ?1) ORDER BY d.erste_rate`, objektId ?? null).map((d) => {
-      const heute = new Date().toISOString().slice(0, 7);
+      const heute = ortszeit.monatJetzt();
       const p = plan(d, heute);
       const ist = d.konto_id ? -bh.saldoBis(d.konto_id, '9999-12-31') : null;
       return { ...d, rate_berechnet_ct: rate(d), rest_plan_ct: p.at(-1)?.rest_ct ?? d.betrag_ct, rest_ist_ct: ist,

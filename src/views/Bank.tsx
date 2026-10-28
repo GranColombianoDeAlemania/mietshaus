@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { betrag, call, datum, euro, fehler, fehlerText, heute, personName, type Modus, type Row } from '../api';
+import { betrag, call, datum, euro, fehler, fehlerText, heute, inTagen, personName, type Modus, type Row } from '../api';
 import { useLoad } from '../useLoad';
 import { KontoSelect, Tabs } from '../ui';
 import { ibanGueltig, leseKontoauszug, painLastschrift, type Umsatz } from '../bankformate';
@@ -103,11 +103,7 @@ function Import(props: { objekt: Row }) {
 
 function Lastschriften(props: { objekt: Row; modus: Modus }) {
   const [stichtag, setStichtag] = useState(heute());
-  const [faellig, setFaellig] = useState(() => {
-    const d = new Date();
-    d.setDate(d.getDate() + 5);
-    return d.toISOString().slice(0, 10);
-  });
+  const [faellig, setFaellig] = useState(() => inTagen(5));
   const [einst] = useLoad<Row>(() => call('einstellungen'), []);
   const [rows] = useLoad<Row[]>(() => call('lastschriften', props.objekt.id, stichtag, [props.modus]), [props.objekt.id, stichtag, props.modus]);
   const [aus, setAus] = useState<Record<number, boolean>>({});

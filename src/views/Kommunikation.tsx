@@ -1,6 +1,6 @@
 // Letters and mail merge from templates, document archive, cases and appointments.
 import { useEffect, useState } from 'react';
-import { alleNamen, anrede, call, datum, euro, fehler, heute, personName, type Modus, type Row } from '../api';
+import { alleNamen, anrede, call, datum, euro, fehler, heute, inTagen, personName, type Modus, type Row } from '../api';
 import { useLoad } from '../useLoad';
 import { useAktion } from '../aktion';
 import { Liste } from '../Liste';
@@ -61,7 +61,7 @@ const STANDARDVORLAGEN = [
 const euroFmt = (ct: number) => euro(ct);
 function werte(p: Row, v: Row | null, b: Row | null, objekt: Row, einst: Row, akte: Row | null = null): Record<string, string> {
   const offen = (akte?.op?.offen ?? []).filter((o: Row) => o.verzug >= 1);
-  const frist = new Date(Date.now() + 14 * 864e5).toISOString().slice(0, 10);
+  const frist = inTagen(14);
   return {
     anrede: anrede(p), name: alleNamen(p), vorname: p.vorname ?? '', nachname: p.nachname ?? '',
     strasse: p.strasse ?? '', plz_ort: [p.plz, p.ort].filter(Boolean).join(' '),

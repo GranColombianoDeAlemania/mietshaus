@@ -1,8 +1,9 @@
 // Automation and checks: runs routine work by itself (monthly charges) and reports what needs a decision
 // or is missing. Each hint has a stable key so it can be snoozed or marked as done.
 const { tageZwischen, selbstSql } = require('./buchhaltung.cjs');
+const ortszeit = require('./zeit.cjs');
 
-const heute = () => new Date().toISOString().slice(0, 10);
+const heute = () => ortszeit.heute();
 const plusTage = (iso, n) => new Date(Date.parse(iso) + n * 864e5).toISOString().slice(0, 10);
 const plusMonate = (iso, n) => {
   const d = new Date(iso.slice(0, 7) + '-01T00:00:00Z');

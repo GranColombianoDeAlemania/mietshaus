@@ -2,9 +2,10 @@
 // arrears by age, cash forecast, year comparison, rent increase radar, deadlines, costs by type and what the
 // landlord's own flat costs. Amounts in cents; every figure comes from postings, contracts or meter readings.
 const { tageZwischen, tageImMonat, einheitVonSql } = require('./buchhaltung.cjs');
+const ortszeit = require('./zeit.cjs');
 
 const pad = (n) => String(n).padStart(2, '0');
-const heute = () => new Date().toISOString().slice(0, 10);
+const heute = () => ortszeit.heute();
 const plusTage = (iso, n) => new Date(Date.parse(iso) + n * 864e5).toISOString().slice(0, 10);
 const vorTag = (iso) => plusTage(iso, -1);
 const nachTag = (iso) => plusTage(iso, 1);

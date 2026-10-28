@@ -1,5 +1,6 @@
 // Bookkeeping: chart of accounts, postings, charges (Sollstellung), open items, dunning, meters and bank import.
 const kalender = require('./kalender.cjs');
+const ortszeit = require('./zeit.cjs');
 // Double entry: every posting moves betrag_ct from the credit account (haben) to the debit account (soll).
 // Balance of an account = sum of debits − sum of credits.
 
@@ -243,7 +244,7 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
   // Only charges due on or before the reference date count; a charge not paid on its due date is open in full.
   // Payments settle the oldest due month first. Money paid back to the tenant/owner (e.g. a returned direct
   // debit) reduces the payments, so the affected month becomes open again.
-  function offenePostenKonto(kontoId, stichtag = new Date().toISOString().slice(0, 10)) {
+  function offenePostenKonto(kontoId, stichtag = ortszeit.heute()) {
     const lasten = all(`SELECT b.id, b.datum, b.monat, b.text, b.betrag_ct FROM buchungen b JOIN konten g ON g.id = b.haben_id
       WHERE b.soll_id = ? AND g.klasse <> 'geld' AND b.datum <= ? ORDER BY b.datum, b.id`, kontoId, stichtag);
     let zahlungen = get(`SELECT
@@ -469,7 +470,7 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
     const v = vertragMitNamen(typ, vertragId);
     const konto = v && kontoVon(typ, v.id);
     if (!konto) return { aenderungen: [], fehlend: [] };
-    const jetzt = new Date().toISOString().slice(0, 7);
+    const jetzt = ortszeit.monatJetzt();
     const sperre = gesperrtBis();
     const gebucht = new Map();
     for (const b of all(`SELECT b.*, EXISTS (SELECT 1 FROM buchungen x WHERE x.storno_von = b.id) AS storniert FROM buchungen b
@@ -512,7 +513,7 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
     const e = Object.fromEntries(all(`SELECT schluessel, wert FROM einstellungen WHERE schluessel IN ('auto_soll', 'auto_soll_ab')`)
       .map((r) => [r.schluessel, r.wert]));
     if (e.auto_soll === '0') return null;
-    const ab = e.auto_soll_ab ?? new Date().toISOString().slice(0, 7);
+    const ab = e.auto_soll_ab ?? ortszeit.monatJetzt();
     if (!e.auto_soll_ab) db.prepare(`INSERT INTO einstellungen (schluessel, wert) VALUES ('auto_soll_ab', ?) ON CONFLICT (schluessel) DO NOTHING`).run(ab);
     return sollAbgleich(typ, vertragId, { von: ab, anwenden: true, nachholen: true });
   }
@@ -532,13 +533,13 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
         }
       }
       db.prepare(`INSERT INTO einstellungen (schluessel, wert) VALUES ('umstellung_monatlich', ?) ON CONFLICT (schluessel) DO NOTHING`)
-        .run(JSON.stringify({ datum: new Date().toISOString().slice(0, 10), monate: liste }));
+        .run(JSON.stringify({ datum: ortszeit.heute(), monate: liste }));
     });
     return liste;
   }
 
   // The next charge of a contract after the reference date (for "next due" hints).
-  function naechsteFaelligkeit(typ, vertragId, stichtag = new Date().toISOString().slice(0, 10)) {
+  function naechsteFaelligkeit(typ, vertragId, stichtag = ortszeit.heute()) {
     const v = vertragMitNamen(typ, vertragId);
     if (!v) return null;
     let [y, m] = stichtag.slice(0, 7).split('-').map(Number);
@@ -643,7 +644,7 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
     objektId, von, bis, ...(konto_id ? [konto_id, konto_id] : []), ...(suche ? Array(4).fill(`%${suche}%`) : [])),
 
     // Reverses a posting (and its whole split group) with counter-postings dated today; the original stays.
-    buchungStornieren: (id, datum = new Date().toISOString().slice(0, 10)) => tx(() => {
+    buchungStornieren: (id, datum = ortszeit.heute()) => tx(() => {
       const b = get('SELECT * FROM buchungen WHERE id = ?', id);
       if (!b) throw new Error('Buchung nicht gefunden');
       if (get('SELECT 1 FROM buchungen WHERE storno_von = ?', id)) throw new Error('Diese Buchung wurde bereits storniert.');
@@ -719,7 +720,7 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
     naechsteFaelligkeit,
 
     // State of a contract account for the payment form: overdue, due today, credit and the next charge.
-    kontoStatus: (kontoId, stichtag = new Date().toISOString().slice(0, 10)) => {
+    kontoStatus: (kontoId, stichtag = ortszeit.heute()) => {
       const k = get('SELECT * FROM konten WHERE id = ?', kontoId);
       if (!k?.vertrag_id) return null;
       const op = offenePostenKonto(kontoId, stichtag);
@@ -736,7 +737,7 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
       };
     },
 
-    offenePosten: (objektId, stichtag = new Date().toISOString().slice(0, 10), typ = null) => {
+    offenePosten: (objektId, stichtag = ortszeit.heute(), typ = null) => {
       const konten = all(`SELECT k.*, (SELECT max(stufe) FROM mahnungen m WHERE m.konto_id = k.id) AS mahnstufe,
           (SELECT max(datum) FROM mahnungen m WHERE m.konto_id = k.id) AS letzte_mahnung
         FROM konten k WHERE k.objekt_id = ? AND k.klasse = 'person' AND (?2 IS NULL OR k.vertrag_typ = ?2) ORDER BY k.nr`, objektId, typ);
@@ -760,7 +761,7 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
       const keys = Object.keys(felder).filter((k) => erlaubt.includes(k));
       if (keys.length) db.prepare(`UPDATE ratenplaene SET ${keys.map((k) => `${k} = ?`).join(', ')} WHERE id = ?`).run(...keys.map((k) => felder[k]), id);
     },
-    ratenplanStand: (id, stichtag = new Date().toISOString().slice(0, 10)) => ratenplanStand(id, stichtag),
+    ratenplanStand: (id, stichtag = ortszeit.heute()) => ratenplanStand(id, stichtag),
 
     // Records a reminder; a fee becomes a charge on the contract account.
     mahnen: ({ konto_id, stufe, gebuehr_ct = 0, frist, datum, offen_ct }) => tx(() => {
@@ -858,7 +859,7 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
         if (z.projektposten_id) db.prepare(`UPDATE projektposten SET buchung_id = ?, status = 'bezahlt', bezahlt_am = ? WHERE id = ?`).run(id, z.datum, z.projektposten_id);
         // A returned debit gets a case so the follow-up (contact, fee, new debit) is not forgotten.
         if (z.ruecklast) db.prepare(`INSERT INTO vorgaenge (objekt_id, titel, kategorie, status, prioritaet, faellig, beschreibung)
-          VALUES (?, ?, 'Mieteranfrage', 'offen', 1, date('now', '+3 days'), ?)`).run(objektId,
+          VALUES (?, ?, 'Mieteranfrage', 'offen', 1, date('now', 'localtime', '+3 days'), ?)`).run(objektId,
           `Rücklastschrift ${get('SELECT bezeichnung FROM konten WHERE id = ?', z.konto_id)?.bezeichnung ?? ''}`,
           `Rücklastschrift über ${(Math.abs(z.betrag_ct) / 100).toFixed(2).replace('.', ',')} € am ${z.datum}. ${z.zweck ?? ''}\nBitte Kontakt aufnehmen; Bankgebühren können weiterberechnet werden.`);
         if (lernen && z.muster && !z.ruecklast && !z.dokument_id) db.prepare(`INSERT INTO bankregeln (objekt_id, muster, konto_id) VALUES (?, ?, ?)

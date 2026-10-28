@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { call, datum, diesesJahr, euro, fehler, parseCent, type Row } from '../api';
+import { call, datum, diesesJahr, euro, fehler, heute, parseCent, type Row } from '../api';
 import { useLoad } from '../useLoad';
 import { Zeitraum } from '../ui';
 
@@ -8,7 +8,7 @@ export function Ruecklagen(props: { objekt: Row }) {
   const [bis, setBis] = useState(`${diesesJahr()}-12-31`);
   const [r, reload] = useLoad<Row>(() => call('ruecklagen', props.objekt.id, von, bis), [props.objekt.id, von, bis]);
   const [keys] = useLoad<Row[]>(() => call('schluessel', props.objekt.id), [props.objekt.id]);
-  const [su, setSu] = useState({ betrag: '', schluessel_id: '', datum: new Date().toISOString().slice(0, 10), text: 'Sonderumlage' });
+  const [su, setSu] = useState({ betrag: '', schluessel_id: '', datum: heute(), text: 'Sonderumlage' });
   const [ergebnis, setErgebnis] = useState<Row[] | null>(null);
 
   async function sonderumlage() {

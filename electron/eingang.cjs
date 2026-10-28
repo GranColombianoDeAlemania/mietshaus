@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const crypto = require('node:crypto');
+const ortszeit = require('./zeit.cjs');
 
 const ERLAUBT = /\.(pdf|png|jpe?g|tiff?|heic|webp|gif|bmp|txt|csv|xml|docx?|xlsx?|odt|ods|eml)$/i;
 
@@ -31,7 +32,7 @@ module.exports = function eingang({ db, importieren, melden, passwort }) {
     }
     if (!neu.length) return;
     const r = importieren(neu, { quelle: 'ordner' });
-    const ziel = path.join(ordner, 'eingelesen', new Date().toISOString().slice(0, 7));
+    const ziel = path.join(ordner, 'eingelesen', ortszeit.monatJetzt());
     fs.mkdirSync(ziel, { recursive: true });
     for (const p of neu) {
       let dest = path.join(ziel, path.basename(p));

@@ -1,4 +1,5 @@
 // Parsers for bank statement files and writers for SEPA payment files.
+import { lokalZeit } from './api';
 
 export type Umsatz = { ref: string; datum: string; betrag_ct: number; name: string; iban: string; zweck: string };
 
@@ -131,7 +132,7 @@ export function painLastschrift(opts: { glaeubiger: string; glaeubigerId: string
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.008.001.08">
 <CstmrDrctDbtInitn>
-<GrpHdr><MsgId>${id}</MsgId><CreDtTm>${new Date().toISOString().slice(0, 19)}</CreDtTm><NbOfTxs>${opts.posten.length}</NbOfTxs><CtrlSum>${betragStr(summe)}</CtrlSum><InitgPty><Nm>${sepaText(opts.glaeubiger, 70)}</Nm></InitgPty></GrpHdr>
+<GrpHdr><MsgId>${id}</MsgId><CreDtTm>${lokalZeit()}</CreDtTm><NbOfTxs>${opts.posten.length}</NbOfTxs><CtrlSum>${betragStr(summe)}</CtrlSum><InitgPty><Nm>${sepaText(opts.glaeubiger, 70)}</Nm></InitgPty></GrpHdr>
 <PmtInf><PmtInfId>${id}-1</PmtInfId><PmtMtd>DD</PmtMtd><NbOfTxs>${opts.posten.length}</NbOfTxs><CtrlSum>${betragStr(summe)}</CtrlSum>
 <PmtTpInf><SvcLvl><Cd>SEPA</Cd></SvcLvl><LclInstrm><Cd>CORE</Cd></LclInstrm><SeqTp>RCUR</SeqTp></PmtTpInf>
 <ReqdColltnDt>${opts.faellig}</ReqdColltnDt>
@@ -160,7 +161,7 @@ export function painUeberweisung(opts: { auftraggeber: string; iban: string; bic
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.001.001.09">
 <CstmrCdtTrfInitn>
-<GrpHdr><MsgId>${id}</MsgId><CreDtTm>${new Date().toISOString().slice(0, 19)}</CreDtTm><NbOfTxs>${opts.posten.length}</NbOfTxs><CtrlSum>${betragStr(summe)}</CtrlSum><InitgPty><Nm>${sepaText(opts.auftraggeber, 70)}</Nm></InitgPty></GrpHdr>
+<GrpHdr><MsgId>${id}</MsgId><CreDtTm>${lokalZeit()}</CreDtTm><NbOfTxs>${opts.posten.length}</NbOfTxs><CtrlSum>${betragStr(summe)}</CtrlSum><InitgPty><Nm>${sepaText(opts.auftraggeber, 70)}</Nm></InitgPty></GrpHdr>
 <PmtInf><PmtInfId>${id}-1</PmtInfId><PmtMtd>TRF</PmtMtd><NbOfTxs>${opts.posten.length}</NbOfTxs><CtrlSum>${betragStr(summe)}</CtrlSum>
 <PmtTpInf><SvcLvl><Cd>SEPA</Cd></SvcLvl></PmtTpInf>
 <ReqdExctnDt><Dt>${opts.ausfuehrung}</Dt></ReqdExctnDt>

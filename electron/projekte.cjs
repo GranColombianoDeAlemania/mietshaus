@@ -1,3 +1,4 @@
+const ortszeit = require('./zeit.cjs');
 // Projects: schedule (Gantt), quotes, orders and invoices with budget control. A project can stand alone
 // or be linked to an object, in which case its invoices are booked in that object's ledger.
 module.exports = function projekte({ db, all, get, tx, bh }) {
@@ -73,7 +74,7 @@ module.exports = function projekte({ db, all, get, tx, bh }) {
     // Administrative year plan derived from the data: statement periods, deadlines, meetings, budget plans.
     jahresplan: (jahr) => {
       const zeilen = [];
-      const t = new Date().toISOString().slice(0, 10);
+      const t = ortszeit.heute();
       for (const o of all('SELECT * FROM objekte ORDER BY bezeichnung')) {
         const fertig = (typ, j) => !!get('SELECT 1 FROM abrechnungen WHERE objekt_id = ? AND typ = ? AND substr(von, 1, 4) = ?', o.id, typ, String(j));
         if (o.art !== 'weg') zeilen.push({ gruppe: o.bezeichnung, titel: `Betriebskostenabrechnung ${jahr - 1}`, beginn: `${jahr}-01-01`, ende: `${jahr}-12-31`, erledigt: fertig('nk', jahr - 1), art: 'frist' });

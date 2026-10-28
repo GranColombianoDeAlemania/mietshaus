@@ -2,6 +2,7 @@
 const STANDARDRAEUME = ['Flur / Diele', 'Wohnzimmer', 'Schlafzimmer', 'Kinderzimmer', 'Küche', 'Bad', 'Gäste-WC', 'Balkon / Terrasse', 'Keller', 'Fenster & Türen'];
 
 const kalender = require('./kalender.cjs');
+const ortszeit = require('./zeit.cjs');
 const datumDe = (iso) => (iso ? iso.split('-').reverse().join('.') : '');
 const minusTage = (iso, n) => new Date(Date.parse(iso) - n * 864e5).toISOString().slice(0, 10);
 
@@ -147,8 +148,8 @@ module.exports = function mieterwechsel({ db, all, get, tx, PERSON_NAME }) {
 
     // Units that are vacant now or become vacant within 4 months, with their offer and interested parties.
     vermietung: (objektId) => {
-      const t = new Date().toISOString().slice(0, 10);
-      const in4 = new Date(Date.now() + 122 * 864e5).toISOString().slice(0, 10);
+      const t = ortszeit.heute();
+      const in4 = ortszeit.inTagen(122);
       return all(`SELECT e.*, (SELECT max(m.ende) FROM mietverhaeltnisse m WHERE m.einheit_id = e.id AND m.ende IS NOT NULL AND m.ende <> '') AS letztes_ende,
           (SELECT count(*) FROM interessenten i WHERE i.einheit_id = e.id AND i.status NOT IN ('absage', 'vermietet')) AS interessenten
         FROM einheiten e WHERE e.objekt_id = ?1

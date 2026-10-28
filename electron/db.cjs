@@ -1,6 +1,7 @@
 // Local SQLite database: schema migrations and a small whitelisted CRUD layer.
 const { DatabaseSync } = require('node:sqlite');
 const buchhaltung = require('./buchhaltung.cjs');
+const ortszeit = require('./zeit.cjs');
 const { selbstSql } = buchhaltung;
 const abrechnung = require('./abrechnung.cjs');
 const verwaltung = require('./verwaltung.cjs');
@@ -778,7 +779,7 @@ const PERSON_NAME = `CASE WHEN coalesce(p.nachname, '') = '' AND coalesce(p.vorn
   CASE WHEN p.firma IS NOT NULL AND p.firma <> '' THEN ' (' || p.firma || ')' ELSE '' END) END`;
 
 // A contract is current when it has started and not yet ended.
-const aktuell = (a) => `${a}.beginn <= date('now') AND (${a}.ende IS NULL OR ${a}.ende = '' OR ${a}.ende >= date('now'))`;
+const aktuell = (a) => `${a}.beginn <= date('now', 'localtime') AND (${a}.ende IS NULL OR ${a}.ende = '' OR ${a}.ende >= date('now', 'localtime'))`;
 
 function open(file, quelle = 'app') {
   const db = new DatabaseSync(file);
@@ -999,7 +1000,7 @@ function api(db) {
           WHERE g.einheit_id = e.id AND ${aktuell('g')} ORDER BY g.beginn DESC LIMIT 1) AS eigentuemer,
         (SELECT g.person_id FROM eigentum g WHERE g.einheit_id = e.id AND ${aktuell('g')} ORDER BY g.beginn DESC LIMIT 1) AS eigentuemer_id,
         (SELECT g.id FROM eigentum g WHERE g.einheit_id = e.id AND ${aktuell('g')} ORDER BY g.beginn DESC LIMIT 1) AS eigentum_id,
-        CASE WHEN ${selbstSql('e', "date('now')")} OR coalesce((SELECT max(g.selbstnutzer) FROM eigentum g WHERE g.einheit_id = e.id AND ${aktuell('g')}), 0) = 1
+        CASE WHEN ${selbstSql('e', "date('now', 'localtime')")} OR coalesce((SELECT max(g.selbstnutzer) FROM eigentum g WHERE g.einheit_id = e.id AND ${aktuell('g')}), 0) = 1
           THEN 1 ELSE 0 END AS selbstgenutzt
       FROM einheiten e WHERE e.objekt_id = ? ORDER BY e.nr`, objektId),
 
@@ -1011,7 +1012,7 @@ function api(db) {
     vertraege: (table, objektId) => {
       if (table !== 'mietverhaeltnisse' && table !== 'eigentum') throw new Error('Ungültige Vertragsart');
       const typ = table === 'eigentum' ? 'weg' : 'miete';
-      const heute = new Date().toISOString().slice(0, 10);
+      const heute = ortszeit.heute();
       // The contract row keeps the amounts agreed at the start; akt_* are the amounts in force today (after adjustments).
       return all(`SELECT v.*, e.nr AS einheit_nr, e.bezeichnung AS einheit, ${PERSON_NAME} AS name,
           CASE WHEN ${aktuell('v')} THEN 1 ELSE 0 END AS aktuell
@@ -1092,9 +1093,9 @@ function api(db) {
           WHERE o.art IN (?1, ?2) AND ${aktuell('v')}) AS vertraege,
         0 AS soll_monat_ct,
         (SELECT count(*) FROM einheiten e JOIN objekte o ON o.id = e.objekt_id WHERE o.art IN (?1, ?2)
-          AND NOT EXISTS (SELECT 1 FROM ${vt} v WHERE v.einheit_id = e.id AND ${aktuell('v')}) AND NOT ${selbstSql('e', "date('now')")}) AS leer`, a, b);
+          AND NOT EXISTS (SELECT 1 FROM ${vt} v WHERE v.einheit_id = e.id AND ${aktuell('v')}) AND NOT ${selbstSql('e', "date('now', 'localtime')")}) AS leer`, a, b);
       // Monthly amount due from the amounts in force today, including rent and advance payment adjustments.
-      const heute = new Date().toISOString().slice(0, 10);
+      const heute = ortszeit.heute();
       const typ = modus === 'weg' ? 'weg' : 'miete';
       for (const v of all(`SELECT v.id FROM ${vt} v JOIN einheiten e ON e.id = v.einheit_id JOIN objekte o ON o.id = e.objekt_id
           WHERE o.art IN (?1, ?2) AND ${aktuell('v')}`, a, b)) {

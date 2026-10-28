@@ -1,6 +1,7 @@
 // Tenancy extras (deposits, indexed rent, rent increases), owners' meetings and resolutions,
 // documents, cases, appointments and the DATEV export.
 const { tageZwischen } = require('./buchhaltung.cjs');
+const ortszeit = require('./zeit.cjs');
 
 // First of the month n months after the month of iso.
 const plusMonate = (iso, n) => {
@@ -97,7 +98,7 @@ module.exports = function verwaltung({ db, all, get, tx, PERSON_NAME, bh }) {
       const neu = get('SELECT wert FROM indexwerte WHERE monat = ?', neuM)?.wert;
       if (!alt || !neu) throw new Error(`Indexwert fehlt für ${!alt ? basisMonat : neuM}. Bitte unter „Indexwerte“ ergänzen.`);
       const v = get('SELECT * FROM mietverhaeltnisse WHERE id = ?', vertragId);
-      const heute = new Date().toISOString().slice(0, 10);
+      const heute = ortszeit.heute();
       // Unchanged since the last change of the base rent (modernisation and operating costs aside).
       const seit = get(`SELECT max(gueltig_ab) AS d FROM anpassungen WHERE vertrag_typ = 'miete' AND vertrag_id = ? AND kaltmiete_ct IS NOT NULL
         AND grund NOT IN ${NICHT_ZAEHLEND} AND gueltig_ab <= ?`, vertragId, heute).d ?? v.beginn;
@@ -122,7 +123,7 @@ module.exports = function verwaltung({ db, all, get, tx, PERSON_NAME, bh }) {
       const v = get('SELECT * FROM mietverhaeltnisse WHERE id = ?', vertragId);
       const e = get('SELECT e.wohnflaeche, o.kappungsgrenze FROM einheiten e JOIN objekte o ON o.id = e.objekt_id WHERE e.id = ?', v.einheit_id);
       const k = kappung ?? e?.kappungsgrenze ?? 20;
-      const z = zugang ?? new Date().toISOString().slice(0, 10);
+      const z = zugang ?? ortszeit.heute();
       const vor3 = plusMonateGenau(ab, -36);
       const basisDatum = vor3 < v.beginn ? v.beginn : vor3;
       const basis = bh.betraege('miete', vertragId, basisDatum).kaltmiete_ct;
@@ -161,7 +162,7 @@ module.exports = function verwaltung({ db, all, get, tx, PERSON_NAME, bh }) {
         .reduce((s, a) => s + a.kaltmiete_ct - bh.betraege('miete', vertragId, vortag(a.gueltig_ab)).kaltmiete_ct, 0);
       const satz = qm && alt / 100 / qm < 7 ? 2 : 3;
       const grenze = qm ? Math.round(satz * qm * 100) - frueher : null;
-      const z = zugang ?? new Date().toISOString().slice(0, 10);
+      const z = zugang ?? ortszeit.heute();
       return { qm, alt_ct: alt, erhoehung_ct: neueMieteCt - alt, frueher_ct: frueher, satz, grenze_ct: grenze,
         kappung_ok: grenze == null || neueMieteCt - alt <= grenze, zugang: z, wirkung_frueh: plusMonate(z, 3), wirkung_ok: ab >= plusMonate(z, 3) };
     },
@@ -218,18 +219,18 @@ module.exports = function verwaltung({ db, all, get, tx, PERSON_NAME, bh }) {
 
     // Things that need attention soon, for the overview page.
     faelligkeiten: (tage = 30) => {
-      const bis = new Date(Date.now() + tage * 864e5).toISOString().slice(0, 10);
+      const bis = ortszeit.inTagen(tage);
       return {
         vorgaenge: all(`SELECT v.id, v.titel, v.faellig, o.bezeichnung AS objekt FROM vorgaenge v LEFT JOIN objekte o ON o.id = v.objekt_id
           WHERE v.status <> 'erledigt' AND v.faellig IS NOT NULL AND v.faellig <= ? ORDER BY v.faellig`, bis),
         termine: all(`SELECT t.id, t.titel, t.datum, t.uhrzeit, o.bezeichnung AS objekt FROM termine t LEFT JOIN objekte o ON o.id = t.objekt_id
-          WHERE t.erledigt = 0 AND t.datum BETWEEN date('now') AND ? ORDER BY t.datum`, bis),
+          WHERE t.erledigt = 0 AND t.datum BETWEEN date('now', 'localtime') AND ? ORDER BY t.datum`, bis),
         vertraege: all(`SELECT 'miete' AS typ, m.ende AS datum, e.bezeichnung AS einheit, o.bezeichnung AS objekt FROM mietverhaeltnisse m
-          JOIN einheiten e ON e.id = m.einheit_id JOIN objekte o ON o.id = e.objekt_id WHERE m.ende BETWEEN date('now') AND ?`, bis),
+          JOIN einheiten e ON e.id = m.einheit_id JOIN objekte o ON o.id = e.objekt_id WHERE m.ende BETWEEN date('now', 'localtime') AND ?`, bis),
         eichungen: all(`SELECT z.nummer, z.art, z.eichung_bis AS datum, o.bezeichnung AS objekt FROM zaehler z JOIN objekte o ON o.id = z.objekt_id
           WHERE (z.ausbau IS NULL OR z.ausbau = '') AND z.eichung_bis IS NOT NULL AND z.eichung_bis <= ?`, bis),
         versicherungen: all(`SELECT v.art, v.gesellschaft, v.kuendbar_bis AS datum, o.bezeichnung AS objekt FROM versicherungen v
-          JOIN objekte o ON o.id = v.objekt_id WHERE v.kuendbar_bis BETWEEN date('now') AND ?`, bis),
+          JOIN objekte o ON o.id = v.objekt_id WHERE v.kuendbar_bis BETWEEN date('now', 'localtime') AND ?`, bis),
       };
     },
 

@@ -1,6 +1,7 @@
 // Annual statements: service charges for tenants (incl. heating and CO2 split), house money for owners,
 // budget plan, reserves and special levies. All amounts in cents.
 const { tageZwischen } = require('./buchhaltung.cjs');
+const ortszeit = require('./zeit.cjs');
 
 const tage = (von, bis) => tageZwischen(von, bis) + 1;
 const monatPlus = (monat, n) => new Date(Date.UTC(Number(monat.slice(0, 4)), Number(monat.slice(5, 7)) - 1 + n, 1)).toISOString().slice(0, 7);
@@ -246,7 +247,7 @@ module.exports = function abrechnung({ db, all, get, tx, PERSON_NAME, bh }) {
     const o = a.optionen;
     const punkte = [];
     const add = (stufe, text, hilfe = null, extra = {}) => punkte.push({ stufe, text, hilfe, ...extra });
-    const heuteIso = new Date().toISOString().slice(0, 10);
+    const heuteIso = ortszeit.heute();
     const euro = (ct) => new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format((ct ?? 0) / 100);
     const datumDe = (iso) => iso.split('-').reverse().join('.');
     const tageP = tage(von, bis);

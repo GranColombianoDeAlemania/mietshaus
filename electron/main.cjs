@@ -7,6 +7,7 @@ const { open, api } = require('./db.cjs');
 const analyse = require('./analyse.cjs');
 const eingang = require('./eingang.cjs');
 const { zip } = require('./zip.cjs');
+const ortszeit = require('./zeit.cjs');
 
 let db;
 let rawDb;
@@ -180,7 +181,7 @@ async function oeffnen(filter) {
 }
 
 async function sicherung() {
-  const name = `Mietshaus-Sicherung-${new Date().toISOString().slice(0, 10)}.sqlite`;
+  const name = `Mietshaus-Sicherung-${ortszeit.heute()}.sqlite`;
   const ziel = await dialog.showSaveDialog({ defaultPath: path.join(app.getPath('documents'), name), filters: [{ name: 'Sicherung', extensions: ['sqlite'] }] });
   if (ziel.canceled || !ziel.filePath) return null;
   fs.rmSync(ziel.filePath, { force: true });

@@ -1,7 +1,7 @@
 // Gantt chart: one row per task, time axis by month (or week for short plans), today line, progress fill,
 // dependency arrows and milestones. Hover shows the details; click opens the row.
 import { useState } from 'react';
-import { datum } from './api';
+import { datum, heute as heuteIso } from './api';
 
 export type GanttZeile = {
   id: number | string;
@@ -60,7 +60,7 @@ export function Gantt(props: { zeilen: GanttZeile[]; onKlick?: (z: GanttZeile) =
     const ersterMontag = start + ((8 - new Date(start * 864e5).getUTCDay()) % 7);
     for (let t = ersterMontag; t <= start + tage; t += 7) ticks.push({ t, label: datum(iso(t)).slice(0, 6) });
   }
-  const heute = tag(new Date().toISOString().slice(0, 10));
+  const heute = tag(heuteIso());
 
   return (
     <div className="gantt" onMouseLeave={() => setHover(null)}>

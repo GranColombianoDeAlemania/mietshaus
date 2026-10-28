@@ -1,10 +1,9 @@
 import { useState } from 'react';
-import { betrag, call, datum, euro, fehler, type Modus, type Row } from '../api';
+import { betrag, call, datum, euro, fehler, monatJetzt, type Modus, type Row } from '../api';
 import { useLoad } from '../useLoad';
 import { L } from '../navi';
 import { frage } from '../frage';
 
-const monatJetzt = () => new Date().toISOString().slice(0, 7);
 const monatDe = (m: string) => `${m.slice(5)}/${m.slice(0, 4)}`;
 const zeitraum = (ms: Row[]) => (ms.length > 1 ? `${monatDe(ms[0].monat)} bis ${monatDe(ms.at(-1)!.monat)}` : monatDe(ms[0].monat));
 

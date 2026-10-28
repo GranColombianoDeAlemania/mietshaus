@@ -12,6 +12,7 @@ const WK_GRUPPEN = [
 ];
 
 const { tageZwischen, einheitVonSql } = require('./buchhaltung.cjs');
+const ortszeit = require('./zeit.cjs');
 const maxD = (a, b) => (a > b ? a : b);
 const minD = (a, b) => (a < b ? a : b);
 const monatsEnde = (monat) => new Date(Date.UTC(Number(monat.slice(0, 4)), Number(monat.slice(5, 7)), 0)).toISOString().slice(0, 10);
@@ -196,7 +197,7 @@ module.exports = function auswertung({ db, all, get, tx, bh, ab }) {
 
   // Comparative rent per m² and month for a unit (cents): the unit's own value, the object's, or the average
   // cold rent per m² of the house's current tenancies of the same kind.
-  function vergleichsmieteQm(einheitId, stichtag = new Date().toISOString().slice(0, 10)) {
+  function vergleichsmieteQm(einheitId, stichtag = ortszeit.heute()) {
     const e = get(`SELECT e.*, o.vergleichsmiete_ct AS o_vgl, o.mietspiegel_von_ct AS o_von, o.mietspiegel_bis_ct AS o_bis FROM einheiten e
       JOIN objekte o ON o.id = e.objekt_id WHERE e.id = ?`, einheitId);
     if (!e) return null;
@@ -209,7 +210,7 @@ module.exports = function auswertung({ db, all, get, tx, bh, ab }) {
     return { ct: haus, quelle: haus ? 'haus' : null, von, bis, haus_ct: haus };
   }
   // Average cold rent per m² (cents) of the current tenancies of one kind of unit in a house.
-  function hausDurchschnittQm(objektId, art = 'Wohnung', stichtag = new Date().toISOString().slice(0, 10)) {
+  function hausDurchschnittQm(objektId, art = 'Wohnung', stichtag = ortszeit.heute()) {
     let kalt = 0, qm = 0;
     for (const m of all(`SELECT m.id, e.wohnflaeche FROM mietverhaeltnisse m JOIN einheiten e ON e.id = m.einheit_id WHERE e.objekt_id = ?1
         AND coalesce(e.art, 'Wohnung') = ?2 AND e.wohnflaeche > 0 AND m.beginn <= ?3 AND (m.ende IS NULL OR m.ende = '' OR m.ende >= ?3)
@@ -281,7 +282,7 @@ module.exports = function auswertung({ db, all, get, tx, bh, ab }) {
   // 15 % rule (§ 6 Abs. 1 Nr. 1a EStG): repairs and modernisation within three years after purchase that exceed 15 %
   // of the building's purchase cost (net, without VAT) become acquisition costs and can only be depreciated.
   function anschaffungsnah(objektId = null) {
-    const t = new Date().toISOString().slice(0, 10);
+    const t = ortszeit.heute();
     return all(`SELECT * FROM objekte WHERE kaufdatum IS NOT NULL AND kaufpreis_ct > 0 AND (?1 IS NULL OR id = ?1)`, objektId).map((o) => {
       const [y, m, d] = o.kaufdatum.split('-').map(Number);
       const frist = new Date(Date.UTC(y + 3, m - 1, d)).toISOString().slice(0, 10);

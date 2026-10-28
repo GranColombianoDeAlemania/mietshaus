@@ -54,7 +54,18 @@ export const datum = (iso: string | null | undefined) => {
   return `${d}.${m}.${y}`;
 };
 
-export const heute = () => new Date().toISOString().slice(0, 10);
+// Calendar dates in local time: toISOString() gives the UTC date, which in Germany lags until 1 or 2 a.m.
+const zwei = (n: number) => String(n).padStart(2, '0');
+export const lokalDatum = (d = new Date()) => `${d.getFullYear()}-${zwei(d.getMonth() + 1)}-${zwei(d.getDate())}`;
+export const heute = () => lokalDatum();
+export const monatJetzt = () => heute().slice(0, 7);
+export const inTagen = (n: number) => {
+  const d = new Date();
+  d.setDate(d.getDate() + n);
+  return lokalDatum(d);
+};
+// Local date and time without offset (ISO 20022 ISODateTime).
+export const lokalZeit = (d = new Date()) => `${lokalDatum(d)}T${zwei(d.getHours())}:${zwei(d.getMinutes())}:${zwei(d.getSeconds())}`;
 export const diesesJahr = () => new Date().getFullYear();
 
 // Parses German input such as "1.234,56" or "1234.5".
