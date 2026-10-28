@@ -9,6 +9,7 @@ const { StdioServerTransport } = require('@modelcontextprotocol/sdk/server/stdio
 const z = require('zod');
 const { open, api } = require('./db.cjs');
 const { geraet: geraetLesen } = require('./geraet.cjs');
+const { AKTIONEN } = require('./claudeAktionen.cjs');
 
 // Same locations Electron uses for the app's userData folder.
 const userData = process.env.MIETSHAUS_DATEN || (process.platform === 'darwin'
@@ -31,7 +32,7 @@ Typischer Auftrag: „Arbeite das Postfach ab“. Vorgehen:
    - Zählerablesung: zaehlerstand_erfassen, Termin/Frist: termin_anlegen, Schaden/Anfrage: vorgang_anlegen,\n   - Hausgeldabrechnung einer fremdverwalteten WEG (vermietete Eigentumswohnung): weg_kosten_uebernehmen mit den umlagefähigen Positionen,\n   - Angebot/Auftrag/Rechnung zu einem Projekt (z. B. Sanierung): projekte_liste, dann projekt_posten_anlegen und dokument_ablegen mit projekt_id.
 Beträge immer in Euro angeben (z. B. 1232.40). Datumsangaben im Format JJJJ-MM-TT.
 Wenn etwas nicht eindeutig ist (z. B. welches Objekt), nicht raten: den Nutzer fragen oder das Dokument im Postfach lassen und den Grund in der Zusammenfassung notieren.
-Vor dem Buchen kurz zusammenfassen, was gebucht wird.\nFür „Was steht an?“ / ein Tagesbriefing: hinweise und faelligkeiten abrufen und kurz priorisiert zusammenfassen.`;
+Vor dem Buchen kurz zusammenfassen, was gebucht wird. Buchungen, Verträge und Änderungen an Personen (z. B. Bankverbindung) werden normalerweise nur als Vorschlag angelegt; der Nutzer übernimmt sie in Mietshaus.\nFür „Was steht an?“ / ein Tagesbriefing: hinweise und faelligkeiten abrufen und kurz priorisiert zusammenfassen.`;
 
 const text = (x) => ({ content: [{ type: 'text', text: typeof x === 'string' ? x : JSON.stringify(x, null, 1) }] });
 const cent = (eur) => (eur == null ? null : Math.round(Number(eur) * 100));
@@ -148,6 +149,15 @@ function starten() {
     {}, () => text(db.pruefbericht({}).punkte.map((p) => ({ stufe: p.stufe, bereich: p.bereich, text: p.text, hilfe: p.hilfe }))), true);
 
   // ---------- writing ----------
+  // Bookings, contracts and bank details: with approval on (the default) only a proposal, which the user accepts in the app.
+  const mitFreigabe = (name) => (a) => {
+    const aktion = AKTIONEN[name];
+    if (db.einstellungen().claude_freigabe === '0') return text(aktion.ausfuehren(db, a));
+    const beschreibung = aktion.beschreiben(db, a);
+    const id = db.vorschlagAnlegen(name, a, beschreibung);
+    return text(`Vorschlag ${id} angelegt: ${beschreibung}\nEr wird erst wirksam, wenn der Nutzer ihn in Mietshaus unter „Vorschläge von Claude“ übernimmt. `
+      + 'Sag dem Nutzer, dass er ihn dort prüfen und übernehmen kann; nicht noch einmal anlegen.');
+  };
   werkzeug('dokument_ablegen', 'Setzt die Angaben eines Dokuments und legt es (standardmäßig) aus dem Postfach ins Archiv ab.', {
     id: z.number().int(), typ: z.string().optional().describe(`Einer von: ${db.dokumentTypen().join(', ')}`), titel: z.string().optional(),
     objekt_id: z.number().int().nullable().optional(), einheit_id: z.number().int().nullable().optional(), person_id: z.number().int().nullable().optional(),
@@ -165,37 +175,13 @@ function starten() {
     datum: z.string().optional().describe('Zahlungsdatum, Standard: Rechnungsdatum'), betrag_eur: z.number().optional(), text: z.string().optional(),
     vorsteuer_abziehen: z.boolean().optional().describe('Bei Objekten mit umsatzsteuerpflichtiger Vermietung: Umsatzsteuer der E-Rechnung als Vorsteuer buchen (Standard: ja, wenn bekannt)'),
     einheit_id: z.number().int().optional().describe('Wenn die Kosten nur eine Einheit betreffen (z. B. Renovierung einer Wohnung); Standard: Einheit des Dokuments'),
-  }, (a) => {
-    const d = db.dokument(a.dokument_id);
-    if (!d) throw new Error('Dokument nicht gefunden');
-    if (!d.objekt_id) throw new Error('Dem Dokument ist noch kein Objekt zugeordnet (dokument_ablegen mit objekt_id).');
-    if (d.buchung_id) throw new Error('Dieses Dokument ist bereits gebucht.');
-    const geld = a.geld_konto_id ?? db.konten(d.objekt_id, 'geld')[0]?.id;
-    const betrag = cent(a.betrag_eur) ?? d.betrag_ct;
-    if (!betrag) throw new Error('Kein Betrag bekannt.');
-    const gutschrift = d.typ === 'Gutschrift';
-    // Input tax: only with an exact VAT amount (e-invoice) and a VAT-able letting in the house; mixed houses deduct their share.
-    const vst = db.konten(d.objekt_id).find((k) => k.klasse === 'steuer' && k.kategorie === 'vorsteuer19');
-    const quote = db.get('objekte', d.objekt_id)?.vorsteuer_quote ?? 100;
-    const abziehbar = vst && d.ust_ct && (a.vorsteuer_abziehen ?? true) && betrag === d.betrag_ct ? Math.round(d.ust_ct * quote / 100) : 0;
-    const pos = [{ konto: a.kosten_konto_id, ct: betrag - abziehbar }, ...(abziehbar ? [{ konto: vst.id, ct: abziehbar }] : [])];
-    const id = db.buchen({ objekt_id: d.objekt_id, datum: a.datum ?? d.datum, beleg: d.rechnungsnr, text: (a.text ?? [d.absender, d.titel].filter(Boolean).join(' – ')).slice(0, 120),
-      einheit_id: a.einheit_id ?? d.einheit_id ?? null,
-      positionen: pos.map((p) => (gutschrift ? { soll_id: geld, haben_id: p.konto, betrag_ct: p.ct } : { soll_id: p.konto, haben_id: geld, betrag_ct: p.ct })) });
-    db.dokumentSpeichern({ id: d.id, buchung_id: id, status: 'abgelegt' });
-    return text(`Gebucht (Buchung ${id})${abziehbar ? `, davon ${(abziehbar / 100).toFixed(2)} € Vorsteuer` : ''}, Beleg verknüpft.`);
-  });
+  }, mitFreigabe('rechnung_buchen'));
 
   werkzeug('buchen', 'Freie Buchung mit einer oder mehreren Positionen (Soll an Haben).', {
     objekt_id: z.number().int(), datum: z.string(), text: z.string(), beleg: z.string().optional(), dokument_id: z.number().int().optional(),
     einheit_id: z.number().int().optional().describe('Einheit, die die Kosten betreffen (sonst das ganze Haus)'),
     positionen: z.array(z.object({ soll_konto_id: z.number().int(), haben_konto_id: z.number().int(), betrag_eur: z.number(), text: z.string().optional() })),
-  }, (a) => {
-    const id = db.buchen({ objekt_id: a.objekt_id, datum: a.datum, text: a.text, beleg: a.beleg, einheit_id: a.einheit_id ?? null,
-      positionen: a.positionen.map((p) => ({ soll_id: p.soll_konto_id, haben_id: p.haben_konto_id, betrag_ct: cent(p.betrag_eur), text: p.text })) });
-    if (a.dokument_id) db.dokumentSpeichern({ id: a.dokument_id, buchung_id: id });
-    return text(`Gebucht (Buchung ${id}).`);
-  });
+  }, mitFreigabe('buchen'));
 
   const personFelder = {
     anrede: z.enum(['Herr', 'Frau', 'Divers', 'Firma', 'Eheleute']).optional(), titel: z.string().optional(), vorname: z.string().optional(),
@@ -208,7 +194,7 @@ function starten() {
     return text(`Person angelegt, id ${db.save('personen', a)}.`);
   });
   werkzeug('person_aendern', 'Ändert Angaben einer Person (nur die übergebenen Felder).', { id: z.number().int(), ...personFelder },
-    (a) => text(`Person ${db.save('personen', a)} aktualisiert.`));
+    mitFreigabe('person_aendern'));
 
   werkzeug('mietvertrag_anlegen', 'Legt ein Mietverhältnis an. Miete ist immer ein Monatsbetrag: der Ein- und Auszugsmonat wird voll gefordert '
     + '(beim Einzug mitten im Monat wahlweise erst ab dem Folgemonat); tageweise nur, wenn es ausdrücklich vereinbart ist (einzugsmonat/auszugsmonat '
@@ -220,22 +206,16 @@ function starten() {
     betriebskosten: z.enum(['vorauszahlung', 'pauschale', 'inklusiv']).optional(), mietmonat_ab: z.enum(['erster', 'einzug']).optional(),
     einzugsmonat: z.enum(['voll', 'teilbetrag', 'folgemonat']).optional(), auszugsmonat: z.enum(['voll', 'teilbetrag']).optional(),
     teilbetrag_eur: z.number().optional(), abrechnung_nach: z.enum(['mietmonate', 'wohntage']).optional(),
-  }, (a) => text(`Mietverhältnis angelegt, id ${db.save('mietverhaeltnisse', {
-    einheit_id: a.einheit_id, person_id: a.person_id, person2_id: a.person2_id, beginn: a.beginn, ende: a.ende,
-    kaltmiete_ct: cent(a.kaltmiete_eur), bk_vz_ct: cent(a.bk_vz_eur ?? 0), hk_vz_ct: cent(a.hk_vz_eur ?? 0), sonstiges_ct: cent(a.sonstiges_eur ?? 0),
-    kaution_ct: cent(a.kaution_eur ?? 0), personen_anzahl: a.personen_anzahl ?? 1, faelligkeitstag: a.faelligkeitstag ?? 3,
-    bk_art: a.betriebskosten ?? 'vorauszahlung', mietmonat_ab: a.mietmonat_ab ?? 'erster', teilmonat_beginn: a.einzugsmonat ?? 'voll', teilmonat_ende: a.auszugsmonat ?? 'voll',
-    teilbetrag_beginn_ct: a.teilbetrag_eur ? cent(a.teilbetrag_eur) : null, bk_abrechnung: a.abrechnung_nach ?? 'mietmonate' })}.`));
+  }, mitFreigabe('mietvertrag_anlegen'));
 
   werkzeug('eigentum_anlegen', 'Legt ein Eigentumsverhältnis (WEG) an.', {
     einheit_id: z.number().int(), person_id: z.number().int(), beginn: z.string(), ende: z.string().optional(),
     hausgeld_eur: z.number().optional(), ruecklage_eur: z.number().optional(), selbstnutzer: z.boolean().optional(),
-  }, (a) => text(`Eigentum angelegt, id ${db.save('eigentum', { einheit_id: a.einheit_id, person_id: a.person_id, beginn: a.beginn, ende: a.ende,
-    hausgeld_ct: cent(a.hausgeld_eur ?? 0), ruecklage_ct: cent(a.ruecklage_eur ?? 0), selbstnutzer: a.selbstnutzer ? 1 : 0 })}.`));
+  }, mitFreigabe('eigentum_anlegen'));
 
   werkzeug('vertrag_beenden', 'Trägt das Ende eines Miet- oder Eigentumsverhältnisses ein (z. B. nach Kündigung).', {
     art: z.enum(['miete', 'weg']), vertrag_id: z.number().int(), ende: z.string(),
-  }, (a) => text(`Vertrag ${db.save(a.art === 'weg' ? 'eigentum' : 'mietverhaeltnisse', { id: a.vertrag_id, ende: a.ende })} endet am ${a.ende}.`));
+  }, mitFreigabe('vertrag_beenden'));
 
   werkzeug('zaehlerstand_erfassen', 'Erfasst einen Zählerstand.', { zaehler_id: z.number().int(), datum: z.string(), stand: z.number() },
     (a) => { db.ablesung(a.datum, { [a.zaehler_id]: a.stand }); return text('Zählerstand gespeichert.'); });
@@ -265,8 +245,7 @@ function starten() {
   werkzeug('weg_kosten_uebernehmen', 'Für eine vermietete Eigentumswohnung mit fremder WEG-Verwaltung: bucht die umlagefähigen Kostenanteile aus deren Hausgeldabrechnung vom gezahlten Hausgeld auf die passenden Kostenkonten um (Grundlage für die Betriebskostenabrechnung des Mieters).', {
     objekt_id: z.number().int(), jahr: z.number().int(),
     positionen: z.array(z.object({ kosten_konto_id: z.number().int(), betrag_eur: z.number(), text: z.string().optional() })),
-  }, (a) => text(`Umgebucht (Buchung ${db.wegKostenUebernehmen(a.objekt_id, `${a.jahr}-12-31`, a.positionen.map((p) => ({ konto_id: p.kosten_konto_id, betrag_ct: cent(p.betrag_eur), text: p.text })),
-    `Umlagefähige Kosten aus WEG-Abrechnung ${a.jahr}`)}).`));
+  }, mitFreigabe('weg_kosten_uebernehmen'));
 
   werkzeug('termin_anlegen', 'Legt einen Termin an.', {
     titel: z.string(), datum: z.string(), uhrzeit: z.string().optional(), ort: z.string().optional(), objekt_id: z.number().int().optional(),

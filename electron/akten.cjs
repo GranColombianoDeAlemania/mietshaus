@@ -92,10 +92,11 @@ module.exports = function akten({ db, all, get, PERSON_NAME, bh }) {
   }
 
   return {
-    protokoll: ({ tabelle = null, quelle = null, suche = '', von = null, limit = 500 } = {}) => all(`SELECT * FROM protokoll
-      WHERE (?1 IS NULL OR tabelle = ?1) AND (?2 IS NULL OR quelle = ?2) AND (?3 IS NULL OR zeit >= ?3)
-        AND (?4 = '' OR coalesce(alt, '') LIKE '%' || ?4 || '%' OR coalesce(neu, '') LIKE '%' || ?4 || '%')
-      ORDER BY id DESC LIMIT ?5`, tabelle, quelle, von, suche, limit),
+    protokoll: ({ tabelle = null, quelle = null, suche = '', von = null, limit = 500 } = {}) => all(`SELECT p.*, g.name AS geraet_name
+      FROM protokoll p LEFT JOIN geraete g ON g.id = p.geraet
+      WHERE (?1 IS NULL OR p.tabelle = ?1) AND (?2 IS NULL OR p.quelle = ?2) AND (?3 IS NULL OR p.zeit >= ?3)
+        AND (?4 = '' OR coalesce(p.alt, '') LIKE '%' || ?4 || '%' OR coalesce(p.neu, '') LIKE '%' || ?4 || '%')
+      ORDER BY p.id DESC LIMIT ?5`, tabelle, quelle, von, suche, limit),
     protokollDatensatz: (tabelle, id) => all('SELECT * FROM protokoll WHERE tabelle = ? AND datensatz = ? ORDER BY id DESC', tabelle, id),
 
     objektKacheln: (modus) => {

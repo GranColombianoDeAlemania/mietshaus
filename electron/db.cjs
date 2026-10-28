@@ -15,6 +15,7 @@ const akten = require('./akten.cjs');
 const darlehen = require('./darlehen.cjs');
 const mieterwechsel = require('./mieterwechsel.cjs');
 const pruefung = require('./pruefung.cjs');
+const { AKTIONEN } = require('./claudeAktionen.cjs');
 const kennzahlen = require('./kennzahlen.cjs');
 
 const MIGRATIONS = [
@@ -728,6 +729,17 @@ const MIGRATIONS = [
   // later be merged record by record, keeping the newest change. The data set gets an id, so backups can be matched
   // to it. Tables created by later migrations need the two columns as well (see AENDERUNG_AUSGENOMMEN).
   (db) => {
+    // Claude's proposals for bookings, contracts and bank details, waiting for the user's approval (claudeAktionen.cjs).
+    db.exec(`CREATE TABLE vorschlaege (
+      id INTEGER PRIMARY KEY,
+      erstellt TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      werkzeug TEXT NOT NULL,
+      argumente TEXT NOT NULL,
+      beschreibung TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'offen' CHECK (status IN ('offen', 'uebernommen', 'verworfen')),
+      ergebnis TEXT,
+      erledigt TEXT
+    );`);
     for (const t of aenderungsTabellen(db, true)) db.exec(`ALTER TABLE ${t} ADD COLUMN geaendert_am TEXT; ALTER TABLE ${t} ADD COLUMN geaendert_von TEXT;`);
     db.exec(`
       CREATE TABLE geraete (id TEXT PRIMARY KEY, name TEXT NOT NULL, zuletzt TEXT);
@@ -886,14 +898,16 @@ function open(file, quelle = 'app', geraet = null, { ohneUpdateSicherung = false
 const PROTOKOLLIERT = ['interessenten', 'uebergaben', 'objekte', 'einheiten', 'personen', 'mietverhaeltnisse', 'eigentum', 'konten', 'buchungen', 'anpassungen',
   'kautionen', 'kautionsbewegungen', 'dokumente', 'darlehen', 'beschluesse', 'projekte', 'projektposten', 'zaehlerstaende', 'mahnungen', 'abrechnungen',
   'ratenplaene', 'erhaltungsverteilung', 'selbstnutzung'];
-const NICHT_PROTOKOLLIEREN = new Set(['text', 'daten', 'erfasst', 'unterschrift_mieter', 'unterschrift_vermieter', 'erechnung', 'geaendert_am', 'geaendert_von']);
+const NICHT_PROTOKOLLIEREN = new Set(['daten', 'erfasst', 'unterschrift_mieter', 'unterschrift_vermieter', 'erechnung', 'geaendert_am', 'geaendert_von']);
+// The recognised text of a document is large; the text of a booking or a dunning letter belongs in the log.
+const nichtProtokollieren = (tabelle, spalte) => NICHT_PROTOKOLLIEREN.has(spalte) || (tabelle === 'dokumente' && spalte === 'text');
 
 // Temporary triggers belong to this connection only, so each process records its own source (app or Claude) and device.
 function protokollAktivieren(db, quelle, geraetId = null) {
   const q = quelle.replace(/'/g, '');
   const g = geraetId ? `'${String(geraetId).replace(/'/g, '')}'` : 'NULL';
   for (const t of PROTOKOLLIERT) {
-    const spalten = db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name).filter((c) => !NICHT_PROTOKOLLIEREN.has(c));
+    const spalten = db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name).filter((c) => !nichtProtokollieren(t, c));
     const json = (alias) => `json_object(${spalten.map((c) => `'${c}', ${alias}.${c}`).join(', ')})`;
     db.exec(`
       CREATE TEMP TRIGGER IF NOT EXISTS log_${t}_i AFTER INSERT ON main.${t} BEGIN
@@ -1196,8 +1210,71 @@ function api(db) {
   const kz = kennzahlen({ db, all, get, PERSON_NAME, bh, aw, ab, vw, dl });
   const au = automatik({ db, all, get, tx, PERSON_NAME, bh, ab, vw, kz, einstellungen: basis.einstellungen });
   const pr = pruefung({ all, get, PERSON_NAME, bh, aw, einstellungen: basis.einstellungen });
-  return {
-    ...bh, ...ab, ...vw, ...ar, ...au, ...pj, ...aw, ...ak, ...dl, ...mw, ...pr, ...kz, ...basis,
+  // Undoes one entry of the change log: a new record is removed, a change reversed, a deleted record comes back. Only
+  // while the record still looks as that entry left it – a later change has to be undone first. A booking is cancelled
+  // by a reversing entry (Storno), never deleted.
+  function rueckgaengig(protokollId) {
+    return tx(() => {
+      const p = get('SELECT * FROM protokoll WHERE id = ?', protokollId);
+      if (!p) throw new Error('Den Protokolleintrag gibt es nicht mehr.');
+      const alt = p.alt ? JSON.parse(p.alt) : null;
+      const neu = p.neu ? JSON.parse(p.neu) : null;
+      const jetzt = get(`SELECT * FROM ${p.tabelle} WHERE id = ?`, p.datensatz);
+      const gleich = (a, b) => a === b || (a == null && b == null) || (typeof a === 'number' && typeof b === 'number' && Math.abs(a - b) < 1e-9);
+      const unveraendert = (soll) => !!jetzt && Object.entries(soll ?? {}).every(([k, v]) => !(k in jetzt) || gleich(jetzt[k], v));
+      if (p.tabelle === 'buchungen') {
+        if (p.aktion !== 'angelegt') throw new Error('Bei Buchungen lässt sich nur eine neue Buchung zurücknehmen – durch eine Stornobuchung.');
+        if (!jetzt) throw new Error('Die Buchung gibt es nicht mehr.');
+        if (get('SELECT 1 FROM buchungen WHERE storno_von = ?', p.datensatz)) throw new Error('Die Buchung ist bereits storniert.');
+        bh.buchungStornieren(p.datensatz);
+        return 'storniert';
+      }
+      if (!TABLES[p.tabelle]) throw new Error('Änderungen in diesem Bereich bitte dort zurücknehmen, wo sie gemacht wurden.');
+      const spalten = TABLES[p.tabelle];
+      if (p.aktion === 'angelegt') {
+        if (!jetzt) throw new Error('Der Datensatz ist bereits gelöscht.');
+        if (!unveraendert(neu)) throw new Error('Der Datensatz wurde danach noch geändert. Bitte zuerst die spätere Änderung rückgängig machen.');
+        basis.remove(p.tabelle, p.datensatz);
+        return 'gelöscht';
+      }
+      if (p.aktion === 'geändert') {
+        if (!jetzt) throw new Error('Der Datensatz wurde inzwischen gelöscht.');
+        if (!unveraendert(neu)) throw new Error('Der Datensatz wurde danach noch einmal geändert. Bitte zuerst die spätere Änderung rückgängig machen.');
+        const row = { id: p.datensatz };
+        for (const k of spalten) if (k in (alt ?? {}) && !gleich(alt[k], neu?.[k])) row[k] = alt[k];
+        basis.save(p.tabelle, row);
+        return 'zurückgesetzt';
+      }
+      if (jetzt) throw new Error('Unter dieser Nummer gibt es schon wieder einen Datensatz.');
+      const keys = ['id', ...spalten.filter((k) => k in (alt ?? {}))];
+      db.prepare(`INSERT INTO ${p.tabelle} (${keys.join(', ')}) VALUES (${keys.map(() => '?').join(', ')})`).run(...keys.map((k) => alt[k] ?? null));
+      if (SYNC.has(p.tabelle)) bh.syncKonten();
+      sollNachziehen(vertragVon(p.tabelle, p.datensatz));
+      return 'wiederhergestellt';
+    });
+  }
+
+  // Claude's proposals: run with the whole API (alles), so they do exactly what the MCP tool would have done.
+  const vorschlaege = {
+    vorschlaege: (status = 'offen') => all(`SELECT * FROM vorschlaege WHERE ?1 IS NULL OR status = ?1 ORDER BY id DESC LIMIT 200`, status),
+    vorschlagAnlegen: (werkzeug, argumente, beschreibung) => {
+      if (!AKTIONEN[werkzeug]) throw new Error(`Unbekannte Aktion: ${werkzeug}`);
+      return Number(db.prepare('INSERT INTO vorschlaege (werkzeug, argumente, beschreibung) VALUES (?, ?, ?)')
+        .run(werkzeug, JSON.stringify(argumente), beschreibung).lastInsertRowid);
+    },
+    vorschlagUebernehmen: (id) => tx(() => {
+      const v = get('SELECT * FROM vorschlaege WHERE id = ?', id);
+      if (!v || v.status !== 'offen') throw new Error('Dieser Vorschlag ist nicht mehr offen.');
+      const ergebnis = AKTIONEN[v.werkzeug].ausfuehren(alles, JSON.parse(v.argumente));
+      db.prepare(`UPDATE vorschlaege SET status = 'uebernommen', ergebnis = ?, erledigt = ${UTC_JETZT} WHERE id = ?`).run(ergebnis, id);
+      return ergebnis;
+    }),
+    vorschlagVerwerfen: (id) => db.prepare(`UPDATE vorschlaege SET status = 'verworfen', erledigt = ${UTC_JETZT} WHERE id = ? AND status = 'offen'`).run(id),
+  };
+
+  const alles = {
+    ...bh, ...ab, ...vw, ...ar, ...au, ...pj, ...aw, ...ak, ...dl, ...mw, ...pr, ...kz, ...basis, ...vorschlaege,
+    protokollRueckgaengig: rueckgaengig,
     // Object tiles carry a small house view (units by floor and their state).
     objektKacheln: (modus) => ak.objektKacheln(modus).map((o) => ({ ...o, haus: kz.hausansicht(o.id, modus === 'weg' ? 'weg' : 'miete') })),
     // Cockpit hints plus one pointing to the data check when it found errors.
@@ -1252,6 +1329,7 @@ function api(db) {
     // Changes made elsewhere (e.g. by Claude through the MCP connection) bump this number.
     datenVersion: () => db.prepare('PRAGMA data_version').get().data_version,
   };
+  return alles;
 }
 
 module.exports = { open, api, datenStand, sicherungsOrdner, SCHEMA_VERSION: MIGRATIONS.length };

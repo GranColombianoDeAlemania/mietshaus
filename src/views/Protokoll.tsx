@@ -1,6 +1,7 @@
 // Change log: who changed what and when (app or Claude), with the changed fields side by side.
 import { useState } from 'react';
-import { call, euro, type Row } from '../api';
+import { call, euro, fehler, type Row } from '../api';
+import { bestaetigen, hinweis } from '../frage';
 import { useLoad } from '../useLoad';
 import { L, type Ziel } from '../navi';
 
@@ -39,7 +40,18 @@ export function Protokoll() {
   const [tabelle, setTabelle] = useState('');
   const [quelle, setQuelle] = useState('');
   const [suche, setSuche] = useState('');
-  const [rows] = useLoad<Row[]>(() => call('protokoll', { tabelle: tabelle || null, quelle: quelle || null, suche }), [tabelle, quelle, suche]);
+  const [rows, reload] = useLoad<Row[]>(() => call('protokoll', { tabelle: tabelle || null, quelle: quelle || null, suche }), [tabelle, quelle, suche]);
+  const rueckgaengig = async (r: Row) => {
+    const was = r.tabelle === 'buchungen' ? 'Die Buchung wird storniert (Gegenbuchung mit heutigem Datum).'
+      : r.aktion === 'angelegt' ? 'Der angelegte Datensatz wird wieder gelöscht.'
+        : r.aktion === 'geändert' ? 'Die geänderten Felder bekommen ihren vorherigen Wert.' : 'Der gelöschte Datensatz wird wiederhergestellt.';
+    if (!await bestaetigen(`${was}\nDas Zurücknehmen erscheint selbst wieder im Protokoll.`, { titel: 'Rückgängig machen?', ja: 'Rückgängig machen' })) return;
+    try {
+      const r2 = await call('protokollRueckgaengig', r.id);
+      reload();
+      hinweis(`Erledigt: ${r2}.`, 'Rückgängig gemacht');
+    } catch (e) { fehler(e); }
+  };
   const [offen, setOffen] = useState<number | null>(null);
   return (
     <section>
@@ -52,7 +64,8 @@ export function Protokoll() {
       </div>
       <p className="hinweis klein">
         Jede Anlage, Änderung und Löschung wird mit Zeit und Quelle festgehalten (die letzten 500 werden angezeigt). Buchungen in festgeschriebenen
-        Zeiträumen lassen sich nur noch stornieren – den Zeitraum legst du unter Einstellungen fest.
+        Zeiträumen lassen sich nur noch stornieren – den Zeitraum legst du unter Einstellungen fest. Einen Eintrag aufklappen, um ihn rückgängig zu machen
+        (auch Änderungen von Claude).
       </p>
       <table>
         <thead><tr><th>Zeit</th><th>Quelle</th><th>Bereich</th><th>Aktion</th><th>Änderung</th></tr></thead>
@@ -64,11 +77,15 @@ export function Protokoll() {
             return (
               <tr key={r.id} className="klickbar" onClick={() => setOffen(offen === r.id ? null : r.id)}>
                 <td className="klein" style={{ whiteSpace: 'nowrap' }}>{r.zeit}</td>
-                <td><span className={`tag ${r.quelle === 'claude' ? 'art-weg' : ''}`}>{r.quelle === 'claude' ? 'Claude' : 'Programm'}</span></td>
+                <td><span className={`tag ${r.quelle === 'claude' ? 'art-weg' : ''}`}>{r.quelle === 'claude' ? 'Claude' : 'Programm'}</span>
+                  {r.geraet_name && <div className="klein hinweis">{r.geraet_name}</div>}</td>
                 <td>{TABELLEN[r.tabelle] ?? r.tabelle} {protokollZiel(r) ? <L zu={protokollZiel(r)}>#{r.datensatz}</L> : <span className="klein hinweis">#{r.datensatz}</span>}</td>
                 <td>{r.aktion}</td>
                 <td className="klein">{offen === r.id
-                  ? <table className="positionen"><tbody>{d.map(([k, a, n]) => <tr key={k}><td><b>{k}</b></td><td>{zeige(a)}</td><td>→ {zeige(n)}</td></tr>)}</tbody></table>
+                  ? <>
+                    <table className="positionen"><tbody>{d.map(([k, a, n]) => <tr key={k}><td><b>{k}</b></td><td>{zeige(a)}</td><td>→ {zeige(n)}</td></tr>)}</tbody></table>
+                    <div className="buttons"><button onClick={(e) => { e.stopPropagation(); rueckgaengig(r); }}>Rückgängig machen</button></div>
+                  </>
                   : <>{zusammen}{d.length > 3 && r.aktion === 'geändert' ? ` (+${d.length - 3})` : ''}</>}</td>
               </tr>
             );

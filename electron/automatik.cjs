@@ -58,6 +58,9 @@ module.exports = function automatik({ db, all, get, tx, PERSON_NAME, bh, ab, vw,
 
     if (!e.verwalter_name) add({ schluessel: 'stamm:verwalter', stufe: 'orange', kategorie: 'Stammdaten', text: 'Verwalterdaten fehlen – sie stehen als Absender auf allen Briefen.', ziel: 'einstellungen' });
 
+    const vorschlaege = get(`SELECT count(*) AS n FROM vorschlaege WHERE status = 'offen'`).n;
+    if (vorschlaege) add({ schluessel: 'claude:vorschlaege', stufe: 'orange', kategorie: 'Claude', dauerhaft: true, ziel: 'vorschlaege',
+      text: `${vorschlaege} ${vorschlaege === 1 ? 'Vorschlag' : 'Vorschläge'} von Claude ${vorschlaege === 1 ? 'wartet' : 'warten'} auf deine Freigabe (Buchungen, Verträge oder Bankdaten).` });
     const postfach = get(`SELECT count(*) AS n FROM dokumente WHERE status = 'postfach'`).n;
     if (postfach) add({ schluessel: 'dok:postfach', stufe: 'orange', kategorie: 'Dokumente', text: `${postfach} Dokument(e) im Postfach warten auf Ablage.`, ziel: 'postfach', dauerhaft: true });
     const fehler = get(`SELECT count(*) AS n FROM dokumente WHERE analyse LIKE 'fehler%'`).n;

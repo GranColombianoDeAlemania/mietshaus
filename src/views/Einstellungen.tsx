@@ -99,6 +99,7 @@ export function Einstellungen() {
 
 function ClaudeVerbindung() {
   const [st, reload] = useLoad(() => window.hv.claudeStatus(), []);
+  const [e, ladeE] = useLoad<Row>(() => call('einstellungen'), []);
   const [meldung, setMeldung] = useState('');
   return (
     <div className="block">
@@ -106,8 +107,14 @@ function ClaudeVerbindung() {
       <p className="hinweis">
         Verbindet Mietshaus mit der Claude-Desktop-App (dein Claude-Abo genügt, kein API-Schlüssel nötig). Danach kannst du in
         Claude z. B. sagen: „Arbeite das Postfach im Mietshaus ab“ – Claude liest die Dokumente, legt sie ab und überträgt Rechnungen,
-        Verträge, Zählerstände und Termine ins Programm. Jede Änderung bestätigst du in Claude.
+        Verträge, Zählerstände und Termine ins Programm. Alles, was Claude ändert, steht im Änderungsprotokoll und lässt sich dort rückgängig machen.
       </p>
+      <label className="check">
+        <input type="checkbox" checked={e?.claude_freigabe !== '0'} onChange={async (ev) => {
+          await call('setzeEinstellungen', { claude_freigabe: ev.target.checked ? '1' : '0' });
+          ladeE();
+        }} /> Buchungen, Verträge und Änderungen an Personen (z. B. Bankverbindung) erst nach meiner Freigabe übernehmen (empfohlen)
+      </label>
       {st && (
         <p>{st.verbunden ? <b className="meldung">✓ Verbunden.</b> : st.installiert ? 'Noch nicht verbunden.' : 'Claude Desktop scheint nicht installiert zu sein (claude.ai/download).'}</p>
       )}

@@ -25,6 +25,7 @@ import { Briefe, Termine, Vorgaenge } from './views/Kommunikation';
 import { Archiv, DokumentDialog, Postfach, Rechnungen } from './views/Archiv';
 import { Export } from './views/Export';
 import { Protokoll } from './views/Protokoll';
+import { Vorschlaege } from './views/Vorschlaege';
 import { Uebergaben } from './views/Uebergabe';
 import { Vermietung } from './views/Vermietung';
 import { Auswertungen } from './views/Auswertungen';
@@ -45,7 +46,7 @@ import * as I from 'lucide-react';
 const ICON: Record<string, I.LucideIcon> = {
   uebersicht: I.Gauge, pcockpit: I.Gauge, projekte: I.FolderKanban, zeitplan: I.CalendarRange, pkosten: I.HandCoins, pdok: I.Image,
   objekte: I.Building2, steckbrief: I.House, einheiten: I.LayoutGrid, vertraege: I.Users, zaehler: I.Gauge, schluessel: I.Scale, personen: I.Contact,
-  postfach: I.Inbox, archiv: I.Archive, rechnungen: I.Receipt,
+  postfach: I.Inbox, vorschlaege: I.Sparkles, archiv: I.Archive, rechnungen: I.Receipt,
   buchen: I.BookOpen, konten: I.Landmark, soll: I.Repeat, op: I.BadgeEuro, bank: I.Wallet, darlehen: I.PiggyBank,
   nk: I.Calculator, wegabr: I.Calculator, wipl: I.ClipboardList, ruecklagen: I.PiggyBank, auswertung: I.ChartColumn,
   kaution: I.Shield, anpassung: I.TrendingUp, vermietung: I.UserPlus, uebergabe: I.ClipboardCheck, versammlungen: I.Gavel, beschluesse: I.ScrollText,
@@ -67,6 +68,7 @@ type Seite = {
 
 const SEITEN: Seite[] = [
   { id: 'postfach', label: 'Postfach', gruppe: 'Dokumente', alle: true, render: () => <Postfach /> },
+  { id: 'vorschlaege', label: 'Vorschläge von Claude', gruppe: 'Dokumente', alle: true, render: () => <Vorschlaege /> },
   { id: 'archiv', label: 'Archiv & Suche', gruppe: 'Dokumente', alle: true, render: (c) => <Archiv objekt={c.modus === 'projekt' ? undefined : c.objekt} /> },
   { id: 'rechnungen', label: 'Rechnungen', gruppe: 'Dokumente', alle: true, render: (c) => <Rechnungen objekt={c.modus === 'projekt' ? undefined : c.objekt} /> },
   { id: 'pcockpit', label: 'Cockpit', gruppe: 'Start', modi: ['projekt'], render: (c) => <ProjektCockpit oeffne={c.oeffne} /> },
@@ -141,6 +143,7 @@ export default function App() {
   const [ziehen, setZiehen] = useState(false);
   const [dokOffen, setDokOffen] = useState<{ id: number; datei?: string } | null>(null);
   const [postfach] = useLoad<number>(() => call('postfachAnzahl'), []);
+  const [vorschlagZahl] = useLoad<number>(() => call('vorschlaege', 'offen').then((l: Row[]) => l.length), []);
   const dropZiel = useRef<Element | null>(null);
 
   // ---------- navigation ----------
@@ -451,6 +454,7 @@ export default function App() {
                     <button key={s.id} className={`eintrag${markiert === s.id ? ' active' : ''}`} onClick={() => zu({ seite: s.id })} onContextMenu={(e) => eintragMenue(e, s.id)}>
                       <Icon size={16} strokeWidth={1.9} /><span className="text">{labelVon(s, modus)}</span>
                       {s.id === 'postfach' && !!postfach && <span className="zaehler">{postfach}</span>}
+                      {s.id === 'vorschlaege' && !!vorschlagZahl && <span className="zaehler">{vorschlagZahl}</span>}
                     </button>
                   );
                 })}
@@ -468,6 +472,7 @@ export default function App() {
                         <button className={`eintrag${markiert === s.id ? ' active' : ''}`} onClick={() => zu({ seite: s.id })} onContextMenu={(e) => eintragMenue(e, s.id)}>
                           <Icon size={16} strokeWidth={1.9} /><span className="text">{labelVon(s, modus)}</span>
                           {s.id === 'postfach' && !!postfach && <span className="zaehler">{postfach}</span>}
+                      {s.id === 'vorschlaege' && !!vorschlagZahl && <span className="zaehler">{vorschlagZahl}</span>}
                           {s.id === 'einheiten' && !!baumEinheiten?.length && (
                             <span className={`baumpfeil${baumOffen ? ' offen' : ''}`} role="button" title={baumOffen ? 'Einheiten ausblenden' : 'Einheiten zeigen'}
                               onClick={(e) => { e.stopPropagation(); klappen('baum'); }}><I.ChevronRight size={14} /></span>

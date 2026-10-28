@@ -648,3 +648,5 @@ textarea.brieftext { width: 100%; padding: 10px 12px; border: 1px solid var(--li
 .kontowahl-liste .option.gewaehlt { font-weight: 600; }
 .kontowahl-liste .option.leer { color: var(--muted); }
 .leer.ablagezone { border: 1.5px dashed var(--line-stark); border-radius: var(--radius); padding: 28px 24px; text-align: center; max-width: 620px; margin: 24px auto; }
+.vorschlagliste { list-style: none; margin: 12px 0 0; padding: 0; }
+.vorschlagliste pre { white-space: pre-wrap; font-size: 12px; margin: 6px 0 0; }
