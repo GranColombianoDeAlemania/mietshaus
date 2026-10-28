@@ -867,7 +867,7 @@ function open(file, quelle = 'app', geraet = null, { ohneUpdateSicherung = false
   if (version > 0 && version < MIGRATIONS.length && file !== ':memory:' && !ohneUpdateSicherung) {
     const ordner = sicherungsOrdner(file);
     fs.mkdirSync(ordner, { recursive: true });
-    const ziel = path.join(ordner, `Mietshaus-vor-Update-Schema${version}-${ortszeit.lokalZeit().replace(/:/g, '-')}.sqlite`);
+    const ziel = path.join(ordner, `Mietshaus-vor-Update-Schema${version}-${ortszeit.lokalZeit().replace(/:/g, '-').replace('T', '_')}.sqlite`);
     if (!fs.existsSync(ziel)) db.prepare('VACUUM INTO ?').run(ziel);
   }
   for (let v = version; v < MIGRATIONS.length; v++) {
