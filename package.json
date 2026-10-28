@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit",
     "dist:mac": "bash scripts/dist-mac.sh",
     "dist:linux": "bash scripts/dist.sh linux x64",
-    "test": "tsc --noEmit && ELECTRON_RUN_AS_NODE=1 electron scripts/rechentest.cjs && ELECTRON_RUN_AS_NODE=1 electron scripts/sicherungstest.cjs && ELECTRON_RUN_AS_NODE=1 electron scripts/claudetest.cjs",
+    "test": "tsc --noEmit && ELECTRON_RUN_AS_NODE=1 electron scripts/rechentest.cjs && ELECTRON_RUN_AS_NODE=1 electron scripts/sicherungstest.cjs && ELECTRON_RUN_AS_NODE=1 electron scripts/claudetest.cjs && ELECTRON_RUN_AS_NODE=1 electron scripts/servertest.cjs",
     "test:klick": "vite build && electron scripts/klicktest.cjs .klicktest"
   },
   "type": "commonjs",
