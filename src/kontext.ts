@@ -3,6 +3,7 @@ import { call, fehler, type Row } from './api';
 import { aktionSetzen } from './aktion';
 import type { Ziel } from './navi';
 import { bestaetigen } from './frage';
+import { emailSchreiben } from './Mail';
 
 type Navi = { zu: (z: Ziel) => void };
 type Eintrag = { id: string; label: string; enabled?: boolean } | '-';
@@ -104,7 +105,7 @@ export async function kontextmenue(key: string, navi: Navi, melden: (t: string) 
     switch (`${i.art}:${wahl}`) {
       case 'person:oeffnen': return navi.zu({ person: i.person_id });
       case 'person:vertrag': return navi.zu({ vertrag: i.vertrag.id, typ: i.vertrag.typ });
-      case 'person:mail': case 'vertrag:mail': return window.hv.extern(`mailto:${i.email}`);
+      case 'person:mail': case 'vertrag:mail': return emailSchreiben({ an: i.email, ablage: { person_id: i.person_id ?? null, objekt_id: i.objekt_id ?? null } });
       case 'person:brief': return brief(i.vertrag.typ === 'weg' ? 'e' : 'm', i.vertrag.id, i.objekt_id);
       case 'person:dok': return ablegen({ person_id: i.person_id, objekt_id: i.objekt_id }, melden, `bei ${i.name}`);
       case 'person:bearbeiten': aktionSetzen('person-bearbeiten'); return navi.zu({ person: i.person_id });

@@ -60,6 +60,7 @@ export function Einstellungen() {
       {window.hvDesktop && <Verbindung />}
       {window.hvDesktop && <ClaudeVerbindung />}
       <Dokumenteneingang />
+      <EmailVersand />
       <div className="block">
         <h3>Datensicherung</h3>
         <p className="hinweis">
@@ -399,6 +400,48 @@ function Verbindung() {
         </div>
       )}
       {fortschritt && <p className="meldung">{fortschritt}</p>}
+    </div>
+  );
+}
+
+// Sending e-mails (SMTP): the server sends mails written in Mietshaus and files them in the archive.
+function EmailVersand() {
+  const [e, reload] = useLoad<Row>(() => call('einstellungen'), []);
+  const [f, setF] = useState<Row | null>(null);
+  const [pw, setPw] = useState('');
+  const [meldung, setMeldung] = useState('');
+  const w = (k: string) => f?.[k] ?? e?.[k] ?? '';
+  const set = (k: string, v: string) => setF({ ...(f ?? {}), [k]: v });
+  const speichernUndTesten = async () => {
+    setMeldung('…');
+    try {
+      await anfrage('/api/smtp/speichern', { json: { cfg: f ?? {}, pw: pw || undefined } });
+      setF(null); setPw('');
+      window.dispatchEvent(new Event('hv-smtp-geaendert'));
+      setMeldung((await (await anfrage('/api/smtp/testen', { json: {} })).json()).text);
+    } catch (err) { setMeldung(`Fehler: ${(err as Error).message}`); }
+    reload();
+  };
+  return (
+    <div className="block">
+      <h3>E-Mail-Versand</h3>
+      <p className="hinweis">Damit sendet Mietshaus E-Mails selbst – mit Dokumenten aus dem Archiv als Anhang – und legt jede gesendete E-Mail im Archiv ab.
+        Ohne Einrichtung öffnet „E-Mail“ wie bisher dein Mailprogramm.</p>
+      <div className="maske">
+        <label className="breit">SMTP-Server<input value={w('smtp_server')} placeholder="z. B. mail.gmx.net" onChange={(ev) => set('smtp_server', ev.target.value)} /></label>
+        <label>Port<input value={w('smtp_port') || (w('smtp_ssl') === 'ssl' ? '465' : '587')} onChange={(ev) => set('smtp_port', ev.target.value)} /></label>
+        <label>Verschlüsselung<select value={w('smtp_ssl') || 'starttls'} onChange={(ev) => set('smtp_ssl', ev.target.value)}>
+          <option value="starttls">STARTTLS (Port 587)</option><option value="ssl">SSL/TLS (Port 465)</option></select></label>
+        <label className="breit">Benutzer<input value={w('smtp_benutzer')} onChange={(ev) => set('smtp_benutzer', ev.target.value)} /></label>
+        <label className="breit">Passwort {e?.smtp_passwort_server || e?.smtp_passwort_enc || e?.smtp_passwort_klar ? '(gespeichert)' : '(leer = wie beim Abrufen, wenn gleicher Benutzer)'}
+          <input type="password" value={pw} onChange={(ev) => setPw(ev.target.value)} /></label>
+        <label className="breit">Absender<input value={w('smtp_absender')} placeholder="Hausverwaltung Muster <info@beispiel.de>" onChange={(ev) => set('smtp_absender', ev.target.value)} /></label>
+        <label className="check"><input type="checkbox" checked={w('smtp_kopie') === '1'} onChange={(ev) => set('smtp_kopie', ev.target.checked ? '1' : '0')} /> Kopie an mich (Absender)</label>
+      </div>
+      <div className="buttons">
+        {meldung && <span className="meldung">{meldung}</span>}<span className="spacer" />
+        <button className="primary" onClick={speichernUndTesten}>Speichern & testen</button>
+      </div>
     </div>
   );
 }

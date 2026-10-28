@@ -109,6 +109,37 @@ function client(url) {
   pruefe('… wird nicht überschrieben', (await (await anna.anfrage(`/api/dokument-datei?name=${name}`, { methode: 'POST', roh: Buffer.from('anders') })).json()).vorhanden === true);
   pruefe('… kein fremder Dateiname', (await anna.anfrage('/api/dokument-datei?name=..%2Fmietshaus.sqlite', { methode: 'POST', roh: Buffer.from('x') })).status === 400);
 
+  // ---------- 4c. sending a mail ----------
+  // A tiny SMTP server that accepts everything and keeps the message.
+  const empfangen = [];
+  const smtp = require('node:net').createServer((sock) => {
+    let daten = false, puffer = '';
+    sock.write('220 test ESMTP\r\n');
+    sock.on('data', (c) => {
+      puffer += c.toString('utf8');
+      if (daten) { if (puffer.includes('\r\n.\r\n')) { empfangen.push(puffer); puffer = ''; daten = false; sock.write('250 OK\r\n'); } return; }
+      for (;;) {
+        const i = puffer.indexOf('\r\n'); if (i < 0) break;
+        const z = puffer.slice(0, i); puffer = puffer.slice(i + 2);
+        if (/^(EHLO|HELO)/i.test(z)) sock.write('250-test\r\n250 OK\r\n');
+        else if (/^DATA/i.test(z)) { daten = true; sock.write('354 weiter\r\n'); }
+        else if (/^QUIT/i.test(z)) { sock.end('221 tschuess\r\n'); }
+        else sock.write('250 OK\r\n');
+      }
+    });
+  });
+  await new Promise((ok) => smtp.listen(0, '127.0.0.1', ok));
+  const kunde = await anna.call('save', 'personen', { vorname: 'Mia', nachname: 'Mieterin', email: 'mia@example.org' });
+  await anna.anfrage('/api/smtp/speichern', { methode: 'POST', json: { cfg: { smtp_server: '127.0.0.1', smtp_port: String(smtp.address().port), smtp_ssl: 'kein', smtp_absender: 'Verwaltung <info@example.org>' } } });
+  const gesendet = await (await anna.anfrage('/api/mail/senden', { methode: 'POST', json: { an: 'mia@example.org', betreff: 'Ihre Rechnung', text: 'Guten Tag,\nanbei die Rechnung.',
+    dokumente: [up[0].id], ablage: { person_id: kunde } } })).json();
+  pruefe('E-Mail gesendet', gesendet.gesendet === true && empfangen.length === 1, JSON.stringify(gesendet));
+  pruefe('… mit Betreff und Anhang', /Subject: Ihre Rechnung/.test(empfangen[0] ?? '') && /filename\*?[0-9]*\*?=[^\n]*pdf/i.test(empfangen[0] ?? ''), (empfangen[0] ?? '').match(/.*filename.*/gi)?.join(' | '));
+  const abgelegt = await anna.call('dokument', gesendet.dokument_id);
+  pruefe('… im Archiv bei der Person', abgelegt?.typ === 'E-Mail' && abgelegt.person_id === kunde && /\.eml$/.test(abgelegt.datei), JSON.stringify(abgelegt && { typ: abgelegt.typ, person: abgelegt.person_id, datei: abgelegt.datei }));
+  pruefe('Ungültige Adresse abgelehnt', (await anna.anfrage('/api/mail/senden', { methode: 'POST', json: { an: 'kein-mail', betreff: 'x' } })).status === 400);
+  smtp.close();
+
   // ---------- 5. backup and restore ----------
   const sich = Buffer.from(await (await anna.anfrage('/api/sicherung')).arrayBuffer());
   pruefe('Sicherung heruntergeladen', sich.subarray(0, 15).toString() === 'SQLite format 3', sich.length);

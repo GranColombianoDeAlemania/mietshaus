@@ -60,19 +60,19 @@ function verbindungSetzen(art, adresse) {
 
 // The mail password of the embedded server is encrypted with the system keychain (always available on macOS).
 const passwortLokal = (db) => ({
-  lesen: () => {
+  lesen: (name = 'mail') => {
     const e = db().einstellungen();
     // A password encrypted under an older signature of the app (ad-hoc builds) cannot be decrypted any more.
-    if (e.mail_passwort_enc && safeStorage.isEncryptionAvailable()) {
-      try { return safeStorage.decryptString(Buffer.from(e.mail_passwort_enc, 'base64')); } catch {
+    if (e[`${name}_passwort_enc`] && safeStorage.isEncryptionAvailable()) {
+      try { return safeStorage.decryptString(Buffer.from(e[`${name}_passwort_enc`], 'base64')); } catch {
         throw new Error('Das gespeicherte E-Mail-Passwort lässt sich nicht mehr entschlüsseln (z. B. nach einem Programm-Update). Bitte unter Einstellungen → Dokumenteneingang neu eingeben.');
       }
     }
-    return e.mail_passwort_klar ? Buffer.from(e.mail_passwort_klar, 'base64').toString('utf8') : '';
+    return e[`${name}_passwort_klar`] ? Buffer.from(e[`${name}_passwort_klar`], 'base64').toString('utf8') : '';
   },
-  setzen: (pw) => {
-    if (safeStorage.isEncryptionAvailable()) db().setzeEinstellungen({ mail_passwort_enc: safeStorage.encryptString(pw).toString('base64'), mail_passwort_klar: null });
-    else db().setzeEinstellungen({ mail_passwort_klar: Buffer.from(pw, 'utf8').toString('base64'), mail_passwort_enc: null });
+  setzen: (pw, name = 'mail') => {
+    if (safeStorage.isEncryptionAvailable()) db().setzeEinstellungen({ [`${name}_passwort_enc`]: safeStorage.encryptString(pw).toString('base64'), [`${name}_passwort_klar`]: null });
+    else db().setzeEinstellungen({ [`${name}_passwort_klar`]: Buffer.from(pw, 'utf8').toString('base64'), [`${name}_passwort_enc`]: null });
   },
   verschluesselt: safeStorage.isEncryptionAvailable(),
 });

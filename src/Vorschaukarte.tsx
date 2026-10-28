@@ -4,6 +4,7 @@ import * as I from 'lucide-react';
 import { call, euro, type Row } from './api';
 import { L, useNavi } from './navi';
 import { Chip, initialen } from './ui';
+import { emailSchreiben } from './Mail';
 
 export function Vorschaukarte() {
   const navi = useNavi();
@@ -86,7 +87,7 @@ export function Vorschaukarte() {
       )}
       <div className="vk-knoepfe">
         <button className="primary" onClick={() => { setZiel(null); navi.zu({ person: p.id }); }}>Steckbrief öffnen</button>
-        {p.email && <button onClick={() => window.hv.extern(`mailto:${p.email}`)}>E-Mail</button>}
+        {p.email && <button onClick={() => emailSchreiben({ an: p.email, ablage: { person_id: p.id } })}>E-Mail</button>}
       </div>
     </div>
   );

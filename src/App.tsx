@@ -28,6 +28,7 @@ import { Protokoll } from './views/Protokoll';
 import { Vorschlaege } from './views/Vorschlaege';
 import { Ampel } from './Ampel';
 import { Status } from './views/Status';
+import { MailHost } from './Mail';
 import { Uebergaben } from './views/Uebergabe';
 import { Vermietung } from './views/Vermietung';
 import { Auswertungen } from './views/Auswertungen';
@@ -282,6 +283,12 @@ export default function App(props: { benutzer?: Row | null }) {
     window.addEventListener('contextmenu', menue);
     return () => window.removeEventListener('contextmenu', menue);
   }, [navi]);
+  // Messages from dialogs outside the pages (e.g. a mail sent).
+  useEffect(() => {
+    const m = (e: Event) => melden((e as CustomEvent).detail);
+    window.addEventListener('hv-meldung', m);
+    return () => window.removeEventListener('hv-meldung', m);
+  }, []);
 
   function melden(text: string, ms = 5000) {
     setMeldung(text);
@@ -539,6 +546,7 @@ export default function App(props: { benutzer?: Row | null }) {
         <Vorschaukarte />
         {dokOffen && <DokumentDialog id={dokOffen.id} datei={dokOffen.datei} onClose={() => setDokOffen(null)} />}
         <FrageHost />
+        <MailHost />
       </div>
     </NaviContext.Provider>
   );

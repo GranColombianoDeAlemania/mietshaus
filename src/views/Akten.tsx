@@ -19,6 +19,7 @@ import { BESCHEINIGUNGEN, musterbrief } from './Kommunikation';
 import { sollNachfrage } from './Sollstellung';
 import { EinheitKennzahlen, Kalender, MieterKennzahlen, SelbstnutzungDialog, Zahlungsverhalten } from './Kennzahlen';
 import { euro0, prozent, Ring, RingZeile, ZONEN_KAUTION } from '../zeiger';
+import { emailSchreiben } from '../Mail';
 
 const monatKurz = (m: string | null | undefined) => (m && /^\d{4}-\d{2}/.test(m) ? `${m.slice(5, 7)}/${m.slice(2, 4)}` : datum(m));
 const GRUND: Record<string, string> = {
@@ -106,7 +107,7 @@ export function PersonSeite(props: { id: number }) {
           {!a.vertraege.length && <Chip>keine Verträge</Chip>}
         </>}
         aktionen={<>
-          {p.email && <button className="icon" onClick={() => window.hv.extern(`mailto:${p.email}`)}><I.Mail size={15} />E-Mail</button>}
+          {p.email && <button className="icon" onClick={() => emailSchreiben({ an: p.email, ablage: { person_id: p.id } })}><I.Mail size={15} />E-Mail</button>}
           {erster && <button className="icon" onClick={() => { sessionStorage.setItem('briefAn', JSON.stringify([`${erster.typ === 'weg' ? 'e' : 'm'}${erster.id}`])); navi.zu({ seite: 'briefe', objektId: erster.objekt_id, modus: erster.typ === 'weg' ? 'weg' : 'miete' }); }}><I.FileText size={15} />Brief</button>}
           <button className="icon" onClick={() => ablegen({ person_id: p.id, objekt_id: erster?.objekt_id ?? null })}><I.FilePlus2 size={15} />Dokument</button>
           <button className="icon" onClick={() => setEdit(true)}><I.Pencil size={15} />Bearbeiten</button>

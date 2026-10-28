@@ -6,6 +6,7 @@ import { KontoSelect, Leer } from '../ui';
 import { L } from '../navi';
 import { painUeberweisung } from '../bankformate';
 import { bestaetigen, hinweis } from '../frage';
+import { emailSchreiben } from '../Mail';
 
 const istBild = (datei: string) => /\.(png|jpe?g|gif|webp|bmp|tiff?)$/i.test(datei);
 export const dokUrl = (datei: string) => `/dateien/dokument/${encodeURIComponent(datei)}`;
@@ -149,6 +150,10 @@ function DokumentFormular(props: { id: number; onFertig: () => void; postfach?: 
         <button className="danger" onClick={async () => { if (await bestaetigen('Dokument und Datei löschen?')) { await window.hv.dokumentLoeschen(d.id); props.onFertig(); } }}>Löschen</button>
         <button onClick={async () => { await window.hv.neuAnalysieren(d.id); ladeD(); }} title="Text erneut lesen">Neu lesen</button>
         <button onClick={() => window.hv.dokumentOeffnen(d.datei)}>Öffnen</button>
+        <button onClick={async () => {
+          const p = d.person_id ? await call<Row>('get', 'personen', d.person_id) : null;
+          emailSchreiben({ an: p?.email ?? '', betreff: d.titel ?? '', dokumente: [{ id: d.id, titel: d.titel ?? d.name }], ablage: { objekt_id: d.objekt_id, person_id: d.person_id, einheit_id: d.einheit_id } });
+        }}>Per E-Mail…</button>
         <span className="spacer" />
         {['Rechnung', 'Gutschrift'].includes(f.typ) && !d.buchung_id && (
           <button disabled={!f.objekt_id || !parseCent(f.betrag)} title={!f.objekt_id ? 'Bitte zuerst ein Objekt wählen' : ''} onClick={() => setBuchen(true)}>Buchen…</button>

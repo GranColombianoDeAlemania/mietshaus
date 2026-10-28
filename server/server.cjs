@@ -15,6 +15,7 @@ const { zip } = require('../electron/zip.cjs');
 const ortszeit = require('../electron/zeit.cjs');
 const authModul = require('./auth.cjs');
 const geheim = require('./geheim.cjs');
+const versandModul = require('./versand.cjs');
 
 const { VERSION, DESKTOP_SCHNITTSTELLE, vergleichen, neuesteVersion } = require('../electron/version.cjs');
 const TYPEN = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml',
@@ -98,6 +99,7 @@ async function starten(o) {
     passwort,
   });
   const eingangsordner = () => o.eingang ?? dbSystem.einstellungen().eingangsordner ?? null;
+  const versand = versandModul({ db: () => roh, passwort, dokumentOrdner, importieren: (p2, opt) => ana.importieren(p2, opt) });
   ein.ordnerSetzen(eingangsordner());
   ein.mailPlanen();
   if (dbSystem.einstellungen().mail_aktiv === '1') setTimeout(() => ein.mailAbrufen().catch(() => {}), 20_000).unref();
@@ -302,7 +304,7 @@ async function starten(o) {
       kontext(req, w);
       let wert = await fachlich(() => roh[fn](...args));
       // Stored mail passwords (encrypted) stay on the server; the page only learns that one is set.
-      if (fn === 'einstellungen') wert = Object.fromEntries(Object.entries(wert).map(([k, v]) => [k, /^mail_passwort/.test(k) && v ? 'gesetzt' : v]));
+      if (fn === 'einstellungen') wert = Object.fromEntries(Object.entries(wert).map(([k, v]) => [k, /_passwort_(server|enc|klar)$/.test(k) && v ? 'gesetzt' : v]));
       if (aenderungen() !== vorher) { senden('aktualisiert', null, req.headers['x-client'] ?? null); pulsSenden(); }
       return json(res, 200, { wert: wert === undefined ? null : wert });
     }
@@ -474,6 +476,21 @@ async function starten(o) {
       return json(res, 200, { verschluesselt: passwort.verschluesselt });
     }
     if (post && p === '/api/mail/testen') return json(res, 200, { text: await fachlich(() => ein.mailTesten()) });
+    if (post && p === '/api/smtp/speichern') {
+      const { cfg, pw } = await jsonLesen(req);
+      kontext(req, w);
+      roh.setzeEinstellungen(cfg ?? {});
+      if (pw) passwort.setzen(pw, 'smtp');
+      return json(res, 200, { ok: true });
+    }
+    if (post && p === '/api/smtp/testen') return json(res, 200, { text: await fachlich(() => versand.testen()) });
+    if (post && p === '/api/mail/senden') {
+      const m = await jsonLesen(req);
+      kontext(req, w);
+      const r = await fachlich(() => versand.senden(m));
+      senden('aktualisiert');
+      return json(res, 200, r);
+    }
     if (post && p === '/api/mail/abrufen') return json(res, 200, await fachlich(() => ein.mailAbrufen()));
     throw new Fehler(404, 'Unbekannte Adresse.');
   }
