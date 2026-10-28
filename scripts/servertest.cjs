@@ -122,6 +122,18 @@ function client(url) {
   pruefe('Sitzung bleibt nach Wiederherstellung gültig', (await ben.call('objekte', 'miete')).length === 1);
   pruefe('Server-Sicherungen auflisten', (await (await anna.anfrage('/api/sicherungen')).json()).some((x) => /vor-Wiederherstellung/.test(x.name)));
 
+  // ---------- 5b. status page ----------
+  pruefe('Jetzt sichern', (await anna.anfrage('/api/jetzt-sichern', { methode: 'POST', json: {} })).ok);
+  const test = await (await anna.anfrage('/api/sicherungstest', { methode: 'POST', json: {} })).json();
+  pruefe('Sicherungstest: wiederherstellbar', test.ok === true && test.zahlen?.objekte === 1, JSON.stringify(test));
+  const st = await (await anna.anfrage('/api/systemstatus')).json();
+  pruefe('Status: Version, Platz, Sicherung', st.version && st.platz?.frei > 0 && st.sicherung.anzahl >= 1 && st.sicherung.test?.ok, JSON.stringify(st).slice(0, 300));
+  pruefe('Status: Geräte mit eigenem markiert', st.sitzungen.length >= 2 && st.sitzungen.filter((x) => x.eigene).length === 1);
+  const benSitzung = st.sitzungen.find((x) => !x.eigene && x.name === 'Ben Becker');
+  await anna.anfrage('/api/sitzung-beenden', { methode: 'POST', json: { id: benSitzung.id } });
+  pruefe('Gerät abgemeldet', await ben.call('objekte', 'miete').then(() => false, (e) => e.status === 401));
+  await ben.anfrage('/api/anmelden', { methode: 'POST', json: { login: 'ben', passwort: 'auch-geheim-22' } });
+
   // ---------- 6. logout, password change ----------
   await ben.anfrage('/api/abmelden', { methode: 'POST' });
   pruefe('Nach Abmelden 401', await ben.call('objekte', 'miete').then(() => false, (e) => e.status === 401));

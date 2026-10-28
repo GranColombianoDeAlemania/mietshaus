@@ -76,11 +76,12 @@ function liste(ordner, { ohne = [] } = {}) {
 }
 
 // Daily backup into the backup folder: the last 14 days, then one per month for a year.
-function automatisch(rawDb, ordner, geraet, jetzt = new Date()) {
+// erzwingen: now, even if today's backup exists (button on the status page).
+function automatisch(rawDb, ordner, geraet, jetzt = new Date(), erzwingen = false) {
   let namen = [];
   try { namen = fs.readdirSync(ordner).filter((n) => AUTO.test(n)).sort(); } catch {}
   const letzte = namen.length ? fs.statSync(path.join(ordner, namen[namen.length - 1])).mtimeMs : 0;
-  if (jetzt.getTime() - letzte < 20 * 3600_000) return null;
+  if (!erzwingen && jetzt.getTime() - letzte < 20 * 3600_000) return null;
   const ziel = schreiben(rawDb, path.join(ordner, `Mietshaus-auto-${stempel()}.sqlite`), geraet);
   aufraeumen(ordner, jetzt);
   return ziel;
@@ -137,4 +138,26 @@ function einspielen({ quelle, dbFile, rawDb, geraet, schliessen, oeffnen }) {
   return { vorher };
 }
 
-module.exports = { schreiben, pruefen, liste, automatisch, aufraeumen, einspielen };
+// Restore test: the newest backup in the folder is copied, checked for damage, brought to the current schema like a
+// real restore and counted. Shows that the backups can really be restored – without touching the data in use.
+function testen(ordner) {
+  const neueste = liste([ordner])[0];
+  if (!neueste) return { ok: false, zeit: new Date().toISOString(), fehler: 'Keine Sicherung gefunden.' };
+  const tmp = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'mietshaus-test-'));
+  try {
+    pruefen(neueste.datei);
+    const kopie = path.join(tmp, 'test.sqlite');
+    fs.copyFileSync(neueste.datei, kopie);
+    const k = open(kopie, 'app', null, { ohneUpdateSicherung: true });
+    const zahl = (t) => k.prepare(`SELECT count(*) AS n FROM ${t}`).get().n;
+    const zahlen = { objekte: zahl('objekte'), personen: zahl('personen'), buchungen: zahl('buchungen'), dokumente: zahl('dokumente') };
+    k.close();
+    return { ok: true, zeit: new Date().toISOString(), datei: path.basename(neueste.datei), stand: neueste.zeit, zahlen };
+  } catch (e) {
+    return { ok: false, zeit: new Date().toISOString(), datei: path.basename(neueste.datei), fehler: String(e?.message ?? e) };
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+module.exports = { schreiben, pruefen, liste, automatisch, aufraeumen, einspielen, testen };

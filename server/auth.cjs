@@ -97,6 +97,10 @@ module.exports = function auth(rawDb) {
       if (!token) return null;
       return oeffentlich(db().prepare('SELECT * FROM benutzer WHERE claude_token_hash = ? AND aktiv = 1').get(sha(token)));
     },
+    // Signed-in devices: an id (start of the token hash), user, device (browser) and last use.
+    sitzungen: (eigenesToken) => db().prepare(`SELECT substr(s.token_hash, 1, 16) AS id, s.token_hash = ? AS eigene, s.erstellt, s.zuletzt, s.geraet, b.name
+        FROM sitzungen s JOIN benutzer b ON b.id = s.benutzer_id ORDER BY s.zuletzt DESC`).all(sha(String(eigenesToken ?? ''))).map((x) => ({ ...x, eigene: !!x.eigene })),
+    sitzungBeendenId: (id) => db().prepare(`DELETE FROM sitzungen WHERE substr(token_hash, 1, 16) = ?`).run(String(id)),
     bremse: bremse(),
   };
 };

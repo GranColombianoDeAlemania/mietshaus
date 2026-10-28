@@ -108,8 +108,29 @@ async function starten(o) {
       if (sicherung.automatisch(raw, sicherungsOrdner(dbFile), o.geraet)) dbSystem.setzeEinstellungen({ letzte_auto_sicherung: new Date().toISOString() });
     } catch (e) {
       console.error('Automatische Sicherung', e);
+      dbSystem.setzeEinstellungen({ letzter_sicherungsfehler: JSON.stringify({ zeit: new Date().toISOString(), fehler: String(e?.message ?? e) }) });
       senden('meldung', `Automatische Sicherung fehlgeschlagen: ${e?.message ?? e}`);
+      return;
     }
+    // Once a month the newest backup is restored on trial (into a temporary copy).
+    try {
+      const letzter = JSON.parse(dbSystem.einstellungen().sicherungstest ?? 'null');
+      if (!letzter || Date.now() - new Date(letzter.zeit).getTime() > 30 * 864e5) sicherungTesten();
+    } catch (e) { console.error('Sicherungstest', e); }
+  };
+  const sicherungTesten = () => {
+    const r = sicherung.testen(sicherungsOrdner(dbFile));
+    dbSystem.setzeEinstellungen({ sicherungstest: JSON.stringify(r) });
+    if (!r.ok) senden('meldung', `Sicherungstest fehlgeschlagen: ${r.fehler}`);
+    return r;
+  };
+  // Folder sizes for the status page (documents can be many; this runs only when the page asks).
+  const ordnerGroesse = (o2) => {
+    let n = 0, b = 0;
+    const gehe = (d) => { let e = []; try { e = fs.readdirSync(d, { withFileTypes: true }); } catch { return; }
+      for (const x of e) { const p2 = path.join(d, x.name); if (x.isDirectory()) gehe(p2); else { n++; try { b += fs.statSync(p2).size; } catch {} } } };
+    gehe(o2);
+    return { anzahl: n, bytes: b };
   };
   // Is there a newer release? Asked once a day (server mode; the Mac app asks for itself). MIETSHAUS_UPDATE_PRUEFEN=0 stops it.
   let neueste = null;
@@ -291,6 +312,34 @@ async function starten(o) {
         version: VERSION, sicherungen: o.modus === 'lokal' ? sicherungsOrdner(dbFile) : 'sicherungen (Server)', geraet: o.geraet?.name ?? null, stand: datenStand(raw),
         letzte_auto_sicherung: e.letzte_auto_sicherung ?? null, benutzer: w.benutzer, eingangsordner_fest: !!o.eingang, eingangsordner: eingangsordner(),
         mail_verschluesselt: passwort.verschluesselt, update: neueste && { version: neueste.version, url: neueste.url } });
+    }
+    // Status page: version and update, space, backups and their test, devices signed in.
+    if (p === '/api/systemstatus') {
+      const e = dbSystem.einstellungen();
+      const groesse = (f) => { try { return fs.statSync(f).size; } catch { return 0; } };
+      let platz = null;
+      try { const s = fs.statfsSync(daten); platz = { frei: s.bavail * s.bsize, gesamt: s.blocks * s.bsize }; } catch {}
+      const sich = sicherung.liste([sicherungsOrdner(dbFile)], { ohne: [dbFile] });
+      return json(res, 200, {
+        modus: o.modus, version: VERSION, update: neueste && { version: neueste.version, url: neueste.url },
+        datenbank: { bytes: groesse(dbFile) + groesse(`${dbFile}-wal`), stand: datenStand(raw) },
+        dokumente: ordnerGroesse(dokumentOrdner()), analyse: roh.zuAnalysieren().length, platz,
+        sicherung: { automatisch: e.auto_sicherung !== '0', letzte_auto: e.letzte_auto_sicherung ?? null, letzte_manuell: e.letzte_sicherung ?? null,
+          anzahl: sich.length, bytes: sich.reduce((s2, x) => s2 + groesse(x.datei), 0), neueste: sich[0] ? { name: path.basename(sich[0].datei), zeit: sich[0].zeit } : null,
+          test: JSON.parse(e.sicherungstest ?? 'null'), fehler: JSON.parse(e.letzter_sicherungsfehler ?? 'null') },
+        sitzungen: o.modus === 'server' ? auth.sitzungen(w.token) : [],
+      });
+    }
+    if (post && p === '/api/sicherungstest') return json(res, 200, sicherungTesten());
+    if (post && p === '/api/jetzt-sichern') {
+      sicherung.automatisch(raw, sicherungsOrdner(dbFile), o.geraet, new Date(), true);
+      dbSystem.setzeEinstellungen({ letzte_auto_sicherung: new Date().toISOString(), letzter_sicherungsfehler: null });
+      return json(res, 200, { ok: true });
+    }
+    if (post && p === '/api/sitzung-beenden') {
+      const { id } = await jsonLesen(req);
+      auth.sitzungBeendenId(id);
+      return json(res, 200, { ok: true });
     }
     if (p.startsWith('/dateien/dokument/')) return datei(res, dokumentOrdner(), p.slice('/dateien/dokument/'.length), u.searchParams.get('name'));
     if (p.startsWith('/dateien/vorschau/')) return datei(res, vorschauOrdner(), p.slice('/dateien/vorschau/'.length));

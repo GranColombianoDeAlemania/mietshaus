@@ -27,6 +27,7 @@ import { Export } from './views/Export';
 import { Protokoll } from './views/Protokoll';
 import { Vorschlaege } from './views/Vorschlaege';
 import { Ampel } from './Ampel';
+import { Status } from './views/Status';
 import { Uebergaben } from './views/Uebergabe';
 import { Vermietung } from './views/Vermietung';
 import { Auswertungen } from './views/Auswertungen';
@@ -53,7 +54,7 @@ const ICON: Record<string, I.LucideIcon> = {
   kaution: I.Shield, anpassung: I.TrendingUp, vermietung: I.UserPlus, uebergabe: I.ClipboardCheck, versammlungen: I.Gavel, beschluesse: I.ScrollText,
   kontakte: I.Phone, schluesselv: I.KeyRound, versicherungen: I.Umbrella,
   briefe: I.Mail, vorgaenge: I.ListChecks, termine: I.CalendarDays,
-  pruefung: I.ShieldCheck, protokoll: I.History, export: I.Download, einstellungen: I.Settings,
+  pruefung: I.ShieldCheck, status: I.Activity, protokoll: I.History, export: I.Download, einstellungen: I.Settings,
 };
 
 type Ctx = { modus: Modus; objekt: Row; objekte: Row[]; ladeObjekte: () => void; oeffne: (seite: string, objektId?: number) => void };
@@ -109,6 +110,7 @@ const SEITEN: Seite[] = [
   { id: 'vorgaenge', label: 'Vorgänge', gruppe: 'Kommunikation', objekt: true, render: (c) => <Vorgaenge key={c.objekt.id} objekt={c.objekt} /> },
   { id: 'termine', label: 'Termine', gruppe: 'Kommunikation', alle: true, render: (c) => <Termine objekte={c.modus === 'projekt' ? [] : c.objekte} /> },
   { id: 'pruefung', label: 'Prüfbericht', gruppe: 'System', render: (c) => <Pruefbericht modus={c.modus} /> },
+  { id: 'status', label: 'Status', gruppe: 'System', alle: true, render: () => <Status /> },
   { id: 'protokoll', label: 'Änderungsprotokoll', gruppe: 'System', alle: true, render: () => <Protokoll /> },
   { id: 'export', label: 'Export & Steuer', gruppe: 'System', objekt: true, render: (c) => <Export key={c.objekt.id} objekt={c.objekt} /> },
   { id: 'einstellungen', label: 'Einstellungen', gruppe: 'System', alle: true, render: () => <Einstellungen /> },

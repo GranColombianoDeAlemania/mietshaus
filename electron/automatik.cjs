@@ -56,6 +56,14 @@ module.exports = function automatik({ db, all, get, tx, PERSON_NAME, bh, ab, vw,
     const objekte = all('SELECT * FROM objekte ORDER BY bezeichnung');
     const e = einst();
 
+    // Backups: none for three days although automatic, or the monthly restore test failed.
+    if (e.auto_sicherung !== '0' && e.letzte_auto_sicherung && Date.now() - new Date(e.letzte_auto_sicherung).getTime() > 3 * 864e5)
+      add({ schluessel: 'sicherung:alt', stufe: 'rot', kategorie: 'Sicherung', dauerhaft: true, ziel: 'status',
+        text: `Seit ${Math.floor((Date.now() - new Date(e.letzte_auto_sicherung).getTime()) / 864e5)} Tagen keine automatische Sicherung – siehe Status.` });
+    try {
+      const t = JSON.parse(e.sicherungstest ?? 'null');
+      if (t && !t.ok) add({ schluessel: 'sicherung:test', stufe: 'rot', kategorie: 'Sicherung', dauerhaft: true, ziel: 'status', text: `Der Test der Sicherung ist fehlgeschlagen: ${t.fehler}` });
+    } catch {}
     if (!e.verwalter_name) add({ schluessel: 'stamm:verwalter', stufe: 'orange', kategorie: 'Stammdaten', text: 'Verwalterdaten fehlen – sie stehen als Absender auf allen Briefen.', ziel: 'einstellungen' });
 
     const vorschlaege = get(`SELECT count(*) AS n FROM vorschlaege WHERE status = 'offen'`).n;
