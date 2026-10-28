@@ -1035,6 +1035,23 @@ function api(db) {
     }
   }
 
+  // Two people at work on the same record: a form sends back the change time it was loaded with (geaendert_am). When
+  // another user has changed the record since, saving stops with a conflict the app shows – unless the user chose to
+  // overwrite (kontext 'ueberschreiben'). One's own later changes and the local mode (no users) never conflict.
+  function konfliktPruefen(table, row) {
+    if (!row?.id || !row.geaendert_am || !TABLES[table]) return;
+    const kontext = (k) => get('SELECT wert FROM temp.kontext WHERE schluessel = ?', k)?.wert ?? null;
+    if (kontext('ueberschreiben') === '1') return;
+    const jetzt = get(`SELECT geaendert_am, geaendert_benutzer FROM ${table} WHERE id = ?`, row.id);
+    if (!jetzt?.geaendert_am || jetzt.geaendert_am <= row.geaendert_am || jetzt.geaendert_benutzer == null) return;
+    if (String(jetzt.geaendert_benutzer) === String(kontext('benutzer'))) return;
+    const wer = get('SELECT name FROM benutzer WHERE id = ?', jetzt.geaendert_benutzer)?.name ?? 'Ein anderer Benutzer';
+    const e = new Error(`${wer} hat diesen Eintrag um ${new Date(jetzt.geaendert_am).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })} Uhr geändert, nachdem du ihn geöffnet hast.`);
+    e.code = 'KONFLIKT';
+    e.konflikt = { wer, wann: jetzt.geaendert_am };
+    throw e;
+  }
+
   // Object types visible in each mode: mixed houses appear in both.
   const artenFuer = (modus) => (modus === 'weg' ? ['weg', 'gemischt'] : ['miete', 'gemischt']);
 
@@ -1062,6 +1079,7 @@ function api(db) {
     }),
     // A contract and its charges are saved together or not at all.
     save: (table, row) => tx(() => {
+      konfliktPruefen(table, row);
       const id = save(table, row);
       if (SYNC.has(table)) bh.syncKonten();
       sollNachziehen(vertragVon(table, id));

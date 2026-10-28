@@ -49,7 +49,7 @@ async function starten(o) {
   const dist = o.dist ?? path.join(__dirname, '..', 'dist');
   const dokumentOrdner = () => path.join(daten, 'dokumente');
   const vorschauOrdner = () => path.join(dokumentOrdner(), 'vorschau');
-  const SYSTEM = { quelle: 'app', geraet: o.geraet?.id ?? null, benutzer: null };
+  const SYSTEM = { quelle: 'app', geraet: o.geraet?.id ?? null, benutzer: null, ueberschreiben: null };
 
   let raw = null, roh = null;
   // Tests hand over a prepared database (o.verbindung = { raw, api }); restoring a backup then is not possible.
@@ -155,7 +155,8 @@ async function starten(o) {
     }
     return null;
   }
-  const kontext = (req, w, quelle = 'app') => kontextSetzen(raw, { quelle: w.claude ? 'claude' : quelle, geraet: String(req.headers['x-geraet'] ?? '').slice(0, 80) || o.geraet?.id || null, benutzer: w.benutzer?.id ?? null });
+  const kontext = (req, w, quelle = 'app') => kontextSetzen(raw, { quelle: w.claude ? 'claude' : quelle, geraet: String(req.headers['x-geraet'] ?? '').slice(0, 80) || o.geraet?.id || null,
+    benutzer: w.benutzer?.id ?? null, ueberschreiben: req.headers['x-ueberschreiben'] === '1' ? '1' : null });
 
   function statisch(req, res, pfad) {
     let datei = path.join(dist, path.normalize(decodeURIComponent(pfad)).replace(/^(\.\.[/\\])+/, ''));
@@ -201,7 +202,9 @@ async function starten(o) {
 
   // Errors of the business logic (e.g. "Diese Person ist noch … zugeordnet") are answers for the user, not server faults.
   // Network errors (e.g. mail server not reachable) come as AggregateError without a message of their own.
-  const alsFehler = (e) => (e instanceof Fehler ? e : new Fehler(400, e?.message || e?.errors?.[0]?.message || e?.code || String(e)));
+  const alsFehler = (e) => (e instanceof Fehler ? e
+    : e?.code === 'KONFLIKT' ? Object.assign(new Fehler(409, e.message), { konflikt: e.konflikt })
+      : new Fehler(400, e?.message || e?.errors?.[0]?.message || e?.code || String(e)));
   const fachlich = (fn) => {
     try {
       const r = fn();
@@ -252,7 +255,7 @@ async function starten(o) {
     if (p === '/mcp') {
       if (!o.mcp) throw new Fehler(404, 'Claude ist auf diesem Server nicht eingerichtet.');
       // Claude's tools run asynchronously: every access to the database marks the change as Claude's, for this user.
-      const k = { quelle: 'claude', geraet: o.geraet?.id ?? null, benutzer: w.benutzer?.id ?? null };
+      const k = { quelle: 'claude', geraet: o.geraet?.id ?? null, benutzer: w.benutzer?.id ?? null, ueberschreiben: null };
       const dbClaude = new Proxy({}, { get: (_t, n) => { kontextSetzen(raw, k); return roh[n]; } });
       return o.mcp(req, res, dbClaude, { dokumente: dokumentOrdner(), aktualisiert: () => senden('aktualisiert') });
     }
@@ -440,7 +443,7 @@ async function starten(o) {
     bearbeiten(req, res).catch((e) => {
       const status = e instanceof Fehler ? e.status : 500;
       if (status === 500) console.error(req.method, req.url, e);
-      if (!res.headersSent) json(res, status, { fehler: String(e?.message ?? e) });
+      if (!res.headersSent) json(res, status, { fehler: String(e?.message ?? e), ...(e?.konflikt ? { konflikt: e.konflikt } : {}) });
       else res.end();
     });
   });

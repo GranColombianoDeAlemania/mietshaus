@@ -65,6 +65,20 @@ function client(url) {
   pruefe('Datensatz nennt Ben', zeile.geaendert_benutzer === benId, JSON.stringify(zeile));
   const prot = raw.prepare(`SELECT benutzer, aktion FROM protokoll WHERE tabelle = 'objekte' AND datensatz = ? ORDER BY id`).all(o);
   pruefe('Protokoll: Anna legt an, Ben ändert', prot[0]?.benutzer === 1 && prot.at(-1)?.benutzer === benId && prot.at(-1)?.aktion === 'geändert', JSON.stringify(prot));
+  // ---------- 2b. both edit the same record ----------
+  const geladen = await anna.call('get', 'objekte', o);
+  await ben.call('save', 'objekte', { ...(await ben.call('get', 'objekte', o)), notiz: 'Ben war schneller' });
+  const konflikt = await anna.anfrage('/api/call', { methode: 'POST', json: { fn: 'save', args: ['objekte', { ...geladen, notiz: 'Anna alt' }] } });
+  const kj = await konflikt.json();
+  pruefe('Gleichzeitig geändert: 409 mit Namen', konflikt.status === 409 && kj.konflikt?.wer === 'Ben Becker' && /Ben Becker hat diesen Eintrag/.test(kj.fehler), JSON.stringify(kj));
+  pruefe('… nichts überschrieben', (await anna.call('get', 'objekte', o)).notiz === 'Ben war schneller');
+  const ueber = await anna.anfrage('/api/call', { methode: 'POST', json: { fn: 'save', args: ['objekte', { ...geladen, notiz: 'Anna bewusst' }] }, kopf: { 'X-Ueberschreiben': '1' } });
+  pruefe('Bewusst überschreiben geht', ueber.ok && (await anna.call('get', 'objekte', o)).notiz === 'Anna bewusst');
+  const alt = await anna.call('get', 'objekte', o);
+  await anna.call('save', 'objekte', { ...alt, notiz: 'Anna 1' });
+  pruefe('Eigene spätere Änderung ist kein Konflikt', await anna.call('save', 'objekte', { ...alt, notiz: 'Anna 2' }).then(() => true, () => false));
+  pruefe('Teilweise Speicherung ohne Stand prüft nicht', await ben.call('save', 'objekte', { id: o, notiz: 'von Ben' }).then(() => true, () => false));
+
   pruefe('Unbekannte Funktion abgelehnt', await anna.call('gibtEsNicht').then(() => false, (e) => e.status === 400));
 
   // ---------- 3. events ----------

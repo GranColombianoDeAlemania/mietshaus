@@ -3,6 +3,7 @@
 // native menus and save dialogs, Claude Desktop) comes from window.hvDesktop, which the Mac app's preload provides;
 // a browser gets an equivalent (print dialog, download, its own small menu).
 import type { Row } from './api';
+import { frage } from './frage';
 
 type DateiFilter = { name: string; extensions: string[] };
 type MenueEintrag = { id: string; label: string; enabled?: boolean } | '-';
@@ -38,8 +39,10 @@ declare global {
 }
 
 export class HttpFehler extends Error {
-  constructor(public status: number, text: string) { super(text); }
+  constructor(public status: number, text: string, public konflikt?: { wer: string; wann: string }) { super(text); }
 }
+// An error the user already knows about (e.g. chose not to overwrite): fehler() shows nothing for it.
+export class StillerFehler extends Error { still = true; }
 
 const desktop = () => window.hvDesktop;
 const lesen = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
@@ -78,7 +81,7 @@ export const farbe = (v: Verbindung, jetzt = Date.now()): 'gruen' | 'gelb' | 'ro
     : v.strom !== 'offen' || v.offen > 0 || (v.puls?.analyse ?? 0) > 0 ? 'gelb' : 'gruen';
 export const neuVerbinden = () => { quelle?.close(); quelle = null; zustand.strom = 'verbindet'; melden(); ereignisse(); };
 
-export async function anfrage(pfad: string, opt: { methode?: string; json?: unknown; roh?: BodyInit; typ?: string } = {}) {
+export async function anfrage(pfad: string, opt: { methode?: string; json?: unknown; roh?: BodyInit; typ?: string; kopf?: Record<string, string> } = {}) {
   const methode = opt.methode ?? (opt.json !== undefined || opt.roh !== undefined ? 'POST' : 'GET');
   const start = performance.now();
   zustand.offen++;
@@ -87,7 +90,7 @@ export async function anfrage(pfad: string, opt: { methode?: string; json?: unkn
   try {
     r = await fetch(pfad, {
     method: methode, credentials: 'same-origin',
-    headers: { 'X-Mietshaus': '1', 'X-Client': CLIENT, 'X-Geraet': geraet().id,
+    headers: { 'X-Mietshaus': '1', 'X-Client': CLIENT, 'X-Geraet': geraet().id, ...opt.kopf,
       ...(opt.json !== undefined ? { 'Content-Type': 'application/json' } : opt.typ ? { 'Content-Type': opt.typ } : {}) },
     body: opt.json !== undefined ? JSON.stringify(opt.json) : opt.roh,
     });
@@ -104,9 +107,10 @@ export async function anfrage(pfad: string, opt: { methode?: string; json?: unkn
   melden();
   if (!r.ok) {
     let text = `Fehler ${r.status}`;
-    try { text = (await r.json()).fehler ?? text; } catch {}
+    let konflikt;
+    try { const j = await r.json(); text = j.fehler ?? text; konflikt = j.konflikt; } catch {}
     if (r.status === 401) window.dispatchEvent(new Event('hv-abgemeldet'));
-    throw new HttpFehler(r.status, text);
+    throw new HttpFehler(r.status, text, konflikt);
   }
   return r;
 }
@@ -210,6 +214,8 @@ function drucken(html: string) {
   setTimeout(() => URL.revokeObjectURL(url), 120_000);
 }
 
+const absatz = (t: string) => <p>{t}</p>;
+
 const base64 = async (f: File) => {
   const b = new Uint8Array(await f.arrayBuffer());
   let s = '';
@@ -237,7 +243,19 @@ export function brueckeEinrichten() {
   window.hv = {
     plattform: d?.plattform ?? 'web',
     zoom: (f) => (d ? d.zoom(f) : void (document.documentElement.style.zoom = String(f))),
-    call: async (fn, ...args) => (await jsonVon('/api/call', { fn, args })).wert,
+    call: async (fn, ...args) => {
+      try {
+        return (await jsonVon('/api/call', { fn, args })).wert;
+      } catch (e) {
+        if (!(e instanceof HttpFehler) || !e.konflikt) throw e;
+        // Someone else changed the record meanwhile: overwrite on purpose, or keep theirs and see it.
+        const wahl = await frage({ titel: 'Inzwischen geändert', text: <>{absatz(e.message)}{absatz('Deine Änderung überschreibt seine. Wenn du abbrichst, siehst du den neuen Stand und kannst deine Änderung dort noch einmal eintragen.')}</>,
+          optionen: [{ id: 'neu', label: 'Abbrechen, neuen Stand zeigen' }, { id: 'ueber', label: 'Meine Änderung speichern', primary: true }] });
+        if (wahl === 'ueber') return (await (await anfrage('/api/call', { json: { fn, args }, kopf: { 'X-Ueberschreiben': '1' } })).json()).wert;
+        for (const h of hoerer.get('aktualisiert') ?? []) h(null);
+        throw new StillerFehler('Nicht gespeichert.');
+      }
+    },
     pdf: async (html, name) => {
       if (!d) { drucken(html); return null; }
       return d.speichern(await d.pdfBytes(html), name, { name: 'PDF', extensions: ['pdf'] }, true);
