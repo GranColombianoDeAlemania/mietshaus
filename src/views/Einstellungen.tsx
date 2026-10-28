@@ -3,6 +3,7 @@ import { call, fehler, type Row } from '../api';
 import { useLoad } from '../useLoad';
 import { anzeige, SCHRIFTGROESSEN, type Thema } from '../anzeige';
 import { Tabs } from '../ui';
+import { bestaetigen, hinweis } from '../frage';
 
 const FELDER: [string, string][] = [
   ['verwalter_name', 'Name / Firma'],
@@ -87,8 +88,8 @@ export function Einstellungen() {
         {info && (
           <p className="klein hinweis">
             Datenbank: {info.dbFile}<br />Dokumente: {info.dokumente}<br />Sicherungen: {info.sicherungen}<br />
-            Letzte Änderung: {zeitpunkt(info.stand.zeit)}{info.stand.geraet_name ? ` (${info.stand.geraet_name})` : ''} · Dieses Gerät: {info.geraet}<br />
-            Letzte automatische Sicherung: {zeitpunkt(info.letzte_auto_sicherung)} · Version {info.version}
+            Letzte Änderung: {zeitpunkt(info.stand?.zeit ?? null)}{info.stand?.geraet_name ? ` (${info.stand.geraet_name})` : ''}{info.geraet ? ` · Dieses Gerät: ${info.geraet}` : ''}<br />
+            Letzte automatische Sicherung: {zeitpunkt(info.letzte_auto_sicherung ?? null)} · Version {info.version}
           </p>
         )}
       </div>
@@ -259,8 +260,8 @@ function Festschreibung() {
       <div className="toolbar">
         <label>Festschreiben bis <input type="date" value={bis} onChange={(ev) => setBis(ev.target.value)} /></label>
         <button onClick={async () => {
-          if (e.festgeschrieben_bis && bis < e.festgeschrieben_bis) return alert('Eine Festschreibung kann nicht zurückgenommen werden.');
-          if (!confirm(`Alle Buchungen bis ${bis.split('-').reverse().join('.')} endgültig festschreiben?`)) return;
+          if (e.festgeschrieben_bis && bis < e.festgeschrieben_bis) return hinweis('Eine Festschreibung kann nicht zurückgenommen werden.');
+          if (!await bestaetigen(`Alle Buchungen bis ${bis.split('-').reverse().join('.')} endgültig festschreiben?`)) return;
           await call('setzeEinstellungen', { festgeschrieben_bis: bis });
           reload();
         }}>Festschreiben</button>

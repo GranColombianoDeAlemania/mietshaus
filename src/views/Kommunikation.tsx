@@ -8,6 +8,7 @@ import { Dialog, Tabs } from '../ui';
 import { FormDialog, type Field } from '../Form';
 import { absaetze, absenderAus, alsPdf, brief, esc, empfaengerVon } from '../dokument';
 import { L } from '../navi';
+import { bestaetigen, hinweis } from '../frage';
 
 export const PLATZHALTER: [string, string][] = [
   ['anrede', 'Briefanrede („Sehr geehrte Frau …,“)'], ['name', 'Vollständiger Name'], ['vorname', 'Vorname'], ['nachname', 'Nachname'],
@@ -113,7 +114,7 @@ export async function musterbrief(titel: string, typ: 'miete' | 'weg', vertrag: 
     if (!vorlage) throw new Error(`Vorlage „${titel}“ nicht gefunden.`);
     const d = await vertragsdaten(typ, vertrag);
     if (/keine Mietrückstände/.test(vorlage.text) && (d.akte?.vertrag?.ueberfaellig_ct ?? 0) > 0
-      && !confirm(`Es sind ${euro(d.akte.vertrag.ueberfaellig_ct)} überfällig – die Bescheinigung „keine Mietrückstände“ wäre falsch. Trotzdem erstellen?`)) return;
+      && !await bestaetigen(`Es sind ${euro(d.akte.vertrag.ueberfaellig_ct)} überfällig – die Bescheinigung „keine Mietrückstände“ wäre falsch. Trotzdem erstellen?`)) return;
     const einst = await call('einstellungen');
     await alsPdf([briefSeite({ text: vorlage.text, betreff: vorlage.betreff ?? titel, kategorie: vorlage.kategorie, einst, ...d })], `${titel} ${alleNamen(d.p)}`);
   } catch (e) { fehler(e); }
@@ -168,7 +169,7 @@ function Schreiben(props: { objekt: Row; modus: Modus }) {
           : { p: await call('get', 'personen', e.person_id), v: null, b: null, akte: null, objekt: props.objekt };
         // A certificate of no arrears must not go out while something is overdue.
         if (/keine Mietrückstände/.test(text) && (d.akte?.vertrag?.ueberfaellig_ct ?? 0) > 0
-          && !confirm(`${e.label}: Es sind ${euro(d.akte!.vertrag.ueberfaellig_ct)} überfällig – die Bescheinigung „keine Mietrückstände“ wäre falsch. Trotzdem erstellen?`)) continue;
+          && !await bestaetigen(`${e.label}: Es sind ${euro(d.akte!.vertrag.ueberfaellig_ct)} überfällig – die Bescheinigung „keine Mietrückstände“ wäre falsch. Trotzdem erstellen?`)) continue;
         seiten.push(briefSeite({ text, betreff, kategorie, einst, ...d, objekt: props.objekt }));
       }
       const name = (titel || betreff).replace(/\{\w+\}/g, '').replace(/[\s,–-]+$/, '').replace(/\s+[–-]\s*(,\s*)?$/, '').trim() || 'Brief';
@@ -180,7 +181,7 @@ function Schreiben(props: { objekt: Row; modus: Modus }) {
 
   async function email() {
     const mails = (await Promise.all(gewaehlt.map((e) => call('get', 'personen', e.person_id)))).map((p) => p.email).filter(Boolean);
-    if (!mails.length) return alert('Keiner der gewählten Empfänger hat eine E-Mail-Adresse.');
+    if (!mails.length) return hinweis('Keiner der gewählten Empfänger hat eine E-Mail-Adresse.');
     // Recipients go into BCC so they do not see each other's addresses.
     window.hv.extern(`mailto:?bcc=${encodeURIComponent(mails.join(','))}&subject=${encodeURIComponent(ersetze(betreff, { objekt: props.objekt.bezeichnung }))}&body=${encodeURIComponent(ersetze(text, { objekt: props.objekt.bezeichnung, anrede: 'Guten Tag,' }))}`);
   }
@@ -233,7 +234,7 @@ function Vorlagen() {
           <>
             {fehlend.length > 0 && <button onClick={async () => { for (const v of fehlend) await call('save', 'vorlagen', v); reload(); }}>{fehlend.length} Musterbriefe ergänzen</button>}
             {anders.length > 0 && <button title={anders.map(([v]) => v.titel).join('\n')} onClick={async () => {
-              if (!confirm(`${anders.length} Vorlage(n) auf den aktuellen Muster-Text setzen? Eigene Änderungen daran gehen verloren:\n\n${anders.map(([v]) => v.titel).join('\n')}`)) return;
+              if (!await bestaetigen(`${anders.length} Vorlage(n) auf den aktuellen Muster-Text setzen? Eigene Änderungen daran gehen verloren:\n\n${anders.map(([v]) => v.titel).join('\n')}`)) return;
               for (const [v, r] of anders) await call('save', 'vorlagen', { ...v, id: r!.id });
               reload();
             }}>{anders.length} Muster aktualisieren</button>}

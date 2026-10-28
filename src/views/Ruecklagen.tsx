@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { call, datum, diesesJahr, euro, fehler, heute, parseCent, type Row } from '../api';
 import { useLoad } from '../useLoad';
 import { Zeitraum } from '../ui';
+import { bestaetigen } from '../frage';
 
 export function Ruecklagen(props: { objekt: Row }) {
   const [von, setVon] = useState(`${diesesJahr()}-01-01`);
@@ -72,7 +73,7 @@ export function Ruecklagen(props: { objekt: Row }) {
         <div className="buttons">
           {ergebnis && <span className="meldung">{ergebnis.length} Forderungen gebucht: {ergebnis.map((e) => `${e.name} ${euro(e.betrag_ct)}`).join(', ')}</span>}
           <span className="spacer" />
-          <button className="primary" disabled={!parseCent(su.betrag)} onClick={() => confirm('Sonderumlage als Forderung auf die Eigentümerkonten buchen?') && sonderumlage()}>Sonderumlage buchen</button>
+          <button className="primary" disabled={!parseCent(su.betrag)} onClick={async () => await bestaetigen('Sonderumlage als Forderung auf die Eigentümerkonten buchen?') && sonderumlage()}>Sonderumlage buchen</button>
         </div>
       </div>
     </section>

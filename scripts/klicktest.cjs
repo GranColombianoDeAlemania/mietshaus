@@ -71,7 +71,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('mailTesten', () => 'ok');
   ipcMain.handle('mailAbrufen', () => ({ neu: 0 }));
   ipcMain.handle('claudeStatus', () => ({ datei: '-', installiert: true, verbunden: false, eintrag: {} }));
-  ipcMain.handle('info', () => ({ dbFile: ':memory:', dokumente: docs, version: app.getVersion() }));
+  ipcMain.handle('info', () => ({ dbFile: ':memory:', dokumente: docs, version: app.getVersion(), sicherungen: '-', geraet: 'Test', stand: { zeit: null, geraet_name: null }, letzte_auto_sicherung: null }));
 
   const win = new BrowserWindow({ width: 1300, height: 860, show: false,
     webPreferences: { preload: path.join(__dirname, '..', 'electron', 'preload.cjs'), contextIsolation: true, sandbox: true, offscreen: true } });
@@ -83,7 +83,8 @@ app.whenReady().then(async () => {
   await win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const js = (s) => win.webContents.executeJavaScript(s).catch((e) => { meldeFehler('Skript:', s.slice(0, 120), e.message); return null; });
-  const stubs = `window.confirm = () => true; window.alert = (m) => console.log('ALERT: ' + m); window.prompt = () => null; true`;
+  const stubs = `window.confirm = () => true; window.alert = (m) => console.log('ALERT: ' + m); window.prompt = () => null;
+    window.hvTest = { bestaetigen: () => true, hinweis: (m) => console.log('ALERT: ' + m) }; true`;
   await js(`localStorage.clear(); localStorage.setItem('thema', 'hell')`);
   await win.reload(); await wait(800); await js(stubs);
   const zu = async (ziel) => { await js(`window.dispatchEvent(new CustomEvent('hv-zu', { detail: ${JSON.stringify(ziel)} }))`); await wait(500); };

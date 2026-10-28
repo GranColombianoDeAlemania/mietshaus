@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { call, datum, diesesJahr, fehler, personName, type Row } from '../api';
 import { useLoad } from '../useLoad';
 import { Zeitraum } from '../ui';
+import { hinweis } from '../frage';
 
 // Semicolon CSV with UTF-8 BOM so Excel and Numbers open umlauts correctly.
 const csv = (kopf: string[], zeilen: (string | number | null | undefined)[][]) =>
@@ -27,7 +28,7 @@ export function Export(props: { objekt: Row }) {
 
   const exporte: [string, string, () => Promise<void>][] = [
     ['DATEV-Buchungsstapel', 'Alle Buchungen des Zeitraums im DATEV-Format (EXTF) für den Steuerberater.', async () => {
-      if (!einst?.datev_berater || !einst?.datev_mandant) return alert('Bitte zuerst DATEV Berater- und Mandantennummer unter Einstellungen eintragen.');
+      if (!einst?.datev_berater || !einst?.datev_mandant) return hinweis('Bitte zuerst DATEV Berater- und Mandantennummer unter Einstellungen eintragen.');
       const inhalt = await call('datevExport', o.id, von, bis, einst.datev_berater, einst.datev_mandant, `${von.slice(0, 4)}-${o.wj_beginn ?? '01-01'}`);
       const p = await window.hv.speichern(inhalt, `EXTF_Buchungsstapel_${o.bezeichnung}_${von.slice(0, 4)}.csv`.replace(/\s+/g, '_'), { name: 'DATEV', extensions: ['csv'] });
       if (p) setMeldung(`Gespeichert: ${p}`);

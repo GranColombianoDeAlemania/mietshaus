@@ -2,6 +2,7 @@
 import { call, fehler, type Row } from './api';
 import { aktionSetzen } from './aktion';
 import type { Ziel } from './navi';
+import { bestaetigen } from './frage';
 
 type Navi = { zu: (z: Ziel) => void };
 type Eintrag = { id: string; label: string; enabled?: boolean } | '-';
@@ -135,7 +136,7 @@ export async function kontextmenue(key: string, navi: Navi, melden: (t: string) 
       case 'buchung:soll': return navi.zu({ konto: i.soll_id });
       case 'buchung:haben': return navi.zu({ konto: i.haben_id });
       case 'buchung:storno':
-        if (!confirm('Buchung stornieren (Gegenbuchung mit heutigem Datum)?')) return;
+        if (!await bestaetigen('Buchung stornieren (Gegenbuchung mit heutigem Datum)?')) return;
         await call('buchungStornieren', i.buchung_id);
         return melden('Buchung storniert.');
       case 'dokument:oeffnen': return navi.zu({ dokument: i.dokument_id, datei: i.datei });

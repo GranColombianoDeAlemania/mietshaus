@@ -74,7 +74,7 @@ ipcMain.handle('pdf', async (_e, html, name) => {
 ipcMain.handle('mailTesten', () => 'ok');
 ipcMain.handle('kontextmenue', () => null);
 ipcMain.handle('claudeStatus', () => ({ datei: '-', installiert: true, verbunden: false, eintrag: {} }));
-ipcMain.handle('info', () => ({ dbFile: ':memory:', dokumente: '-', version: app.getVersion() }));
+ipcMain.handle('info', () => ({ dbFile: ':memory:', dokumente: '-', version: app.getVersion(), sicherungen: '-', geraet: 'Test', stand: { zeit: null, geraet_name: null }, letzte_auto_sicherung: null }));
 app.commandLine.appendSwitch('lang', 'de-DE');
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -131,6 +131,10 @@ app.whenReady().then(async () => {
   await js(`document.querySelector('.objektwahl select').value='${o}'; document.querySelector('.objektwahl select').dispatchEvent(new Event('change',{bubbles:true}))`);
   await click('Buchungen'); await shot('2-buchungen');
   await click('Neue Buchung'); await shot('3-buchungsmaske');
+  // Account search: type part of a name into the second account field.
+  await js(`(() => { const i = document.querySelectorAll('.kontowahl input')[1]; i.focus(); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+    set.call(i, 'meier'); i.dispatchEvent(new Event('input', { bubbles: true })); })()`); await wait(200); await shot('3b-kontosuche');
+  await js(`document.activeElement?.blur()`);
   await click('Konten'); await shot('4-konten');
   await click('Sollstellung'); await shot('5-sollstellung');
   await click('Offene Posten'); await shot('6-op'); await click('Details'); await wait(400); await shot('6b-op-details'); await click('Schließen');

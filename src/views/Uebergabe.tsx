@@ -9,6 +9,7 @@ import { absenderAus, alsPdfAblegen, bericht, brief, esc, tabelle, absaetze, als
 import { dokUrl } from './Archiv';
 import { ZAEHLER_ARTEN } from './Zaehler';
 import { sollNachfrage } from './Sollstellung';
+import { bestaetigen, hinweis } from '../frage';
 
 const ZUSTAENDE: [string, string][] = [['gut', 'in Ordnung'], ['gebraucht', 'normale Abnutzung'], ['maengel', 'Mängel']];
 
@@ -76,7 +77,7 @@ export function UebergabeEditor(props: { id: number; onClose: () => void }) {
   }
 
   async function abschliessen() {
-    if (!u!.unterschrift_mieter && !confirm('Es fehlt die Unterschrift des Mieters. Trotzdem abschließen?')) return;
+    if (!u!.unterschrift_mieter && !await bestaetigen('Es fehlt die Unterschrift des Mieters. Trotzdem abschließen?')) return;
     try {
       await call('uebergabeSpeichern', u);
       const d = await alsPdfAblegen([html()], `${u!.art === 'einzug' ? 'Einzugs' : 'Auszugs'}protokoll ${u!.einheit.bezeichnung} ${u!.datum}`,
@@ -233,7 +234,7 @@ function Mieterwechsel(props: { vertragId: number; objekt: Row; onClose: () => v
 
   async function kuendigungSpeichern() {
     const ende = w!.ende_neu ?? (w!.kuendigung_durch === 'mieter' ? await call('mieterKuendigungsende', w!.kuendigung_eingang) : v.ende);
-    if (!ende) return alert('Bitte das Vertragsende angeben.');
+    if (!ende) return hinweis('Bitte das Vertragsende angeben.');
     await call('save', 'mietverhaeltnisse', { id: v.id, ende });
     await sollNachfrage('miete', v.id);
     await call('mieterwechselSpeichern', props.vertragId, { ...w, schritte: { ...w!.schritte, kuendigung: heute() } });

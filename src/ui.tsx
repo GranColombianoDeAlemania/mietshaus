@@ -1,7 +1,12 @@
 // Small shared UI pieces.
-import type { ReactNode } from 'react';
+import { Component, useEffect, useRef, useState, type ReactNode } from 'react';
 import { KLASSEN, kontoLabel, type Row } from './api';
 
+// Folds case and umlauts, so "uberw" finds "Überweisung".
+const falten = (t: string) => t.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/ß/g, 'ss');
+
+// Account picker with search: type a number or part of the name, choose with the arrow keys and Enter (or the mouse).
+// Long charts of accounts made a plain select slow to use.
 export function KontoSelect(props: {
   konten: Row[];
   value: number | '' | null;
@@ -9,19 +14,62 @@ export function KontoSelect(props: {
   klassen?: string[];
   leer?: string;
 }) {
+  const [suche, setSuche] = useState<string | null>(null);
+  const [markiert, setMarkiert] = useState(0);
+  const liste = useRef<HTMLDivElement>(null);
   const gruppen = Object.keys(KLASSEN).filter((k) => !props.klassen || props.klassen.includes(k));
+  const aktiv = props.konten.filter((k) => !k.inaktiv && gruppen.includes(k.klasse));
+  const gewaehlt = props.konten.find((k) => k.id === props.value);
+  const worte = falten(suche ?? '').split(/\s+/).filter(Boolean);
+  const treffer = gruppen.flatMap((g) => aktiv.filter((k) => k.klasse === g)
+    .filter((k) => worte.every((w) => falten(`${k.nr ?? ''} ${kontoLabel(k)}`).includes(w))));
+  const offen = suche !== null;
+
+  useEffect(() => { liste.current?.querySelector('.markiert')?.scrollIntoView({ block: 'nearest' }); }, [markiert, offen]);
+
+  const waehlen = (k: Row | null) => {
+    props.onChange(k ? k.id : '');
+    setSuche(null);
+  };
+  const taste = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (!offen) { setSuche(''); setMarkiert(0); return; }
+      setMarkiert((m) => Math.max(0, Math.min(treffer.length - 1, m + (e.key === 'ArrowDown' ? 1 : -1))));
+    } else if (e.key === 'Enter' && offen) {
+      e.preventDefault();
+      if (treffer[markiert]) waehlen(treffer[markiert]);
+    } else if (e.key === 'Escape' && offen) {
+      e.preventDefault();
+      setSuche(null);
+    }
+  };
+
+  let letzteGruppe = '';
   return (
-    <select value={props.value ?? ''} onChange={(e) => props.onChange(e.target.value ? Number(e.target.value) : '')}>
-      <option value="">{props.leer ?? '– Konto wählen –'}</option>
-      {gruppen.map((g) => {
-        const ks = props.konten.filter((k) => k.klasse === g && !k.inaktiv);
-        return ks.length ? (
-          <optgroup key={g} label={KLASSEN[g]}>
-            {ks.map((k) => <option key={k.id} value={k.id}>{kontoLabel(k)}</option>)}
-          </optgroup>
-        ) : null;
-      })}
-    </select>
+    <div className="kontowahl">
+      <input value={offen ? suche : gewaehlt ? kontoLabel(gewaehlt) : ''} placeholder={props.leer ?? '– Konto wählen –'}
+        role="combobox" aria-expanded={offen} aria-autocomplete="list" title={gewaehlt ? kontoLabel(gewaehlt) : undefined}
+        onFocus={(e) => { setSuche(''); setMarkiert(Math.max(0, treffer.findIndex((k) => k.id === props.value))); e.currentTarget.select(); }}
+        onChange={(e) => { setSuche(e.target.value); setMarkiert(0); }}
+        onBlur={() => setSuche(null)} onKeyDown={taste} />
+      {offen && (
+        <div className="kontowahl-liste" ref={liste} role="listbox" onMouseDown={(e) => e.preventDefault()}>
+          {props.value !== '' && props.value != null && !suche && <div className="option leer" onClick={() => waehlen(null)}>{props.leer ?? '– kein Konto –'}</div>}
+          {treffer.length === 0 && <div className="option leer">Kein Konto passt zu „{suche}“.</div>}
+          {treffer.map((k, i) => {
+            const kopf = k.klasse !== letzteGruppe ? (letzteGruppe = k.klasse) : null;
+            return (
+              <div key={k.id}>
+                {kopf && <div className="gruppe">{KLASSEN[kopf]}</div>}
+                <div role="option" aria-selected={k.id === props.value} className={`option${i === markiert ? ' markiert' : ''}${k.id === props.value ? ' gewaehlt' : ''}`}
+                  onMouseEnter={() => setMarkiert(i)} onClick={() => waehlen(k)}>{kontoLabel(k)}</div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -147,4 +195,25 @@ export function SortTh(props: { k: string; s: Sortierung; set: (s: Sortierung) =
       {props.children}<span className="pfeil">{aktiv ? (props.s!.ab ? '▾' : '▴') : ''}</span>
     </th>
   );
+}
+
+// Keeps an error on one page from blanking the whole window: the page shows the error, sidebar and navigation keep
+// working. Keyed by the page, so going elsewhere starts afresh.
+export class Fehlergrenze extends Component<{ children: ReactNode }, { fehler: Error | null }> {
+  state = { fehler: null as Error | null };
+  static getDerivedStateFromError(fehler: Error) { return { fehler }; }
+  componentDidCatch(fehler: Error) { console.error('Seite abgestürzt', fehler); }
+  render() {
+    if (!this.state.fehler) return this.props.children;
+    return (
+      <div className="leer ablagezone">
+        <p><b>Diese Seite konnte nicht angezeigt werden.</b></p>
+        <p className="hinweis">{String(this.state.fehler.message ?? this.state.fehler)}</p>
+        <div className="buttons" style={{ justifyContent: 'center' }}>
+          <button onClick={() => this.setState({ fehler: null })}>Erneut versuchen</button>
+          <button onClick={() => location.reload()}>Programm neu laden</button>
+        </div>
+      </div>
+    );
+  }
 }

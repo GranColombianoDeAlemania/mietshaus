@@ -5,6 +5,7 @@ import { L } from '../navi';
 import { absenderAus, alsPdf, empfaengerVon } from '../dokument';
 import { wegEinzel, wegGesamt } from '../abrechnungDocs';
 import { Gespeichert } from './NkAbrechnung';
+import { bestaetigen } from '../frage';
 
 // Annual statement for the owners' association with individual statements, reserve and asset report.
 export function WegAbrechnung(props: { objekt: Row }) {
@@ -113,7 +114,7 @@ export function WegAbrechnung(props: { objekt: Row }) {
             {meldung && <span className="meldung">{meldung}</span>}
             <button onClick={pdfs}>Abrechnung als PDF</button>
             <button onClick={() => speichern(false)}>Speichern</button>
-            <button className="primary" onClick={() => confirm('Abrechnungsspitzen auf die Eigentümerkonten buchen? Erst nach Beschluss der Eigentümerversammlung sinnvoll.') && speichern(true)}>Speichern & buchen</button>
+            <button className="primary" onClick={async () => await bestaetigen('Abrechnungsspitzen auf die Eigentümerkonten buchen? Erst nach Beschluss der Eigentümerversammlung sinnvoll.') && speichern(true)}>Speichern & buchen</button>
           </div>
         </>
       )}

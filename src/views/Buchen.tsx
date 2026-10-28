@@ -4,6 +4,7 @@ import { useLoad } from '../useLoad';
 import { Dialog, KontoSelect, Tabs, Zeitraum } from '../ui';
 import { useAktion } from '../aktion';
 import { L } from '../navi';
+import { bestaetigen } from '../frage';
 
 type Art = 'einnahme' | 'ausgabe' | 'frei';
 type Pos = { gegen_id: number | ''; soll_id: number | ''; haben_id: number | ''; betrag: string; text: string; ust: '' | '19' | '7' };
@@ -66,7 +67,7 @@ export function Buchen(props: { objekt: Row }) {
                 )}
                 {!b.storniert && b.art !== 'storno' && (
                   <button title="Gegenbuchung mit heutigem Datum – die ursprüngliche Buchung bleibt sichtbar" onClick={async () => {
-                    if (!confirm('Buchung stornieren (Gegenbuchung mit heutigem Datum)?')) return;
+                    if (!await bestaetigen('Buchung stornieren (Gegenbuchung mit heutigem Datum)?')) return;
                     try { await call('buchungStornieren', b.id); } catch (e) { fehler(e); }
                     reload();
                     ladeKonten();
@@ -74,7 +75,7 @@ export function Buchen(props: { objekt: Row }) {
                 )}
                 {!b.festgeschrieben && (
                   <button title={b.gruppe ? 'Löscht die ganze Splitbuchung' : ''} onClick={async () => {
-                    if (!confirm(b.gruppe ? 'Ganze Splitbuchung löschen?' : 'Buchung löschen?')) return;
+                    if (!await bestaetigen(b.gruppe ? 'Ganze Splitbuchung löschen?' : 'Buchung löschen?')) return;
                     try { await call('buchungLoeschen', b.id); } catch (e) { fehler(e); }
                     reload();
                     ladeKonten();

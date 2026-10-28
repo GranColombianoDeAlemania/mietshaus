@@ -1,3 +1,4 @@
+import { hinweis } from './frage';
 export type Modus = 'miete' | 'weg' | 'projekt';
 export type Row = Record<string, any>;
 
@@ -125,4 +126,4 @@ export const kontoLabel = (k: Row) => `${k.nr} ${k.bezeichnung}`;
 
 export const fehlerText = (e: any) => String(e?.message ?? e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
 
-export const fehler = (e: any) => alert(fehlerText(e));
+export const fehler = (e: any) => hinweis(fehlerText(e), 'Fehler');

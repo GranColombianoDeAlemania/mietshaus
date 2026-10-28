@@ -9,6 +9,7 @@ import { FormDialog, type Field } from '../Form';
 import { AnpassungBrief } from './Mietbriefe';
 import { sollNachfrage } from './Sollstellung';
 import { absaetze, absenderAus, alsPdf, brief, esc, tabelle, empfaengerVon } from '../dokument';
+import { hinweis } from '../frage';
 
 const KAUTION_ARTEN: [string, string][] = [['konto', 'Kautionskonto (Sparbuch)'], ['bar', 'Barkaution'], ['buergschaft', 'Bankbürgschaft'], ['verpfaendung', 'Verpfändetes Konto']];
 const BEWEGUNGEN: [string, string][] = [['einzahlung', 'Einzahlung'], ['zinsen', 'Zinsen'], ['verrechnung', 'Verrechnung mit Forderungen'], ['auszahlung', 'Auszahlung an Mieter']];
@@ -80,7 +81,7 @@ function KautionDetail(props: { k: Row; objekt: Row; onClose: () => void }) {
       {k?.zinssatz ? <button onClick={async () => {
         const z = await call('kautionZinsVorschlag', props.k.kaution_id, heute());
         if (z > 0) setEdit({ kaution_id: props.k.kaution_id, datum: heute(), art: 'zinsen', betrag_ct: z, text: `Zinsen ${zahl(k.zinssatz)} %` });
-        else alert('Keine Zinsen seit der letzten Buchung.');
+        else hinweis('Keine Zinsen seit der letzten Buchung.');
       }}>Zinsen bis heute berechnen</button> : null}
       {edit && <FormDialog title="Kautionsbewegung" row={edit} fields={[
         { key: 'datum', label: 'Datum', type: 'date', required: true }, { key: 'art', label: 'Vorgang', type: 'select', required: true, options: BEWEGUNGEN },

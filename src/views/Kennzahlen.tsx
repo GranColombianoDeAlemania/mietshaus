@@ -27,6 +27,8 @@ const aenderung = (x: number | null | undefined, gut: boolean) => x == null ? nu
 export function CockpitKpis(props: { c: Row; weg: boolean }) {
   const { eingang: e, vermietung: v, rueckstaende: r, vergleich: j } = props.c;
   const monat = MONAT_LANG[Number(e.monat.slice(5, 7)) - 1];
+  // Vacant units without a known rent cost nothing in the figures, but they are still vacant.
+  const ohnePreis = (v?.luecken ?? []).filter((l: Row) => l.tage > 0 && !l.ct);
   return (
     <div className="kz-raster">
       <Kennzahl titel={`${props.weg ? 'Hausgeld' : 'Mieteingang'} ${monat}`} breite={props.weg ? 4 : 3} fuss={<Weiter zu={{ seite: 'op' }}>Offene Posten</Weiter>}>
@@ -48,7 +50,9 @@ export function CockpitKpis(props: { c: Row; weg: boolean }) {
           </RingZeile>
           <div className="kz-text">{v.leerstand_ct > 0
             ? <>Leerstand kostete <b>{euro0(v.leerstand_ct)}</b> Kaltmiete ({v.luecken.filter((l: Row) => l.monate).slice(0, 2).map((l: Row) => `${l.einheit}, ${monateText(l.monate)} ohne Miete`).join('; ')}).</>
-            : 'Kein Leerstand in den letzten 12 Monaten.'}{v.selbst ? ' Selbst genutzt zählt nicht als Leerstand.' : ''}</div>
+            : ohnePreis.length
+              ? <>Leer: {ohnePreis.slice(0, 2).map((l: Row) => `${l.einheit} (${l.monate ? monateText(l.monate) : `${l.tage} Tage`})`).join(', ')}{ohnePreis.length > 2 ? ` und ${ohnePreis.length - 2} weitere` : ''} – Mietausfall unbekannt, weil keine Vergleichsmiete eingetragen ist.</>
+              : 'Kein Leerstand in den letzten 12 Monaten.'}{v.selbst ? ' Selbst genutzt zählt nicht als Leerstand.' : ''}</div>
         </Kennzahl>
       )}
       <Kennzahl titel="Rückstände nach Alter" breite={props.weg ? 4 : 3} fuss={r.summe_ct > 0 ? <Weiter zu={{ seite: 'op' }}>Offene Posten</Weiter> : undefined}>

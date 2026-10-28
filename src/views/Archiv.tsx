@@ -5,6 +5,7 @@ import { useLoad } from '../useLoad';
 import { KontoSelect, Leer } from '../ui';
 import { L } from '../navi';
 import { painUeberweisung } from '../bankformate';
+import { bestaetigen, hinweis } from '../frage';
 
 const istBild = (datei: string) => /\.(png|jpe?g|gif|webp|bmp|tiff?)$/i.test(datei);
 export const dokUrl = (datei: string) => `hvdok://dokument/${encodeURIComponent(datei)}`;
@@ -145,7 +146,7 @@ function DokumentFormular(props: { id: number; onFertig: () => void; postfach?: 
       )}
       {buchen && f.objekt_id && <Belegbuchung dok={{ ...d, ...f, betrag_ct: parseCent(f.betrag) }} onFertig={async (bid) => { await call('dokumentSpeichern', { id: d.id, buchung_id: bid }); setBuchen(false); await speichern('abgelegt'); ladeD(); }} onAbbruch={() => setBuchen(false)} />}
       <div className="buttons">
-        <button className="danger" onClick={async () => { if (confirm('Dokument und Datei löschen?')) { await window.hv.dokumentLoeschen(d.id); props.onFertig(); } }}>Löschen</button>
+        <button className="danger" onClick={async () => { if (await bestaetigen('Dokument und Datei löschen?')) { await window.hv.dokumentLoeschen(d.id); props.onFertig(); } }}>Löschen</button>
         <button onClick={async () => { await window.hv.neuAnalysieren(d.id); ladeD(); }} title="Text erneut lesen">Neu lesen</button>
         <button onClick={() => window.hv.dokumentOeffnen(d.datei)}>Öffnen</button>
         <span className="spacer" />
@@ -227,7 +228,11 @@ export function Postfach() {
         einzeln rechts, oder mehrere links anhaken und gemeinsam zuordnen. Alternativ in Claude Desktop: „Arbeite das Postfach im Mietshaus ab“.
       </p>
       {liste && !liste.length ? (
-        <div className="leer"><p>Das Postfach ist leer.</p></div>
+        <div className="leer ablagezone">
+          <p><b>Das Postfach ist leer.</b></p>
+          <p className="hinweis">Rechnungen, Bescheide und Scans einfach hierher ziehen – oder einen Eingangsordner bzw. ein E-Mail-Postfach
+            unter Einstellungen → Dokumenteneingang verbinden, dann landen neue Dokumente von selbst hier.</p>
+        </div>
       ) : (
         <>
           {gewaehlt.length > 0 && <Stapel dokumente={gewaehlt} onFertig={() => { setAuswahl({}); reload(); }} />}
@@ -384,7 +389,7 @@ export function Rechnungen(props: { objekt?: Row }) {
 
   async function sepa() {
     const o = props.objekt;
-    if (!o?.iban) return alert('Für Überweisungen bitte im Objekt die IBAN des Objektkontos hinterlegen.');
+    if (!o?.iban) return hinweis('Für Überweisungen bitte im Objekt die IBAN des Objektkontos hinterlegen.');
     const xml = painUeberweisung({ auftraggeber: o.bezeichnung, iban: o.iban, bic: o.bic, ausfuehrung: heute(),
       posten: fuerSepa.map((r) => ({ name: r.absender ?? 'Empfänger', iban: r.iban, betrag_ct: r.betrag_ct, zweck: `Rechnung ${r.rechnungsnr ?? r.titel}`, e2e: `RE-${r.id}` })) });
     await window.hv.speichern(xml, `Ueberweisungen ${o.bezeichnung} ${heute()}.xml`, { name: 'SEPA-XML', extensions: ['xml'] });

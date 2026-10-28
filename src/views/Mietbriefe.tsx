@@ -128,8 +128,12 @@ export function AnpassungBrief(props: { v: Row; a: Row; objekt: Row; anpassungen
       punkte.push({ ok: passt, text: `${euro(alt.kaltmiete_ct)} × ${komma(n, 1)} / ${komma(b, 1)} = ${euro(index.neu_ct)}${passt ? '' : ` – eingetragen sind ${euro(a.kaltmiete_ct)}`}.`,
         aktion: !passt && <button onClick={() => betragSetzen(index!.neu_ct)}>{euro(index.neu_ct)} übernehmen</button> });
     }
-    punkte.push({ ok: a.gueltig_ab >= ab, hart: true, text: `Bei Zugang am ${datum(zugang)} gilt die neue Miete ab ${datum(ab)} (Beginn des übernächsten Monats, § 557b Abs. 3 BGB).`, aktion: a.gueltig_ab < ab && knopfAb([ab, jahr].sort().pop()!) });
-    punkte.push({ ok: a.gueltig_ab >= jahr, hart: true, text: `Miete unverändert seit ${datum(seit)}: mindestens ein Jahr nötig, also frühestens ab ${datum(jahr)} (§ 557b Abs. 2 BGB).`, aktion: a.gueltig_ab < jahr && knopfAb([ab, jahr].sort().pop()!) });
+    // One date: the later of the two rules is the one that counts.
+    const frueh = [ab, jahr].sort().pop()!;
+    const grund = jahr > ab
+      ? `die Miete ist seit ${datum(seit)} unverändert und muss ein Jahr gelten (§ 557b Abs. 2 BGB); Zugang am ${datum(zugang)} allein erlaubte ${datum(ab)}`
+      : `Beginn des übernächsten Monats nach Zugang am ${datum(zugang)} (§ 557b Abs. 3 BGB); die Miete ist seit ${datum(seit)} unverändert, ein Jahr ist dann erreicht`;
+    punkte.push({ ok: a.gueltig_ab >= frueh, hart: true, text: `Die neue Miete gilt frühestens ab ${datum(frueh)}: ${grund}.`, aktion: a.gueltig_ab < frueh && knopfAb(frueh) });
   }
   if (art === 'staffel') {
     const jahr = abMonatNach(seit, 12);

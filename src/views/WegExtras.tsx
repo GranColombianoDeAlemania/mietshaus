@@ -7,6 +7,7 @@ import { Liste } from '../Liste';
 import { Dialog } from '../ui';
 import { FormDialog, type Field } from '../Form';
 import { absaetze, absenderAus, alsPdf, bericht, brief, esc, tabelle } from '../dokument';
+import { hinweis } from '../frage';
 
 const ABSTIMMUNG: [string, string][] = [['kopf', 'nach Köpfen (§ 25 WEG)'], ['mea', 'nach Miteigentumsanteilen'], ['objekt', 'nach Einheiten']];
 
@@ -107,7 +108,7 @@ function Abstimmung(props: { top: Row; objekt: Row; datum: string; onClose: () =
     try {
       await call('save', 'tops', { id: props.top.id, abstimmungsart: art, ja: summe('ja'), nein: summe('nein'), enthaltung: summe('enthaltung') });
       const ergebnis = await call('topBeschliessen', props.top.id);
-      alert(`Beschluss ${ergebnis} und in die Beschlusssammlung eingetragen.`);
+      hinweis(`Beschluss ${ergebnis} und in die Beschlusssammlung eingetragen.`);
       props.onClose();
     } catch (e) {
       fehler(e);

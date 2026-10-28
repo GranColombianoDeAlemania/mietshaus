@@ -59,7 +59,7 @@ db.save('termine', { titel: 'Wohnungsübergabe EG rechts', datum: new Date(Date.
 
 ipcMain.handle('db', (_e, fn, args) => db[fn](...args));
 ipcMain.handle('kontextmenue', () => null);
-ipcMain.handle('info', () => ({ dbFile: ':memory:', dokumente: '-', version: app.getVersion() }));
+ipcMain.handle('info', () => ({ dbFile: ':memory:', dokumente: '-', version: app.getVersion(), sicherungen: '-', geraet: 'Test', stand: { zeit: null, geraet_name: null }, letzte_auto_sicherung: null }));
 ipcMain.handle('claudeStatus', () => ({ datei: '-', installiert: true, verbunden: false, eintrag: {} }));
 app.commandLine.appendSwitch('lang', 'de-DE');
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));

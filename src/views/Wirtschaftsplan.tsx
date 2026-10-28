@@ -5,6 +5,7 @@ import { L } from '../navi';
 import { absenderAus, alsPdf, bericht, esc, tabelle, empfaengerVon } from '../dokument';
 import { wiplEinzel } from '../abrechnungDocs';
 import { Gespeichert } from './NkAbrechnung';
+import { bestaetigen } from '../frage';
 
 const cent2 = (ct: number) => (ct / 100).toFixed(2).replace('.', ',');
 
@@ -104,7 +105,7 @@ export function Wirtschaftsplan(props: { objekt: Row }) {
             <span className="spacer" />
             {meldung && <span className="meldung">{meldung}</span>}
             <button onClick={pdf}>Als PDF</button>
-            <button className="primary" onClick={() => confirm('Neues Hausgeld für alle Eigentümer hinterlegen? Erst nach Beschluss sinnvoll.') && uebernehmen()}>Hausgeld übernehmen</button>
+            <button className="primary" onClick={async () => await bestaetigen('Neues Hausgeld für alle Eigentümer hinterlegen? Erst nach Beschluss sinnvoll.') && uebernehmen()}>Hausgeld übernehmen</button>
           </div>
         </div>
       )}

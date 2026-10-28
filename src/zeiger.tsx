@@ -32,7 +32,8 @@ export function Ring(props: { wert: number | null; max?: number; zonen?: Zonen; 
       <circle cx={c} cy={c} r={r} fill="none" style={{ stroke: 'var(--raster)' }} strokeWidth={sw} />
       {anteil > 0 && <circle cx={c} cy={c} r={r} fill="none" style={{ stroke: farbe }} strokeWidth={sw} strokeLinecap="round"
         strokeDasharray={`${(u * anteil).toFixed(2)} ${u.toFixed(2)}`} transform={`rotate(-90 ${c} ${c})`} />}
-      {!props.klein && <text x={c} y={c + 4.5} textAnchor="middle" className="ring-text">{text}</text>}
+      {/* Longer labels such as "88,3 %" get a smaller size, so they stay inside the ring. */}
+      {!props.klein && <text x={c} y={c + 4.5} textAnchor="middle" className="ring-text" style={text.length > 5 ? { fontSize: 11 } : text.length > 4 ? { fontSize: 12 } : undefined}>{text}</text>}
     </svg>
   );
 }

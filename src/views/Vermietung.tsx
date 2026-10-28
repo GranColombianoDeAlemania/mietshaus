@@ -8,6 +8,7 @@ import { FormDialog, type Field } from '../Form';
 import { absenderAus, alsPdf, bericht, esc, tabelle } from '../dokument';
 import { dokUrl } from './Archiv';
 import { sollNachfrage } from './Sollstellung';
+import { bestaetigen } from '../frage';
 
 const SPALTEN: [string, string][] = [['neu', 'Neu'], ['besichtigung', 'Besichtigung'], ['auskunft', 'Unterlagen da'], ['favorit', 'Favorit'], ['absage', 'Abgesagt']];
 const cent2 = (ct?: number | null) => (ct == null ? '' : (ct / 100).toFixed(2).replace('.', ','));
@@ -165,7 +166,7 @@ function EinheitVermietung(props: { einheit: Row; objekt: Row; reload: () => voi
               const neu = await call('zusage', zusage.id, zusage.beginn);
               setZusage(null); reload(); props.reload();
               await sollNachfrage('miete', neu.vertrag_id, { fruehereMonate: true });
-              if (confirm(`Mieter und Mietverhältnis sind angelegt; die übrigen Interessenten stehen auf „Abgesagt“.${neu.folgemonat
+              if (await bestaetigen(`Mieter und Mietverhältnis sind angelegt; die übrigen Interessenten stehen auf „Abgesagt“.${neu.folgemonat
                 ? ` Die Miete wird erst ab dem Folgemonat gefordert, weil ${neu.folgemonat.name} den Auszugsmonat noch voll zahlt.` : ''} Jetzt zur Einzugsübergabe?`)) props.oeffne('uebergabe');
             } catch (err) { fehler(err); }
           }}>Mieter anlegen</button>}>

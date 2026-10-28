@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import { parseZahl, type Row } from './api';
+import { bestaetigen } from './frage';
 
 export type Field = {
   key: string;
@@ -125,7 +126,7 @@ export function FormDialog(props: {
         {fehler && <p className="fehler">{fehler}</p>}
         <div className="buttons">
           {props.onDelete && props.row.id && (
-            <button type="button" className="danger" onClick={() => confirm('Wirklich löschen?') && run(props.onDelete!)}>
+            <button type="button" className="danger" onClick={async () => await bestaetigen('Wirklich löschen?') && run(props.onDelete!)}>
               Löschen
             </button>
           )}

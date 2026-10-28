@@ -6,6 +6,7 @@ import { KontoSelect, Leer, Tabs } from '../ui';
 import { alsPdf, bericht, dokument, esc, tabelle } from '../dokument';
 import { L, useNavi } from '../navi';
 import { euro0, Kennzahl, prozent as prozentKz, Ring, RingZeile, type Zonen } from '../zeiger';
+import { bestaetigen } from '../frage';
 
 const ZONEN_RENDITE: Zonen = [[2.499, 'rot'], [3.499, 'gelb'], [100, 'gruen']];
 
@@ -190,7 +191,7 @@ function SteuerWaechter(props: { objekt: Row }) {
               <tbody>{verteilungen.map((v) => (
                 <tr key={v.id}><td>{v.jahr}</td><td className="klein">{v.text}</td><td className="num">{euro(v.betrag_ct)}</td><td className="num">{v.jahre}</td>
                   <td className="num">{euro(Math.floor(v.betrag_ct / v.jahre))}</td>
-                  <td className="aktionen"><button onClick={async () => { if (confirm('Verteilung löschen?')) { await call('remove', 'erhaltungsverteilung', v.id); ladeV(); } }}>Löschen</button></td></tr>
+                  <td className="aktionen"><button onClick={async () => { if (await bestaetigen('Verteilung löschen?')) { await call('remove', 'erhaltungsverteilung', v.id); ladeV(); } }}>Löschen</button></td></tr>
               ))}</tbody>
             </table>
           )}

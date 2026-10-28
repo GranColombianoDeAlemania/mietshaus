@@ -6,6 +6,7 @@ import { L, mitLinks } from '../navi';
 import { Tabs } from '../ui';
 import { absenderAus, alsPdf, empfaengerVon } from '../dokument';
 import { nkBrief, nkUebersicht, nurHeizung } from '../abrechnungDocs';
+import { bestaetigen } from '../frage';
 
 const ersterNaechsterMonat = () => {
   const d = new Date();
@@ -54,7 +55,7 @@ export function NkAbrechnung(props: { objekt: Row }) {
 
   async function pdfs() {
     if (!a) return;
-    if (pruefung?.fehler && !confirm(`Die Prüfung hat ${pruefung.fehler} Fehler gefunden. Abrechnungen trotzdem erstellen?`)) return;
+    if (pruefung?.fehler && !await bestaetigen(`Die Prüfung hat ${pruefung.fehler} Fehler gefunden. Abrechnungen trotzdem erstellen?`)) return;
     const vzOffen = Object.fromEntries((pruefung?.punkte ?? []).filter((x: Row) => x.vz_offen_ct).map((x: Row) => [x.vertrag_id, x.vz_offen_ct]));
     const einst = await call('einstellungen');
     const absender = { ...absenderAus(einst), iban: props.objekt.iban || einst.verwalter_iban, bank: props.objekt.bank || einst.verwalter_bank, bic: props.objekt.bic || einst.verwalter_bic };
@@ -193,7 +194,7 @@ export function NkAbrechnung(props: { objekt: Row }) {
             {meldung && <span className="meldung">{meldung}</span>}
             <button onClick={pdfs}>Abrechnungen als PDF</button>
             <button onClick={() => speichernUndBuchen(false)}>Speichern</button>
-            <button className="primary" onClick={() => confirm('Ergebnisse auf die Mieterkonten buchen (Nachzahlung als Forderung, Guthaben als Gutschrift)?') && speichernUndBuchen(true)}>Speichern & buchen</button>
+            <button className="primary" onClick={async () => await bestaetigen('Ergebnisse auf die Mieterkonten buchen (Nachzahlung als Forderung, Guthaben als Gutschrift)?') && speichernUndBuchen(true)}>Speichern & buchen</button>
           </div>
         </>
       )}

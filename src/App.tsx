@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { call, OBJEKT_ART, type Modus, type Row } from './api';
 import { useLoad } from './useLoad';
+import { Fehlergrenze } from './ui';
 import { Uebersicht } from './views/Uebersicht';
 import { Objekte } from './views/Objekte';
 import { Einheiten } from './views/Einheiten';
@@ -349,6 +350,28 @@ export default function App() {
     setZugeklappt(neu);
     schreiben('zugeklappt', JSON.stringify(neu));
   };
+  // Favourites: pages pinned to the top of the sidebar (right-click on an entry).
+  const [favoriten, setFavoriten] = useState<string[]>(() => { try { return JSON.parse(lesen('favoriten') ?? '[]'); } catch { return []; } });
+  const favoritUmschalten = (id: string) => {
+    const neu = favoriten.includes(id) ? favoriten.filter((x) => x !== id) : [...favoriten, id];
+    setFavoriten(neu);
+    schreiben('favoriten', JSON.stringify(neu));
+  };
+  const eintragMenue = async (e: React.MouseEvent, id: string) => {
+    e.preventDefault();
+    const fav = favoriten.includes(id);
+    if (await window.hv.kontextmenue([{ id: 'fav', label: fav ? 'Aus Favoriten entfernen' : 'Zu Favoriten hinzufügen' }]) === 'fav') favoritUmschalten(id);
+  };
+  const gruppeMenue = async (e: React.MouseEvent, g: string) => {
+    e.preventDefault();
+    const w = await window.hv.kontextmenue([{ id: 'andere', label: 'Alle anderen Gruppen einklappen' }, { id: 'alle', label: 'Alle Gruppen aufklappen' }]);
+    if (!w) return;
+    const neu = w === 'alle' ? zugeklappt.filter((x) => x === 'baum') : [...new Set([...zugeklappt.filter((x) => x === 'baum'), ...gruppen.filter((x) => x !== g && x !== 'Start')])];
+    setZugeklappt(neu);
+    schreiben('zugeklappt', JSON.stringify(neu));
+  };
+  const favSeiten = favoriten.map((id) => sichtbar.find((s) => s.id === id)).filter((s): s is Seite => !!s);
+
   // Units of the current house in the sidebar (tree under "Einheiten").
   const [baumEinheiten] = useLoad<Row[]>(() => (objektId && modus !== 'projekt' ? call('einheiten', objektId) : Promise.resolve([])), [objektId, modus]);
   const baumOffen = !zugeklappt.includes('baum');
@@ -419,16 +442,30 @@ export default function App() {
             ))}
           </div>
           <nav>
+            {favSeiten.length > 0 && (
+              <div className="navgruppe favoriten">
+                <h4><button disabled>Favoriten</button></h4>
+                {favSeiten.map((s) => {
+                  const Icon = ICON[s.id] ?? I.Dot;
+                  return (
+                    <button key={s.id} className={`eintrag${markiert === s.id ? ' active' : ''}`} onClick={() => zu({ seite: s.id })} onContextMenu={(e) => eintragMenue(e, s.id)}>
+                      <Icon size={16} strokeWidth={1.9} /><span className="text">{labelVon(s, modus)}</span>
+                      {s.id === 'postfach' && !!postfach && <span className="zaehler">{postfach}</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
             {gruppen.map((g) => {
               const zu_ = zugeklappt.includes(g) && !sichtbar.some((x) => x.gruppe === g && x.id === markiert);
               return (
                 <div key={g} className={`navgruppe${zu_ ? ' zu' : ''}`}>
-                  <h4><button onClick={() => klappen(g)} aria-expanded={!zu_}>{g}<I.ChevronDown size={13} /></button></h4>
+                  <h4><button onClick={() => klappen(g)} onContextMenu={(e) => gruppeMenue(e, g)} aria-expanded={!zu_} title="Klicken zum Ein- oder Ausklappen">{g}<I.ChevronDown size={13} /></button></h4>
                   {!zu_ && sichtbar.filter((s) => s.gruppe === g).map((s) => {
                     const Icon = ICON[s.id] ?? I.Dot;
                     return (
                       <div key={s.id}>
-                        <button className={`eintrag${markiert === s.id ? ' active' : ''}`} onClick={() => zu({ seite: s.id })}>
+                        <button className={`eintrag${markiert === s.id ? ' active' : ''}`} onClick={() => zu({ seite: s.id })} onContextMenu={(e) => eintragMenue(e, s.id)}>
                           <Icon size={16} strokeWidth={1.9} /><span className="text">{labelVon(s, modus)}</span>
                           {s.id === 'postfach' && !!postfach && <span className="zaehler">{postfach}</span>}
                           {s.id === 'einheiten' && !!baumEinheiten?.length && (
@@ -483,7 +520,7 @@ export default function App() {
           </label>
           <button className="rund ring" title="Dokumente ablegen – sie landen zur Prüfung im Postfach" onClick={schnellAblegen}><I.FilePlus2 size={16} /></button>
         </header>
-        <main>{inhalt()}</main>
+        <main><Fehlergrenze key={`${modus}:${seite}:${ort.param ?? ''}:${objektId ?? ''}`}>{inhalt()}</Fehlergrenze></main>
         <footer>{meldung ? <b>{meldung}</b> : objekt ? (modus === 'projekt' ? `Projekt: ${objekt.titel}${objekt.objekt ? ` · ${objekt.objekt}` : ''}` : `${objekt.bezeichnung} · ${OBJEKT_ART[objekt.art]}`) : ''}</footer>
         {ziehen && <div className="dropzone">Dateien loslassen – sie landen im Postfach. Auf eine Person, Einheit oder Buchung ziehen, um sie dort abzulegen.</div>}
         <Vorschaukarte />

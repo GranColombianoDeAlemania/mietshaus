@@ -10,6 +10,7 @@ import { Galerie } from '../Galerie';
 import { L, useNavi } from '../navi';
 import { ROLLEN } from './WegExtras';
 import { Hausansicht } from './Kennzahlen';
+import { bestaetigen } from '../frage';
 
 export function ObjektKacheln(props: { modus: Modus; oeffne: (seite: string, id?: number) => void }) {
   const [liste] = useLoad<Row[]>(() => call('objektKacheln', props.modus), [props.modus]);
@@ -173,7 +174,7 @@ export function Darlehen(props: { objekt: Row }) {
               <td className="num">{d.rest_ist_ct != null ? euro(d.rest_ist_ct) : '–'}</td><td>{datum(d.zinsbindung_bis)}</td>
               <td className="aktionen">
                 <button onClick={async () => setPlan(await call('tilgungsplan', d.id))}>Tilgungsplan</button>
-                <button onClick={async () => { const g = (await call('konten', props.objekt.id, 'geld'))[0]; if (g && confirm(`Auszahlung von ${euro(d.betrag_ct)} auf ${g.bezeichnung} buchen?`)) { await call('darlehenAuszahlungBuchen', d.id, g.id); reload(); } }}>Auszahlung buchen</button>
+                <button onClick={async () => { const g = (await call('konten', props.objekt.id, 'geld'))[0]; if (g && await bestaetigen(`Auszahlung von ${euro(d.betrag_ct)} auf ${g.bezeichnung} buchen?`)) { await call('darlehenAuszahlungBuchen', d.id, g.id); reload(); } }}>Auszahlung buchen</button>
               </td>
             </tr>
           ))}

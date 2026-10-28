@@ -18,6 +18,7 @@ export function Uebersicht(props: { modus: Modus; objekte: Row[]; oeffne: (seite
   const [f] = useLoad<Row>(() => call('faelligkeiten', 7), []);
   const [vorgaenge] = useLoad<Row[]>(() => call('vorgaengeListe', null, true), []);
   const [start, ladeStart] = useLoad<Row>(() => call('ersteSchritte'), []);
+  const [erledigteZeigen, setErledigteZeigen] = useState(false);
   const navi = useNavi();
   const weg = props.modus === 'weg';
   if (!hinweise || !k || !c || !f) return null;
@@ -33,7 +34,9 @@ export function Uebersicht(props: { modus: Modus; objekte: Row[]; oeffne: (seite
 
   return (
     <section className="cockpit">
-      <div className="toolbar"><h1>{weg ? 'WEG-Verwaltung' : 'Mietverwaltung'} – Cockpit</h1></div>
+      <div className="toolbar"><h1>{weg ? 'WEG-Verwaltung' : 'Mietverwaltung'} – Cockpit</h1>
+        {/* The cockpit sums up every house of this mode, whichever object is chosen at the top. */}
+        <span className="hinweis klein">{props.objekte.length === 1 ? '1 Objekt' : `alle ${props.objekte.length} Objekte`}</span></div>
       <p className="kurzlage">
         {handeln.length === 0 ? 'Alles erledigt – nichts braucht gerade deine Aufmerksamkeit.'
           : `${handeln.length} ${handeln.length === 1 ? 'Punkt braucht' : 'Punkte brauchen'} deine Aufmerksamkeit${rot ? `, davon ${rot} dringend` : ''}.`}
@@ -46,7 +49,7 @@ export function Uebersicht(props: { modus: Modus; objekte: Row[]; oeffne: (seite
           <div className="panelkopf"><h3>Erste Schritte</h3>
             <button className="link klein" onClick={async () => { await call('ersteSchritteAusblenden'); ladeStart(); }}>Ausblenden</button></div>
           <ul className="checkliste">
-            {start.schritte.map((x: Row) => (
+            {start.schritte.filter((x: Row) => erledigteZeigen || !x.fertig).map((x: Row) => (
               <li key={x.punkt} className={x.fertig ? 'fertig' : ''}>
                 <span className="haken"><I.Check size={13} strokeWidth={3} /></span>
                 <span className="text">{x.text}</span>
@@ -54,6 +57,11 @@ export function Uebersicht(props: { modus: Modus; objekte: Row[]; oeffne: (seite
               </li>
             ))}
           </ul>
+          {start.schritte.some((x: Row) => x.fertig) && (
+            <button className="link klein" onClick={() => setErledigteZeigen(!erledigteZeigen)}>
+              {erledigteZeigen ? 'Erledigte ausblenden' : `${start.schritte.filter((x: Row) => x.fertig).length} von ${start.schritte.length} erledigt – anzeigen`}
+            </button>
+          )}
         </div>
       )}
 
