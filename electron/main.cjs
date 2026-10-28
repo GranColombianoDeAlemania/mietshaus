@@ -324,8 +324,11 @@ app.whenReady().then(() => {
     lesen: () => {
       const e = db.einstellungen();
       // A password encrypted under the old app name cannot be decrypted any more and has to be entered again.
+      // The same happens when macOS no longer recognises the app after an update (a new ad-hoc signature).
       if (e.mail_passwort_enc && safeStorage.isEncryptionAvailable()) {
-        try { return safeStorage.decryptString(Buffer.from(e.mail_passwort_enc, 'base64')); } catch { return ''; }
+        try { return safeStorage.decryptString(Buffer.from(e.mail_passwort_enc, 'base64')); } catch {
+          throw new Error('Das gespeicherte E-Mail-Passwort lässt sich nicht mehr entschlüsseln (z. B. nach einem Programm-Update). Bitte unter Einstellungen → Dokumenteneingang neu eingeben.');
+        }
       }
       return e.mail_passwort_klar ? Buffer.from(e.mail_passwort_klar, 'base64').toString('utf8') : '';
     },

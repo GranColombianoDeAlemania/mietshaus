@@ -17,7 +17,7 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
-    "electron": "^44.7.2",
+    "electron": "^44.10.0",
     "lucide-react": "1.48.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
@@ -27,7 +27,7 @@
   "productName": "Mietshaus",
   "private": true,
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.31.0",
+    "@modelcontextprotocol/sdk": "1.32.2",
     "imapflow": "2.1.2",
     "pdfjs-dist": "6.3.289",
     "tesseract.js": "7.0.0",

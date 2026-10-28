@@ -920,9 +920,10 @@ function api(db) {
   const get = (sql, ...p) => stmt(sql).get(...p);
   let tiefe = 0;
   const tx = (fn) => {
-    // A transaction started inside another one runs as part of it.
+    // A transaction started inside another one runs as part of it. IMMEDIATE takes the write lock at once, so another
+    // process (Claude's MCP server) cannot decide the same thing at the same time, e.g. that a month is not charged yet.
     if (tiefe) return fn();
-    db.exec('BEGIN');
+    db.exec('BEGIN IMMEDIATE');
     tiefe++;
     try {
       const r = fn();
@@ -1011,12 +1012,13 @@ function api(db) {
         ON CONFLICT (schluessel) DO UPDATE SET wert = excluded.wert`);
       for (const [k, v] of Object.entries(werte)) st.run(k, v == null ? null : String(v));
     }),
-    save: (table, row) => {
+    // A contract and its charges are saved together or not at all.
+    save: (table, row) => tx(() => {
       const id = save(table, row);
       if (SYNC.has(table)) bh.syncKonten();
       sollNachziehen(vertragVon(table, id));
       return id;
-    },
+    }),
     remove: (table, id) => {
       if (table === 'anpassungen') {
         const v = vertragVon(table, id);

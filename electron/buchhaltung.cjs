@@ -466,7 +466,11 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
   // the current month without any charge. `anwenden` rebooks the differing months, except in a locked period or where
   // a charge was cancelled by hand; `nachholen` charges the missing months. `nurTeilmonate`: rebook only months that
   // were charged by day (before version 0.8).
-  function sollAbgleich(typ, vertragId, { von = '0000-00', anwenden = false, nachholen = false, nurTeilmonate = false } = {}) {
+  // Comparing and rebooking happen in one transaction, so nothing can be charged in between.
+  function sollAbgleich(typ, vertragId, opt = {}) {
+    return opt.anwenden || opt.nachholen ? tx(() => sollAbgleichIntern(typ, vertragId, opt)) : sollAbgleichIntern(typ, vertragId, opt);
+  }
+  function sollAbgleichIntern(typ, vertragId, { von = '0000-00', anwenden = false, nachholen = false, nurTeilmonate = false } = {}) {
     const v = vertragMitNamen(typ, vertragId);
     const konto = v && kontoVon(typ, v.id);
     if (!konto) return { aenderungen: [], fehlend: [] };
@@ -524,6 +528,8 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
     if (get(`SELECT 1 FROM einstellungen WHERE schluessel = 'umstellung_monatlich'`)) return null;
     const liste = [];
     tx(() => {
+      // App and Claude start at the same time after an update: only one of them converts.
+      if (get(`SELECT 1 FROM einstellungen WHERE schluessel = 'umstellung_monatlich'`)) return;
       for (const typ of ['miete', 'weg']) {
         for (const { id } of all(`SELECT id FROM ${vertragTabelle(typ)} ORDER BY id`)) {
           const r = sollAbgleich(typ, id, { anwenden: true, nurTeilmonate: true });
@@ -699,7 +705,8 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
 
     // Generates monthly charges for all contracts of an object; existing charges are not duplicated.
     // A line whose booked amount differs from the contract is marked `abweichend` (see sollAbgleich).
-    sollstellung: (objektId, vonMonat, bisMonat, nurVorschau = false, typen = ['miete', 'weg']) => {
+    // The charges are worked out inside the transaction that books them: what is already booked cannot change in between.
+    sollstellung: (objektId, vonMonat, bisMonat, nurVorschau = false, typen = ['miete', 'weg']) => (nurVorschau ? (f) => f() : tx)(() => {
       const zeilen = [];
       for (const typ of typen) {
         const vertraege = all(`SELECT v.*, e.bezeichnung AS einheit, ${PERSON_NAME} AS name FROM ${vertragTabelle(typ)} v
@@ -711,9 +718,9 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
       // Months in a closed (locked) period are not charged automatically any more.
       const gesperrt = gesperrtBis();
       for (const z of zeilen) if (z.datum <= gesperrt) z.vorhanden = true;
-      if (!nurVorschau) tx(() => { for (const z of zeilen.filter((z) => !z.vorhanden)) sollEinfuegen(objektId, z); });
+      if (!nurVorschau) for (const z of zeilen.filter((z) => !z.vorhanden)) sollEinfuegen(objektId, z);
       return zeilen;
-    },
+    }),
 
     sollAbgleich: (typ, vertragId, opt) => sollAbgleich(typ, vertragId, opt),
     sollAutomatisch,

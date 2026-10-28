@@ -57,7 +57,7 @@ function starten() {
   };
   aktuelleDb();
   const db = new Proxy({}, { get: (_t, k) => aktuelleDb()[k] });
-  const server = new McpServer({ name: 'mietshaus', version: '1.0.0' }, { instructions: ANWEISUNGEN });
+  const server = new McpServer({ name: 'mietshaus', version: require('../package.json').version }, { instructions: ANWEISUNGEN });
   const werkzeug = (name, beschreibung, schema, fn, nurLesen = false) =>
     server.registerTool(name, { description: beschreibung, inputSchema: schema, annotations: { readOnlyHint: nurLesen } }, async (args) => {
       try {
