@@ -689,3 +689,17 @@ textarea.brieftext { width: 100%; padding: 10px 12px; border: 1px solid var(--li
 .leiste { position: fixed; z-index: 48; left: 50%; bottom: 18px; transform: translateX(-50%); display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
   max-width: calc(100vw - 32px); padding: 10px 14px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line-stark); box-shadow: var(--schatten-gross); font-size: 13.5px; }
 .leiste.rot { border-color: var(--rot); }
+
+/* Traffic light of the connection (Ampel.tsx). */
+.ampel-rahmen { position: relative; flex-shrink: 0; }
+.ampel { width: 28px; height: 28px; border-radius: 50%; border: 1px solid var(--line); background: var(--feld); display: inline-flex; align-items: center; justify-content: center; padding: 0; cursor: pointer; }
+.ampel span { width: 12px; height: 12px; border-radius: 50%; background: var(--leise); transition: background 0.2s; }
+.ampel.gruen span { background: #2f9e5b; box-shadow: 0 0 6px rgba(47, 158, 91, 0.55); }
+.ampel.gelb span { background: #e0a400; box-shadow: 0 0 6px rgba(224, 164, 0, 0.55); animation: ampel-puls 1.2s ease-in-out infinite; }
+.ampel.rot span { background: #d64545; box-shadow: 0 0 6px rgba(214, 69, 69, 0.6); }
+.ampel.grau span { background: #8d9493; }
+@keyframes ampel-puls { 50% { opacity: 0.45; } }
+.ampel-details { position: absolute; right: 0; top: 36px; z-index: 40; width: 300px; background: var(--panel); border: 1px solid var(--line-stark); border-radius: 10px; box-shadow: var(--schatten-gross); padding: 12px 14px; font-size: 13px; }
+.ampel-details dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; margin: 8px 0; }
+.ampel-details dt { color: var(--muted); }
+.ampel-details dd { margin: 0; overflow-wrap: anywhere; }

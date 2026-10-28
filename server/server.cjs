@@ -69,7 +69,15 @@ async function starten(o) {
     const zeile = `event: ${kanal}\ndata: ${JSON.stringify(wert ?? null)}\n\n`;
     for (const h of hoerer) if (h.id !== ausser) h.res.write(zeile);
   };
-  setInterval(() => { for (const h of hoerer) h.res.write(': puls\n\n'); }, 25_000).unref();
+  // Sign of life every 15 seconds with what the traffic light in the app shows: documents still being read, the
+  // newest change and who made it.
+  const puls = () => {
+    const letzte = raw.prepare(`SELECT p.zeit, p.quelle, b.name FROM protokoll p LEFT JOIN benutzer b ON b.id = p.benutzer ORDER BY p.id DESC LIMIT 1`).get();
+    return { zeit: new Date().toISOString(), version: VERSION, analyse: roh.zuAnalysieren().length,
+      letzte: letzte ? { zeit: letzte.zeit, wer: letzte.quelle === 'claude' ? `Claude${letzte.name ? ` für ${letzte.name}` : ''}` : letzte.name } : null };
+  };
+  const pulsSenden = () => { if (hoerer.size) senden('puls', puls()); };
+  setInterval(pulsSenden, 15_000).unref();
   // Changes written by another process (Claude's MCP server in local mode) reach every window.
   let version = null;
   setInterval(() => {
@@ -81,7 +89,7 @@ async function starten(o) {
 
   // ---------- background work ----------
   const ana = analyse({ db: dbSystem, dokumentOrdner, vorschauOrdner, tessdata: o.tessdata, cacheOrdner: path.join(daten, 'ocr-cache'),
-    onFertig: (id) => senden('dokumentAnalysiert', id) });
+    onFertig: (id) => { senden('dokumentAnalysiert', id); pulsSenden(); } });
   ana.warteschlange();
   const ein = eingang({
     db: dbSystem,
@@ -256,7 +264,7 @@ async function starten(o) {
     }
     if (p === '/api/ereignisse') {
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no', ...SICHERHEIT });
-      res.write(': verbunden\n\n');
+      res.write(`event: puls\ndata: ${JSON.stringify(puls())}\n\n`);
       const h = { res, id: u.searchParams.get('client') };
       hoerer.add(h);
       req.on('close', () => hoerer.delete(h));
@@ -271,7 +279,7 @@ async function starten(o) {
       let wert = await fachlich(() => roh[fn](...args));
       // Stored mail passwords (encrypted) stay on the server; the page only learns that one is set.
       if (fn === 'einstellungen') wert = Object.fromEntries(Object.entries(wert).map(([k, v]) => [k, /^mail_passwort/.test(k) && v ? 'gesetzt' : v]));
-      if (aenderungen() !== vorher) senden('aktualisiert', null, req.headers['x-client'] ?? null);
+      if (aenderungen() !== vorher) { senden('aktualisiert', null, req.headers['x-client'] ?? null); pulsSenden(); }
       return json(res, 200, { wert: wert === undefined ? null : wert });
     }
     if (p === '/api/info') {
@@ -290,6 +298,7 @@ async function starten(o) {
         kontext(req, w);
         const r = ana.importieren([t.p], { ...opt, quelle: opt.quelle ?? 'upload' });
         senden('aktualisiert', null, req.headers['x-client'] ?? null);
+        pulsSenden();
         return json(res, 200, r);
       } finally { t.weg(); }
     }

@@ -54,14 +54,54 @@ const geraet = () => desktop()?.geraet ?? (() => {
   return { id, name: 'Browser' };
 })();
 
+// ---------- connection state (traffic light) ----------
+export type Verbindung = {
+  strom: 'verbindet' | 'offen' | 'weg'; // the event stream
+  wegSeit: number | null;               // since when the stream or the network has been gone
+  offen: number;                        // requests under way
+  latenz: number | null;                // last request, ms
+  puls: { zeit: string; version: string; analyse: number; letzte: { zeit: string; wer: string | null } | null } | null;
+  pulsAm: number | null;
+};
+const zustand: Verbindung = { strom: 'verbindet', wegSeit: null, offen: 0, latenz: null, puls: null, pulsAm: null };
+const beobachter = new Set<(v: Verbindung) => void>();
+const melden = () => { for (const fn of beobachter) fn({ ...zustand }); };
+export function verbindungBeobachten(fn: (v: Verbindung) => void) {
+  beobachter.add(fn);
+  fn({ ...zustand });
+  ereignisse();
+  return () => { beobachter.delete(fn); };
+}
+// Red: stream or network gone for more than 5 seconds, or no sign of life for 40 seconds.
+export const farbe = (v: Verbindung, jetzt = Date.now()): 'gruen' | 'gelb' | 'rot' =>
+  (v.wegSeit != null && jetzt - v.wegSeit > 5000) || (v.pulsAm != null && jetzt - v.pulsAm > 40_000) ? 'rot'
+    : v.strom !== 'offen' || v.offen > 0 || (v.puls?.analyse ?? 0) > 0 ? 'gelb' : 'gruen';
+export const neuVerbinden = () => { quelle?.close(); quelle = null; zustand.strom = 'verbindet'; melden(); ereignisse(); };
+
 export async function anfrage(pfad: string, opt: { methode?: string; json?: unknown; roh?: BodyInit; typ?: string } = {}) {
   const methode = opt.methode ?? (opt.json !== undefined || opt.roh !== undefined ? 'POST' : 'GET');
-  const r = await fetch(pfad, {
+  const start = performance.now();
+  zustand.offen++;
+  melden();
+  let r: Response;
+  try {
+    r = await fetch(pfad, {
     method: methode, credentials: 'same-origin',
     headers: { 'X-Mietshaus': '1', 'X-Client': CLIENT, 'X-Geraet': geraet().id,
       ...(opt.json !== undefined ? { 'Content-Type': 'application/json' } : opt.typ ? { 'Content-Type': opt.typ } : {}) },
     body: opt.json !== undefined ? JSON.stringify(opt.json) : opt.roh,
-  });
+    });
+  } catch {
+    // The server cannot be reached: the light turns red, nothing pretends to be saved.
+    zustand.wegSeit ??= Date.now();
+    throw new HttpFehler(0, 'Keine Verbindung zum Mietshaus-Server. Die Änderung wurde nicht gespeichert.');
+  } finally {
+    zustand.offen--;
+    melden();
+  }
+  zustand.latenz = Math.round(performance.now() - start);
+  if (zustand.strom === 'offen') zustand.wegSeit = null;
+  melden();
   if (!r.ok) {
     let text = `Fehler ${r.status}`;
     try { text = (await r.json()).fehler ?? text; } catch {}
@@ -78,6 +118,11 @@ let quelle: EventSource | null = null;
 function ereignisse() {
   if (quelle) return;
   quelle = new EventSource(`/api/ereignisse?client=${encodeURIComponent(CLIENT)}`);
+  quelle.addEventListener('puls', (e) => {
+    zustand.puls = JSON.parse((e as MessageEvent).data);
+    zustand.pulsAm = Date.now();
+    melden();
+  });
   for (const kanal of ['aktualisiert', 'dokumentAnalysiert', 'meldung']) {
     quelle.addEventListener(kanal, (e) => {
       const wert = JSON.parse((e as MessageEvent).data ?? 'null');
@@ -86,8 +131,20 @@ function ereignisse() {
   }
   // After a lost connection (NAS restarted, laptop asleep) everything is reloaded once it is back.
   let weg = false;
-  quelle.onerror = () => { weg = true; };
-  quelle.onopen = () => { if (weg) { weg = false; for (const fn of hoerer.get('aktualisiert') ?? []) fn(null); } };
+  quelle.onerror = () => {
+    weg = true;
+    zustand.strom = quelle?.readyState === EventSource.CLOSED ? 'weg' : 'verbindet';
+    zustand.wegSeit ??= Date.now();
+    melden();
+    // A closed stream (e.g. the server answered with an error) does not retry by itself.
+    if (zustand.strom === 'weg') setTimeout(() => { if (zustand.strom === 'weg') neuVerbinden(); }, 10_000);
+  };
+  quelle.onopen = () => {
+    zustand.strom = 'offen';
+    zustand.wegSeit = null;
+    melden();
+    if (weg) { weg = false; for (const fn of hoerer.get('aktualisiert') ?? []) fn(null); }
+  };
 }
 
 // ---------- browser stand-ins ----------

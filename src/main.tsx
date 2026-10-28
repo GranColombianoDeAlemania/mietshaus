@@ -11,4 +11,4 @@ brueckeEinrichten();
 document.documentElement.dataset.plattform = window.hv.plattform;
 anzeigeAnwenden();
 
-createRoot(document.getElementById('root')!).render(<Start>{(s) => <><App /><Leisten status={s} /></>}</Start>);
+createRoot(document.getElementById('root')!).render(<Start>{(s) => <><App benutzer={s.benutzer} /><Leisten status={s} /></>}</Start>);

@@ -26,6 +26,7 @@ import { Archiv, DokumentDialog, Postfach, Rechnungen } from './views/Archiv';
 import { Export } from './views/Export';
 import { Protokoll } from './views/Protokoll';
 import { Vorschlaege } from './views/Vorschlaege';
+import { Ampel } from './Ampel';
 import { Uebergaben } from './views/Uebergabe';
 import { Vermietung } from './views/Vermietung';
 import { Auswertungen } from './views/Auswertungen';
@@ -130,7 +131,7 @@ function startOrt(): Ort {
 }
 const gleich = (a: Ort, b: Ort) => a.modus === b.modus && a.seite === b.seite && a.objektId === b.objektId && (a.param ?? '') === (b.param ?? '');
 
-export default function App() {
+export default function App(props: { benutzer?: Row | null }) {
   const [nav, setNav] = useState<{ verlauf: Ort[]; pos: number }>(() => ({ verlauf: [startOrt()], pos: 0 }));
   const ort = nav.verlauf[nav.pos];
   const { modus, seite, objektId } = ort;
@@ -528,6 +529,7 @@ export default function App() {
             </select>
           </label>
           <button className="rund ring" title="Dokumente ablegen – sie landen zur Prüfung im Postfach" onClick={schnellAblegen}><I.FilePlus2 size={16} /></button>
+          <Ampel benutzer={props.benutzer?.name ?? null} />
         </header>
         <main><Fehlergrenze key={`${modus}:${seite}:${ort.param ?? ''}:${objektId ?? ''}`}>{inhalt()}</Fehlergrenze></main>
         <footer>{meldung ? <b>{meldung}</b> : objekt ? (modus === 'projekt' ? `Projekt: ${objekt.titel}${objekt.objekt ? ` · ${objekt.objekt}` : ''}` : `${objekt.bezeichnung} · ${OBJEKT_ART[objekt.art]}`) : ''}</footer>
