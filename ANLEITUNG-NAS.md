@@ -31,9 +31,8 @@ Mac-App / Browser ──Tailscale (verschlüsselt)──▶ Synology: tailscale 
 1. Paket-Zentrum → **Container Manager** installieren.
 2. Container Manager → **Projekt → Erstellen**: Name `mietshaus`, Pfad `/volume1/docker/mietshaus-projekt`,
    Quelle „compose.yaml erstellen“ und den Inhalt von [`compose.yaml`](compose.yaml) einfügen.
-3. Das Image `ghcr.io/grancolombianodealemania/mietshaus` baut GitHub bei jedem Push (Aktion „Server-Image“).
-   Damit die Synology es ohne Anmeldung laden kann: auf GitHub unter *Packages → mietshaus → Package settings* die
-   Sichtbarkeit auf **Public** stellen (das Repository ist ohnehin öffentlich; Daten sind im Image keine).
+3. Das Image `ghcr.io/grancolombianodealemania/mietshaus` baut GitHub bei jedem Push (Aktion „Server-Image“). Es ist
+   wie das Repository öffentlich, die Synology lädt es ohne Anmeldung (Daten sind im Image keine).
 4. Projekt starten. Unter `https://<synology>.<tailnet>.ts.net` erscheint **„Ersten Benutzer anlegen“**.
 
 ## 4. Benutzer
