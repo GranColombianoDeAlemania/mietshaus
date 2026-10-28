@@ -769,6 +769,8 @@ const MIGRATIONS = [
         geraet TEXT
       );`);
   },
+  // Cases can be assigned to a user of the server (no foreign key: users exist only there).
+  `ALTER TABLE vorgaenge ADD COLUMN zustaendig INTEGER;`,
 ];
 
 // Tables without change time: the log itself, settings of this installation and page state.
@@ -863,7 +865,7 @@ const TABLES = {
   dokumente: ['objekt_id', 'person_id', 'einheit_id', 'titel', 'kategorie', 'datum', 'datei', 'name', 'groesse', 'notiz',
     'status', 'typ', 'betrag_ct', 'absender', 'rechnungsnr', 'iban', 'faellig', 'zusammenfassung', 'buchung_id', 'quelle', 'netto_ct', 'ust_ct'],
   erhaltungsverteilung: ['objekt_id', 'jahr', 'betrag_ct', 'jahre', 'text'],
-  vorgaenge: ['objekt_id', 'person_id', 'einheit_id', 'titel', 'kategorie', 'status', 'prioritaet', 'faellig', 'beschreibung', 'projekt_id'],
+  vorgaenge: ['objekt_id', 'person_id', 'einheit_id', 'titel', 'kategorie', 'status', 'prioritaet', 'faellig', 'beschreibung', 'projekt_id', 'zustaendig'],
   vorgangseintraege: ['vorgang_id', 'datum', 'art', 'text'],
   termine: ['objekt_id', 'person_id', 'vorgang_id', 'titel', 'datum', 'uhrzeit', 'dauer_min', 'ort', 'erledigt', 'notiz', 'projekt_id'],
   projekte: ['titel', 'beschreibung', 'status', 'objekt_id', 'einheit_id', 'kosten_konto_id', 'budget_ct', 'beginn', 'ende', 'notiz'],

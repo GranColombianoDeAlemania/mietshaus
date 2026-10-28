@@ -23,7 +23,7 @@ const TYPEN = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '
 const SICHERHEIT = { 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'SAMEORIGIN', 'Cross-Origin-Opener-Policy': 'same-origin' };
 const MAX_UPLOAD = 300 * 1024 * 1024;
 // Functions answered by the server itself, not by the database API.
-const NUR_SERVER = new Set(['benutzerListe', 'benutzerAnlegen', 'benutzerAendern', 'claudeToken']);
+const NUR_SERVER = new Set(['benutzerListe', 'benutzerAnlegen', 'benutzerAendern', 'claudeToken', 'meineAufgaben']);
 
 class Fehler extends Error { constructor(status, text) { super(text); this.status = status; } }
 
@@ -480,6 +480,7 @@ async function starten(o) {
 
   // User management: every user may manage users (same rights for all). Not possible in local mode.
   function serverFunktion(fn, args, w) {
+    if (fn === 'meineAufgaben') return o.modus === 'server' ? roh.meineAufgaben(w.benutzer.id) : [];
     if (o.modus !== 'server') throw new Fehler(400, 'Benutzer gibt es nur auf dem Server.');
     if (fn === 'benutzerListe') return auth.liste();
     if (fn === 'benutzerAnlegen') return auth.anlegen(args[0] ?? {});

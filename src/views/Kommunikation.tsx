@@ -255,6 +255,8 @@ export function Vorgaenge(props: { objekt: Row }) {
   const [rows, reload] = useLoad<Row[]>(() => call('vorgaengeListe', props.objekt.id, nurOffen), [props.objekt.id, nurOffen]);
   const [einheiten] = useLoad<Row[]>(() => call('einheiten', props.objekt.id), [props.objekt.id]);
   const [personen] = useLoad<Row[]>(() => call('personen'), []);
+  // Users of the server (none in local mode) to assign a case to.
+  const [benutzer] = useLoad<Row[]>(() => call<Row[]>('benutzerListe').catch(() => []), []);
   const [edit, setEdit] = useState<Row | null>(null);
   const [offen, setOffen] = useState<Row | null>(null);
   useAktion('neuer-vorgang', () => setEdit({ objekt_id: props.objekt.id, status: 'offen', prioritaet: 2 }));
@@ -272,6 +274,7 @@ export function Vorgaenge(props: { objekt: Row }) {
     { key: 'faellig', label: 'Fällig / Wiedervorlage', type: 'date' },
     { key: 'einheit_id', label: 'Einheit', type: 'select', options: (einheiten ?? []).map((e) => [e.id, `${e.nr} – ${e.bezeichnung}`]) },
     { key: 'person_id', label: 'Person', type: 'select', options: (personen ?? []).map((p) => [p.id, personName(p)]) },
+    ...(benutzer?.length ? [{ key: 'zustaendig', label: 'Zuständig', type: 'select', options: benutzer.filter((b) => b.aktiv).map((b) => [b.id, b.name]) } as Field] : []),
     { key: 'beschreibung', label: 'Beschreibung', type: 'textarea' },
   ];
   return (
@@ -283,13 +286,14 @@ export function Vorgaenge(props: { objekt: Row }) {
         <button className="primary" onClick={() => setEdit({ objekt_id: props.objekt.id, status: 'offen', prioritaet: 2 })}>Neuer Vorgang</button>
       </div>
       <table>
-        <thead><tr><th>Fällig</th><th>Titel</th><th>Kategorie</th><th>Einheit / Person</th><th>Status</th><th className="num">Einträge</th><th /></tr></thead>
+        <thead><tr><th>Fällig</th><th>Titel</th><th>Kategorie</th><th>Einheit / Person</th>{!!benutzer?.length && <th>Zuständig</th>}<th>Status</th><th className="num">Einträge</th><th /></tr></thead>
         <tbody>
           {rows?.map((r) => (
             <tr key={r.id} className={`klickbar${r.status === 'erledigt' ? ' inaktiv' : ''}`} data-ziel={`vorgang:${r.id}`} onClick={() => setOffen(r)}>
               <td className={r.faellig && r.faellig < heute() && r.status !== 'erledigt' ? 'fehlertext' : ''}>{datum(r.faellig)}</td>
               <td>{r.prioritaet === 1 && <span className="tag fehlertext">!</span>}{r.titel}</td><td>{r.kategorie}</td>
               <td className="klein">{r.einheit_id && <L zu={{ einheit: r.einheit_id }}>{r.einheit}</L>}{r.einheit_id && r.person_id ? ' · ' : ''}{r.person_id && <L zu={{ person: r.person_id }}>{r.person}</L>}</td>
+              {!!benutzer?.length && <td>{r.zustaendig_name ?? ''}</td>}
               <td>{STATUS.find(([s]) => s === r.status)?.[1]}</td><td className="num">{r.eintraege}</td>
               <td className="aktionen"><button onClick={(e) => { e.stopPropagation(); setEdit(r); }}>Bearbeiten</button></td>
             </tr>

@@ -17,6 +17,8 @@ export function Uebersicht(props: { modus: Modus; objekte: Row[]; oeffne: (seite
   const [c] = useLoad<Row>(() => call('cockpitKennzahlen', props.modus), [props.modus]);
   const [f] = useLoad<Row>(() => call('faelligkeiten', 7), []);
   const [vorgaenge] = useLoad<Row[]>(() => call('vorgaengeListe', null, true), []);
+  // Cases assigned to the user who is logged in (server only).
+  const [aufgaben] = useLoad<Row[]>(() => call<Row[]>('meineAufgaben').catch(() => []), []);
   const [start, ladeStart] = useLoad<Row>(() => call('ersteSchritte'), []);
   const [erledigteZeigen, setErledigteZeigen] = useState(false);
   const navi = useNavi();
@@ -78,6 +80,20 @@ export function Uebersicht(props: { modus: Modus; objekte: Row[]; oeffne: (seite
           </ul>
         </div>
         <div>
+          {!!aufgaben?.length && (
+            <div className="panel">
+              <div className="panelkopf"><h3>Meine Aufgaben</h3></div>
+              <ul className="hinweisliste">
+                {aufgaben.map((v) => (
+                  <li key={'m' + v.id}>
+                    <span className="punkt"><I.UserCheck size={14} /></span>
+                    <div className="inhalt"><L zu={{ vorgang: v.id, objektId: v.objekt_id }}>{v.titel}</L>
+                      <div className="klein hinweis">{v.faellig ? `fällig ${datum(v.faellig)}` : 'ohne Frist'}{v.objekt ? ` · ${v.objekt}` : ''}</div></div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           <div className="panel">
             <div className="panelkopf"><h3>Diese Woche</h3></div>
             {f.termine.length + offeneVorgaenge.length === 0 && <p className="hinweis">Keine Termine oder fälligen Vorgänge.</p>}

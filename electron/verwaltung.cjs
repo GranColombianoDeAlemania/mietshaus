@@ -207,11 +207,16 @@ module.exports = function verwaltung({ db, all, get, tx, PERSON_NAME, bh }) {
       WHERE (?1 IS NULL OR d.objekt_id = ?1) ORDER BY coalesce(d.datum, '') DESC, d.id DESC`, objektId ?? null),
 
     vorgaengeListe: (objektId, nurOffen) => all(`SELECT v.*, ${PERSON_NAME} AS person, e.bezeichnung AS einheit, o.bezeichnung AS objekt,
-        (SELECT count(*) FROM vorgangseintraege x WHERE x.vorgang_id = v.id) AS eintraege
+        (SELECT count(*) FROM vorgangseintraege x WHERE x.vorgang_id = v.id) AS eintraege,
+        (SELECT b.name FROM benutzer b WHERE b.id = v.zustaendig) AS zustaendig_name
       FROM vorgaenge v LEFT JOIN personen p ON p.id = v.person_id LEFT JOIN einheiten e ON e.id = v.einheit_id
       LEFT JOIN objekte o ON o.id = v.objekt_id
       WHERE (?1 IS NULL OR v.objekt_id = ?1) AND (?2 = 0 OR v.status <> 'erledigt')
       ORDER BY v.status = 'erledigt', coalesce(v.faellig, '9999'), v.prioritaet, v.id DESC`, objektId ?? null, nurOffen ? 1 : 0),
+
+    // Open cases assigned to a user, for "Meine Aufgaben" in the cockpit.
+    meineAufgaben: (benutzerId) => all(`SELECT v.*, o.bezeichnung AS objekt FROM vorgaenge v LEFT JOIN objekte o ON o.id = v.objekt_id
+      WHERE v.zustaendig = ? AND v.status <> 'erledigt' ORDER BY coalesce(v.faellig, '9999'), v.prioritaet, v.id`, benutzerId),
 
     termineListe: (von, bis) => all(`SELECT t.*, o.bezeichnung AS objekt, ${PERSON_NAME} AS person, v.titel AS vorgang FROM termine t
       LEFT JOIN objekte o ON o.id = t.objekt_id LEFT JOIN personen p ON p.id = t.person_id LEFT JOIN vorgaenge v ON v.id = t.vorgang_id

@@ -122,6 +122,13 @@ function client(url) {
   pruefe('Sitzung bleibt nach Wiederherstellung gültig', (await ben.call('objekte', 'miete')).length === 1);
   pruefe('Server-Sicherungen auflisten', (await (await anna.anfrage('/api/sicherungen')).json()).some((x) => /vor-Wiederherstellung/.test(x.name)));
 
+  // ---------- 5a. assigned cases ----------
+  await anna.call('save', 'vorgaenge', { objekt_id: o, titel: 'Heizung prüfen', status: 'offen', prioritaet: 1, zustaendig: benId });
+  await anna.call('save', 'vorgaenge', { objekt_id: o, titel: 'Für Anna', status: 'offen', prioritaet: 2, zustaendig: 1 });
+  const bensAufgaben = await ben.call('meineAufgaben');
+  pruefe('Meine Aufgaben: nur die eigenen', bensAufgaben.length === 1 && bensAufgaben[0].titel === 'Heizung prüfen', JSON.stringify(bensAufgaben));
+  pruefe('Liste nennt den Zuständigen', (await anna.call('vorgaengeListe', o, true)).find((v) => v.titel === 'Heizung prüfen')?.zustaendig_name === 'Ben Becker');
+
   // ---------- 5b. status page ----------
   pruefe('Jetzt sichern', (await anna.anfrage('/api/jetzt-sichern', { methode: 'POST', json: {} })).ok);
   const test = await (await anna.anfrage('/api/sicherungstest', { methode: 'POST', json: {} })).json();
