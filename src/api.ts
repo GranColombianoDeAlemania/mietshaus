@@ -1,4 +1,5 @@
 import { hinweis } from './frage';
+import type { DbFn } from './dbtypen';
 export type Modus = 'miete' | 'weg' | 'projekt';
 export type Row = Record<string, any>;
 
@@ -40,7 +41,7 @@ declare global {
   }
 }
 
-export const call = <T = any>(fn: string, ...args: unknown[]): Promise<T> => window.hv.call(fn, ...args);
+export const call = <T = any>(fn: DbFn, ...args: unknown[]): Promise<T> => window.hv.call(fn, ...args);
 
 const eur = new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' });
 const num = new Intl.NumberFormat('de-DE', { maximumFractionDigits: 4 });

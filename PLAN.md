@@ -38,7 +38,7 @@ Two modes, kept separate but linked:
 | Projekte | Third mode: projects with Gantt, dependencies, quotes/orders/invoices, budget forecast, year plan | done |
 | Auswertungen | Yield per object, Anlage V (inflow principle, AfA), cost take-over from external WEG statements | done |
 | Bank | Returned debits detected (with case), outgoing payments matched to open invoices | done |
-| NAS-Sync | One shared database file on the Synology (SMB), lock per device, PDFs local for 4 weeks | open (user sets up NAS first) |
+| NAS-Sync | ~~One shared database file on the Synology (SMB)~~ – SQLite in WAL mode must not be shared over SMB (its lock and shared-memory files do not work across the network, the file can break). New approach, see 0.9.1: each device keeps its own database; copies are exchanged through the NAS and merged record by record, the newest change wins | open (prepared in 0.9.1) |
 
 ## Version 0.6 – linked and checked
 
@@ -100,12 +100,28 @@ or an agreed amount split like the monthly amounts) and „anteilig bis zum Ausz
 month. Charges name the days („Miete 10/2026 (20.10.–31.10.)“), arrears stay per charge, statements count from / up to those days, a vacancy
 counts the unpaid days of such a month; the form shows the first and last amount. Calculation test: 441 checks.
 
+## Version 0.9.1 – review fixes
+
+From the review of 27.10.2026 („2. bitte beheben, aber so dass Versionen von mehreren Usern nächstens nur die aktuellste Information
+benutzen; sonst alle Punkte so angenommen“, pick „Beides“).
+
+| Area | Contents | Status |
+|------|----------|--------|
+| Datum | Today, the current month and deadlines in local time (electron/zeit.cjs, src/api.ts, SQL `date('now', 'localtime')`); before, the UTC date put a booking made at 0:30 on 1 January into the previous year | done |
+| Sicherung | Restore checks the file (database? Mietshaus? damaged? newer version?), compares its state (newest change, device) with the data in use, warns about older backups and offers the newest backup of the same data set; the backup is migrated beside the database before replacing it, failures put the old state back. Daily automatic backups (14 days + 12 months) and a copy before every schema update, in `sicherungen` next to the database | done |
+| Mehrere Nutzer | Every record carries time (UTC) and device of its last change, the log the device, the data set an id (schema 0.9.1). Basis for merging copies of several users record by record with the newest change winning; deletions are in the log. Merge itself: open | prepared |
+| Technik | One running instance; charges worked out and booked in one IMMEDIATE transaction (app and Claude at the same time); a contract and its charges saved together; a database from a newer version is not opened; the MCP server follows a restored database; Electron 44.10 and MCP SDK 1.32.2 (npm audit clean); `codesign` on the Mac with an own certificate (MIETSHAUS_SIGNATUR) so the mail password survives updates; an unreadable mail password is reported; an error on one page no longer blanks the window | done |
+| Oberfläche | Arrears tile legend, ring labels, vacancy text without known rent, one date in the index rent check, account picker with search, app dialogs instead of confirm/alert, favourites and visible group arrows in the sidebar, done first steps folded, cockpit names its scope, empty inbox explains intake | done |
+| Claude | Bookings, contracts, contract ends and changes to persons (bank details) only as proposals, accepted or rejected in the app („Vorschläge von Claude“, hint in the cockpit; can be switched off). Every log entry can be undone while the record was not changed afterwards; bookings by reversal | done |
+| Entwicklung | Git; `npm test` (type check, calculation, backup, Claude/undo tests), `npm run test:klick`; database function names typed in `call()`; one HTML-to-PDF path | done |
+| Offen | pain.001/pain.008 schemas for the click test (XSD files from ISO 20022 not in the repository); merge of several users' copies | open |
+
 ## Development
 
 ```
-cd ~/Work/wincasa/app
-npm run dev        # Vite + Electron with hot reload (Linux)
-npm run dist:mac   # packages an ad-hoc signed Apple Silicon app (zip) in release/ (needs rcodesign, see scripts/dist-mac.sh)
-ELECTRON_RUN_AS_NODE=1 npx electron scripts/rechentest.cjs        # calculation test with the sample house
-npm run build && XSD=<folder with pain.*.xsd> npx electron scripts/klicktest.cjs <outdir>   # click test
+npm ci && node node_modules/electron/install.js   # Electron's own download is skipped by npm's install-script guard
+npm run dev        # Vite + Electron with hot reload
+npm test           # type check, calculation test, backup test, Claude/undo test
+npm run test:klick # click test (XSD=<folder with pain.*.xsd> for the SEPA schema check)
+npm run dist:mac   # Apple Silicon app (zip) in release/; on a Mac signed with codesign (MIETSHAUS_SIGNATUR=<certificate>), on Linux ad hoc with rcodesign
 ```
