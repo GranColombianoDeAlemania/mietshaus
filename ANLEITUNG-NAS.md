@@ -65,9 +65,26 @@ dich einen eigenen Claude-Schlüssel vom Server und trägt ihn in Claude Desktop
 - **Hyper Backup** (Paket-Zentrum): den Ordner `docker/mietshaus` regelmäßig auf eine externe Platte oder in die Cloud
   sichern – erst das schützt vor Ausfall der Synology.
 
-## 9. Update
-Container Manager → Projekt `mietshaus` → **Aktion → Erstellen** (lädt das neueste Image). Vorher legt der Server bei
-Änderungen am Datenbankschema selbst eine Sicherung an.
+## 9. Updates
+**Server – automatisch nachts.** Die Synology nimmt das Image `stable`; das rückt nur weiter, wenn eine neue Version
+erscheint (Versionsmarke `vX.Y.Z` auf GitHub) **und** alle Tests auf GitHub grün waren. In DSM →
+Systemsteuerung → **Aufgabenplaner** → Erstellen → Geplante Aufgabe → Benutzerdefiniertes Script:
+- Benutzer: `root`, Zeitplan: z. B. sonntags 3:00
+- Script:
+  ```bash
+  cd /volume1/docker/mietshaus-projekt && docker compose pull && docker compose up -d && docker image prune -f
+  ```
+Vor einer Änderung am Datenbankschema legt der Server selbst eine Sicherung an. Von Hand geht es genauso: Container
+Manager → Projekt `mietshaus` → **Aktion → Erstellen**. In der App zeigt Einstellungen → Status, ob eine neuere
+Version bereitsteht.
+
+**Mac-App – ein Klick.** Die App fragt beim Start und alle sechs Stunden bei GitHub nach einer neuen Version. Ist
+eine da, erscheint unten „Mietshaus X ist da – Jetzt aktualisieren“: Die App lädt sie, prüft Prüfsumme und Signatur,
+tauscht sich aus und startet neu. Voraussetzung: Mietshaus liegt im Ordner **Programme** (nicht direkt aus dem
+Download-Ordner gestartet). Im Server-Modus kommt die Oberfläche ohnehin vom Server – die Mac-App selbst braucht nur
+selten ein Update; ist sie zu alt für den Server, sagt sie das.
+
+**Browser / iPhone:** nichts zu tun, die Oberfläche kommt immer vom Server.
 
 ## Checkliste (auf deiner Synology zu prüfen)
 - [ ] `https://<synology>.<tailnet>.ts.net` zeigt die Anmeldung, aus dem Heimnetz und über Mobilfunk.

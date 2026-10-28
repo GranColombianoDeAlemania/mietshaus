@@ -7,10 +7,12 @@ const fs = require('node:fs');
 const crypto = require('node:crypto');
 const desktop = require('./desktop.cjs');
 const { geraet: geraetLesen } = require('./geraet.cjs');
+const update = require('./update.cjs');
 
 let hauptfenster = null;
 let lokal = null; // the embedded server in local mode
 let geraet = null;
+let neueVersion = null; // a newer release (update.pruefen), shown in the window
 
 // One running copy per computer: a second start brings the window to the front instead of running the embedded
 // server twice (same inbox folder, same mails, same monthly charges).
@@ -217,10 +219,26 @@ app.whenReady().then(async () => {
   desktop.einrichten({
     ipcMain, geraet: () => geraet, lokal: () => !!lokal, lokalOrdner: () => (lokal ? path.dirname(dbFile()) : null),
     verbindung, verbindungSetzen, claudeStatus, claudeVerbinden,
-    ueberschreiben: { datenUebertragen },
+    ueberschreiben: {
+      datenUebertragen,
+      updateStatus: () => neueVersion,
+      updateInstallieren: (e) => {
+        if (!neueVersion) throw new Error('Kein Update verfügbar.');
+        return update.installieren(neueVersion, (text) => e.sender.send('hv:fortschritt', text));
+      },
+    },
   });
   claudeUmziehen();
   await createWindow();
+  // Newer version on GitHub? Checked shortly after the start and then every six hours; the window offers the update.
+  const updateSuchen = async () => {
+    neueVersion = await update.pruefen().catch(() => null);
+    if (neueVersion && hauptfenster && !hauptfenster.isDestroyed()) hauptfenster.webContents.send('hv:update', neueVersion);
+    // Test of the self-update (scripts/updatetest.sh): install at once without the button.
+    if (neueVersion && process.env.MIETSHAUS_UPDATE_SOFORT === '1') update.installieren(neueVersion, (t) => console.log('Update:', t)).catch((e) => console.error('Update:', e.message));
+  };
+  setTimeout(updateSuchen, 10_000);
+  setInterval(updateSuchen, 6 * 3600_000);
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 }).catch((e) => {
   console.error(e);

@@ -1,0 +1,83 @@
+# Tests, server image and Mac app.
+#   Every push to master and every pull request: type check and all tests (plain Node, no Electron needed).
+#   Push to master (tests green): image ghcr.io/grancolombianodealemania/mietshaus:latest – for trying out.
+#   Tag vX.Y.Z (tests green): image X.Y.Z, X.Y and stable – what the Synology runs – and a GitHub release with the
+#   Mac app (zip + SHA-256), from which the app updates itself.
+name: Bauen
+on:
+  push:
+    branches: [master]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: write
+  packages: write
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npx tsc --noEmit
+      - run: node scripts/rechentest.cjs
+      - run: node scripts/sicherungstest.cjs
+      - run: node scripts/claudetest.cjs
+      - run: node scripts/servertest.cjs
+      # A tag must carry the version of package.json, so app, server and release agree.
+      - if: startsWith(github.ref, 'refs/tags/v')
+        run: test "v$(node -p "require('./package.json').version")" = "${GITHUB_REF_NAME}"
+
+  image:
+    needs: tests
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/mietshaus
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=stable,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  mac:
+    needs: tests
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: node node_modules/electron/install.js
+      - run: npm run dist:mac
+      - run: shasum -a 256 release/Mietshaus-mac-arm64.zip | cut -d' ' -f1 > release/Mietshaus-mac-arm64.zip.sha256
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --title "Mietshaus ${GITHUB_REF_NAME#v}" --generate-notes \
+            release/Mietshaus-mac-arm64.zip release/Mietshaus-mac-arm64.zip.sha256

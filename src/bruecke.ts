@@ -7,11 +7,17 @@ import type { Row } from './api';
 type DateiFilter = { name: string; extensions: string[] };
 type MenueEintrag = { id: string; label: string; enabled?: boolean } | '-';
 
+export type Update = { version: string; url: string; notizen: string; hindernis: string | null };
+
 // What the Mac app adds (electron/preload.cjs).
 export type Desktop = {
   plattform: string;
   geraet: { id: string; name: string };
   lokal: boolean;
+  version: string;
+  schnittstelle: number;
+  updateStatus: () => Promise<Update | null>;
+  updateInstallieren: () => Promise<void>;
   zoom: (faktor: number) => void;
   pdfBytes: (html: string) => Promise<Uint8Array>;
   speichern: (inhalt: string | Uint8Array, name: string, filter?: DateiFilter, oeffnen?: boolean) => Promise<string | null>;
@@ -248,7 +254,7 @@ export function brueckeEinrichten() {
 }
 
 // Login state for the start screen.
-export const status = (): Promise<{ modus: 'server' | 'lokal'; version: string; angemeldet: boolean; benutzer: Row | null; einrichtung: boolean }> =>
+export const status = (): Promise<{ modus: 'server' | 'lokal'; version: string; desktop_schnittstelle: number; angemeldet: boolean; benutzer: Row | null; einrichtung: boolean }> =>
   fetch('/api/status', { credentials: 'same-origin' }).then((r) => r.json());
 export const anmelden = (login: string, passwort: string) => anfrage('/api/anmelden', { json: { login, passwort } }).then((r) => r.json());
 export const einrichten = (login: string, name: string, passwort: string) => anfrage('/api/einrichten', { json: { login, name, passwort } }).then((r) => r.json());

@@ -1,7 +1,8 @@
 # Mietshaus on the Synology: Container Manager → Projekt → Erstellen, this file as compose.yaml (see ANLEITUNG-NAS.md).
 services:
   mietshaus:
-    image: ghcr.io/grancolombianodealemania/mietshaus:latest
+    # stable = the newest released version (tag vX.Y.Z); latest = every change on master, for trying out.
+    image: ghcr.io/grancolombianodealemania/mietshaus:stable
     container_name: mietshaus
     restart: unless-stopped
     # The Synology user that owns the folders below (find it with `id` over SSH; the first admin is usually 1026:100).

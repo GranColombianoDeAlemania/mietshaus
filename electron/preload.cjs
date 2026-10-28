@@ -9,6 +9,10 @@ contextBridge.exposeInMainWorld('hvDesktop', {
   plattform: start.plattform,
   geraet: start.geraet,
   lokal: start.lokal,
+  version: start.version,
+  schnittstelle: start.schnittstelle,
+  updateStatus: rufe('updateStatus'),
+  updateInstallieren: rufe('updateInstallieren'),
   // Text size: zooms the whole window like ⌘+ / ⌘−.
   zoom: (faktor) => webFrame.setZoomFactor(faktor),
   pdfBytes: rufe('pdfBytes'),

@@ -7,6 +7,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
 const crypto = require('node:crypto');
+const { VERSION, DESKTOP_SCHNITTSTELLE } = require('./version.cjs');
 
 // Renders HTML to PDF bytes in a hidden window without JavaScript.
 async function htmlZuPdf(html) {
@@ -36,7 +37,9 @@ async function htmlZuPdf(html) {
  */
 function einrichten(o) {
   const h = {
-    start: () => ({ plattform: process.platform, geraet: o.geraet(), lokal: o.lokal() }),
+    start: () => ({ plattform: process.platform, geraet: o.geraet(), lokal: o.lokal(), version: VERSION, schnittstelle: DESKTOP_SCHNITTSTELLE }),
+    updateStatus: () => null,
+    updateInstallieren: () => { throw new Error('Kein Update verfügbar.'); },
     pdfBytes: (_e, html) => htmlZuPdf(String(html)),
     speichern: async (e, inhalt, name, filter, oeffnen) => {
       const ziel = await dialog.showSaveDialog(BrowserWindow.fromWebContents(e.sender), {

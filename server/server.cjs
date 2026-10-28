@@ -16,7 +16,7 @@ const ortszeit = require('../electron/zeit.cjs');
 const authModul = require('./auth.cjs');
 const geheim = require('./geheim.cjs');
 
-const VERSION = require('../package.json').version;
+const { VERSION, DESKTOP_SCHNITTSTELLE, vergleichen, neuesteVersion } = require('../electron/version.cjs');
 const TYPEN = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml',
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.pdf': 'application/pdf', '.json': 'application/json',
   '.txt': 'text/plain; charset=utf-8', '.csv': 'text/csv; charset=utf-8', '.xml': 'application/xml', '.woff2': 'font/woff2', '.ico': 'image/x-icon', '.tif': 'image/tiff', '.tiff': 'image/tiff' };
@@ -103,9 +103,17 @@ async function starten(o) {
       senden('meldung', `Automatische Sicherung fehlgeschlagen: ${e?.message ?? e}`);
     }
   };
+  // Is there a newer release? Asked once a day (server mode; the Mac app asks for itself). MIETSHAUS_UPDATE_PRUEFEN=0 stops it.
+  let neueste = null;
+  const updatePruefen = async () => {
+    if (o.modus !== 'server' || process.env.MIETSHAUS_UPDATE_PRUEFEN === '0') return;
+    const n = await neuesteVersion();
+    if (n) neueste = vergleichen(n.version, VERSION) > 0 ? n : null;
+  };
   automatik();
-  const t1 = setTimeout(autoSicherung, 60_000);
+  const t1 = setTimeout(() => { autoSicherung(); updatePruefen(); }, 60_000);
   const t2 = setInterval(() => { automatik(); autoSicherung(); }, 3600_000);
+  const t3 = setInterval(updatePruefen, 24 * 3600_000);
 
   // ---------- helpers ----------
   const json = (res, status, wert, kopf = {}) => {
@@ -203,7 +211,8 @@ async function starten(o) {
 
     if (p === '/api/status') {
       const w = wer(req);
-      return json(res, 200, { modus: o.modus, version: VERSION, angemeldet: !!w, benutzer: w?.benutzer ?? null, einrichtung: o.modus === 'server' && auth.anzahl() === 0 });
+      return json(res, 200, { modus: o.modus, version: VERSION, desktop_schnittstelle: DESKTOP_SCHNITTSTELLE, angemeldet: !!w, benutzer: w?.benutzer ?? null,
+        einrichtung: o.modus === 'server' && auth.anzahl() === 0 });
     }
     if (o.modus === 'lokal' && p === '/lokal') {
       // The Mac app opens /lokal?token=…: the token becomes a cookie and is gone from the address.
@@ -270,7 +279,7 @@ async function starten(o) {
       return json(res, 200, { modus: o.modus, dbFile: o.modus === 'lokal' ? dbFile : 'mietshaus.sqlite (Server)', dokumente: o.modus === 'lokal' ? dokumentOrdner() : 'dokumente (Server)',
         version: VERSION, sicherungen: o.modus === 'lokal' ? sicherungsOrdner(dbFile) : 'sicherungen (Server)', geraet: o.geraet?.name ?? null, stand: datenStand(raw),
         letzte_auto_sicherung: e.letzte_auto_sicherung ?? null, benutzer: w.benutzer, eingangsordner_fest: !!o.eingang, eingangsordner: eingangsordner(),
-        mail_verschluesselt: passwort.verschluesselt });
+        mail_verschluesselt: passwort.verschluesselt, update: neueste && { version: neueste.version, url: neueste.url } });
     }
     if (p.startsWith('/dateien/dokument/')) return datei(res, dokumentOrdner(), p.slice('/dateien/dokument/'.length), u.searchParams.get('name'));
     if (p.startsWith('/dateien/vorschau/')) return datei(res, vorschauOrdner(), p.slice('/dateien/vorschau/'.length));
@@ -441,7 +450,7 @@ async function starten(o) {
     importieren: (pfade, opt) => { const r = ana.importieren(pfade, opt); senden('aktualisiert'); return r; },
     eingangsordnerSetzen: (pfad) => { dbSystem.setzeEinstellungen({ eingangsordner: pfad || null }); ein.ordnerSetzen(pfad || null); },
     beenden: async () => {
-      clearTimeout(t1); clearInterval(t2);
+      clearTimeout(t1); clearInterval(t2); clearInterval(t3);
       ein.ordnerSetzen(null);
       for (const h of hoerer) h.res.end();
       await new Promise((ok) => server.close(ok));
