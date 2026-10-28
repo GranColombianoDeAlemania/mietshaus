@@ -4,7 +4,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 npx vite build
 rm -rf release
-npx electron-packager . Mietshaus --platform=darwin --arch=arm64 --out=release \
+npx electron-packager . Mietshaus --platform=darwin --arch=arm64 --out=release --icon=resources/Mietshaus.icns \
+  --protocol=mietshaus --protocol-name=Mietshaus \
   --app-bundle-id=local.mietshaus --app-category-type=public.app-category.business \
   --ignore='^/(src|scripts|release|resources|node_modules/\.vite)' --ignore='\.ts$' --overwrite \
   --extra-resource=resources/tessdata --no-asar

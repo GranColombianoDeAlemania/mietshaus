@@ -1,29 +1,40 @@
-// Draws the app icons for the browser / home screen (public/): a white house on the orange accent colour.
-// Run: node scripts/icons.cjs
+// Draws the app icons from resources/logo.svg (house with a capybara in the door):
+//   public/  – browser tab, iPhone/iPad home screen, web app (square; the systems round the corners themselves)
+//   resources/Mietshaus.icns – the Mac app (rounded square with the margin macOS expects)
+// Run on a Mac: node scripts/icons.cjs
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
-const { createCanvas } = require('@napi-rs/canvas');
+const { execFileSync } = require('node:child_process');
+const { createCanvas, loadImage } = require('@napi-rs/canvas');
 
-function icon(groesse, rand) {
-  const c = createCanvas(groesse, groesse);
-  const g = c.getContext('2d');
-  g.fillStyle = '#c4501b';
-  if (rand) { g.beginPath(); g.roundRect(0, 0, groesse, groesse, groesse * 0.22); g.fill(); } else g.fillRect(0, 0, groesse, groesse);
-  const s = groesse / 24, ox = groesse * 0.5 - 12 * s * 0.62, oy = groesse * 0.5 - 12 * s * 0.62;
-  g.save();
-  g.translate(ox, oy);
-  g.scale(s * 0.62, s * 0.62);
-  g.strokeStyle = '#fff'; g.lineWidth = 2.1; g.lineJoin = 'round'; g.lineCap = 'round';
-  // lucide "house"
-  g.stroke(new (require('@napi-rs/canvas').Path2D)('M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8'));
-  g.stroke(new (require('@napi-rs/canvas').Path2D)('M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'));
-  g.restore();
-  return c.toBuffer('image/png');
-}
-const ziel = path.join(__dirname, '..', 'public');
-fs.mkdirSync(ziel, { recursive: true });
-fs.writeFileSync(path.join(ziel, 'icon-192.png'), icon(192, false));
-fs.writeFileSync(path.join(ziel, 'icon-512.png'), icon(512, false));
-fs.writeFileSync(path.join(ziel, 'apple-touch-icon.png'), icon(180, false));
-fs.writeFileSync(path.join(ziel, 'favicon.png'), icon(64, true));
-console.log('Icons geschrieben.');
+const wurzel = path.join(__dirname, '..');
+const svg = fs.readFileSync(path.join(wurzel, 'resources', 'logo.svg'), 'utf8');
+// Square variant without the rounded corners, for systems that round by themselves.
+const eckig = svg.replace('<rect width="1024" height="1024" rx="228"', '<rect width="1024" height="1024" rx="0"');
+
+(async () => {
+  const bild = async (quelle, groesse, rand = 0) => {
+    const img = await loadImage(Buffer.from(quelle));
+    const c = createCanvas(groesse, groesse);
+    c.getContext('2d').drawImage(img, rand, rand, groesse - 2 * rand, groesse - 2 * rand);
+    return c.toBuffer('image/png');
+  };
+  const pub = path.join(wurzel, 'public');
+  fs.writeFileSync(path.join(pub, 'icon-192.png'), await bild(eckig, 192));
+  fs.writeFileSync(path.join(pub, 'icon-512.png'), await bild(eckig, 512));
+  fs.writeFileSync(path.join(pub, 'apple-touch-icon.png'), await bild(eckig, 180));
+  fs.writeFileSync(path.join(pub, 'favicon.png'), await bild(svg, 64));
+  fs.copyFileSync(path.join(wurzel, 'resources', 'logo.svg'), path.join(pub, 'logo.svg'));
+  // macOS: the icon shape is 824 of 1024 points, centred.
+  if (process.platform === 'darwin') {
+    const set = fs.mkdtempSync(path.join(os.tmpdir(), 'mietshaus-icon-')) + '/Mietshaus.iconset';
+    fs.mkdirSync(set);
+    for (const g of [16, 32, 128, 256, 512]) {
+      fs.writeFileSync(path.join(set, `icon_${g}x${g}.png`), await bild(svg, g, Math.round(g * 100 / 1024)));
+      fs.writeFileSync(path.join(set, `icon_${g}x${g}@2x.png`), await bild(svg, g * 2, Math.round(g * 2 * 100 / 1024)));
+    }
+    execFileSync('iconutil', ['-c', 'icns', set, '-o', path.join(wurzel, 'resources', 'Mietshaus.icns')]);
+  }
+  console.log('Icons geschrieben.');
+})();

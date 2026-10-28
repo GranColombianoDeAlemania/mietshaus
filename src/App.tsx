@@ -453,7 +453,7 @@ export default function App(props: { benutzer?: Row | null }) {
         onDragLeave={(e) => { if (e.currentTarget === e.target) { setZiehen(false); dropZiel.current?.classList.remove('drop-ziel'); dropZiel.current = null; } }} onDrop={abgelegt}>
         {menueOffen && <div className="menuehintergrund" onClick={() => setMenueOffen(false)} />}
         <aside className={`seitenleiste${menueOffen ? ' offen' : ''}`} onClick={(e) => { if ((e.target as Element).closest('.eintrag')) setMenueOffen(false); }}>
-          <div className="marke"><I.House size={17} strokeWidth={2.2} /><span>Mietshaus</span></div>
+          <div className="marke"><img src="/logo.svg" alt="" width={26} height={26} /><span>Mietshaus</span></div>
           <div className="modi" role="tablist">
             {([['miete', 'Miete', I.KeyRound], ['weg', 'WEG', I.Building2], ['projekt', 'Projekte', I.Hammer]] as [Modus, string, I.LucideIcon][]).map(([m, l, Icon]) => (
               <button key={m} role="tab" className={`modus-${m}`} aria-selected={modus === m} onClick={() => wechsle(m)}><Icon size={18} strokeWidth={1.8} /><span>{l}</span></button>

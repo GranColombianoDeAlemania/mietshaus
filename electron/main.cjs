@@ -18,11 +18,40 @@ let neueVersion = null; // a newer release (update.pruefen), shown in the window
 // server twice (same inbox folder, same mails, same monthly charges).
 const ersteInstanz = !!process.env.MIETSHAUS_MEHRFACH || app.requestSingleInstanceLock();
 if (!ersteInstanz) app.exit(0);
-app.on('second-instance', () => {
+app.on('second-instance', (_e, argv) => {
+  const link = argv.find((a) => a.startsWith('mietshaus://'));
+  if (link) return linkOeffnen(link);
   if (!hauptfenster || hauptfenster.isDestroyed()) return;
   if (hauptfenster.isMinimized()) hauptfenster.restore();
   hauptfenster.focus();
 });
+
+// Links mietshaus://verbinden?adresse=https://…&einladung=… (from the guide of an invitation package): after a question,
+// the app connects to that server and opens the invitation there. Asking first matters – a link could name any server.
+let fruehLink = null;
+app.on('open-url', (e, url) => { e.preventDefault(); if (app.isReady()) linkOeffnen(url); else fruehLink = url; });
+async function linkOeffnen(url) {
+  let adresse, einladung;
+  try {
+    const u = new URL(url);
+    adresse = new URL(u.searchParams.get('adresse') ?? '').origin;
+    einladung = u.searchParams.get('einladung');
+    if (u.protocol !== 'mietshaus:' || !/^https?:$/.test(new URL(adresse).protocol)) throw new Error();
+  } catch {
+    return require('electron').dialog.showErrorBox('Mietshaus', 'Dieser Link ist ungültig.');
+  }
+  const jetzt = verbindung();
+  if (jetzt.art === 'server' && jetzt.adresse === adresse) {
+    if (einladung && hauptfenster && !hauptfenster.isDestroyed()) hauptfenster.loadURL(`${adresse}/?einladung=${encodeURIComponent(einladung)}`);
+    hauptfenster?.focus();
+    return;
+  }
+  const { response } = await require('electron').dialog.showMessageBox(hauptfenster ?? undefined, {
+    type: 'question', message: 'Mit diesem Mietshaus-Server verbinden?', detail: `${adresse}\n\nMietshaus startet danach neu.${jetzt.art === 'lokal' ? ' Die Daten auf diesem Mac bleiben erhalten („Lokal arbeiten“ in den Einstellungen).' : ''}`,
+    buttons: ['Verbinden', 'Abbrechen'], defaultId: 0, cancelId: 1,
+  });
+  if (response === 0) verbindungSetzen('server', adresse, einladung);
+}
 
 // German date inputs and number formats regardless of the system language.
 app.commandLine.appendSwitch('lang', 'de-DE');
@@ -47,12 +76,12 @@ const verbindungsDatei = () => path.join(app.getPath('userData'), 'verbindung.js
 function verbindung() {
   try {
     const v = JSON.parse(fs.readFileSync(verbindungsDatei(), 'utf8'));
-    if (v.art === 'server' && /^https?:\/\//.test(v.adresse ?? '')) return { art: 'server', adresse: v.adresse.replace(/\/+$/, '') };
+    if (v.art === 'server' && /^https?:\/\//.test(v.adresse ?? '')) return { art: 'server', adresse: v.adresse.replace(/\/+$/, ''), einladung: v.einladung ?? null };
   } catch {}
   return { art: 'lokal', adresse: null };
 }
-function verbindungSetzen(art, adresse) {
-  fs.writeFileSync(verbindungsDatei(), JSON.stringify(art === 'server' ? { art, adresse } : { art: 'lokal', adresse: verbindung().adresse }, null, 2));
+function verbindungSetzen(art, adresse, einladung = null) {
+  fs.writeFileSync(verbindungsDatei(), JSON.stringify(art === 'server' ? { art, adresse, einladung } : { art: 'lokal', adresse: verbindung().adresse }, null, 2));
   // Simplest and safest switch: start again with the new connection.
   app.relaunch();
   app.exit(0);
@@ -179,6 +208,41 @@ async function datenUebertragen(e) {
   return { dateien: dateien.length };
 }
 
+// ---------- invitation package ----------
+// A folder for a new person, zipped: Mietshaus.app (this very app), the personal guide, the logo and a double-click
+// link that connects the app to the server with the invitation.
+async function paketErstellen(e, { titel, anleitung, link }) {
+  if (!app.isPackaged || process.platform !== 'darwin') throw new Error('Das Paket mit der Mac-App lässt sich nur aus der installierten Mac-App erstellen.');
+  const name = `Mietshaus für ${String(titel).replace(/[/\\:*?"<>|]/g, '_')}`;
+  const ziel = await require('electron').dialog.showSaveDialog(BrowserWindow.fromWebContents(e.sender), {
+    defaultPath: path.join(app.getPath('desktop'), `${name}.zip`), filters: [{ name: 'ZIP-Archiv', extensions: ['zip'] }] });
+  if (ziel.canceled || !ziel.filePath) return null;
+  const melde = (t) => e.sender.send('hv:fortschritt', t);
+  const { execFileSync } = require('node:child_process');
+  const tmp = fs.mkdtempSync(path.join(app.getPath('temp'), 'mietshaus-paket-'));
+  const ordner = path.join(tmp, name);
+  try {
+    fs.mkdirSync(ordner);
+    melde('Mac-App wird kopiert …');
+    execFileSync('/usr/bin/ditto', [path.resolve(process.execPath, '..', '..', '..'), path.join(ordner, 'Mietshaus.app')]);
+    fs.writeFileSync(path.join(ordner, 'Anleitung – bitte zuerst öffnen.html'), String(anleitung));
+    const logo = path.join(__dirname, '..', 'dist', 'icon-512.png');
+    if (fs.existsSync(logo)) fs.copyFileSync(logo, path.join(ordner, 'logo.png'));
+    fs.writeFileSync(path.join(ordner, 'Mit Mietshaus verbinden.webloc'), `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict><key>URL</key><string>${String(link).replace(/&/g, '&amp;')}</string></dict></plist>
+`);
+    melde('Paket wird gepackt …');
+    fs.rmSync(ziel.filePath, { force: true });
+    execFileSync('/usr/bin/ditto', ['-c', '-k', '--sequesterRsrc', '--keepParent', ordner, ziel.filePath]);
+    melde('');
+    shell.showItemInFolder(ziel.filePath);
+    return ziel.filePath;
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
 // ---------- window ----------
 function fehlerSeite(win, adresse, text) {
   const html = `<!doctype html><meta charset="utf-8"><body style="font:15px -apple-system,sans-serif;background:#1c2324;color:#eee;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
@@ -209,7 +273,9 @@ async function createWindow() {
   const melden = (richtung) => { if (richtung) win.webContents.send('hv:navigation', richtung); };
   win.on('swipe', (_e, r) => melden(r === 'right' ? 'zurueck' : r === 'left' ? 'vor' : null));
   win.on('app-command', (_e, c) => melden(c === 'browser-backward' ? 'zurueck' : c === 'browser-forward' ? 'vor' : null));
-  win.loadURL(v.art === 'server' ? basis : `${basis}/lokal?token=${lokal.token}`);
+  // An invitation from a link opens once, right after connecting.
+  win.loadURL(v.art === 'server' ? (v.einladung ? `${basis}/?einladung=${encodeURIComponent(v.einladung)}` : basis) : `${basis}/lokal?token=${lokal.token}`);
+  if (v.einladung) fs.writeFileSync(verbindungsDatei(), JSON.stringify({ art: 'server', adresse: v.adresse }, null, 2));
 }
 
 app.whenReady().then(async () => {
@@ -221,6 +287,7 @@ app.whenReady().then(async () => {
     verbindung, verbindungSetzen, claudeStatus, claudeVerbinden,
     ueberschreiben: {
       datenUebertragen,
+      paketErstellen,
       updateStatus: () => neueVersion,
       updateInstallieren: (e) => {
         if (!neueVersion) throw new Error('Kein Update verfügbar.');
@@ -229,7 +296,10 @@ app.whenReady().then(async () => {
     },
   });
   claudeUmziehen();
+  if (process.platform !== 'darwin' || !app.isPackaged) app.setAsDefaultProtocolClient('mietshaus');
   await createWindow();
+  const startLink = fruehLink ?? process.argv.find((a) => a.startsWith('mietshaus://'));
+  if (startLink) linkOeffnen(startLink);
   // Newer version on GitHub? Checked shortly after the start and then every six hours; the window offers the update.
   const updateSuchen = async () => {
     neueVersion = await update.pruefen().catch(() => null);

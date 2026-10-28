@@ -28,6 +28,7 @@ contextBridge.exposeInMainWorld('hvDesktop', {
   verbindung: rufe('verbindung'),
   verbindungSetzen: rufe('verbindungSetzen'),
   datenUebertragen: rufe('datenUebertragen'),
+  paketErstellen: rufe('paketErstellen'),
   bei: (kanal, fn) => {
     const h = (_e, ...a) => fn(...a);
     ipcRenderer.on(`hv:${kanal}`, h);

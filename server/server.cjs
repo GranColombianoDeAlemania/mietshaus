@@ -26,7 +26,7 @@ const TYPEN = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '
 const SICHERHEIT = { 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'SAMEORIGIN', 'Cross-Origin-Opener-Policy': 'same-origin' };
 const MAX_UPLOAD = 300 * 1024 * 1024;
 // Functions answered by the server itself, not by the database API.
-const NUR_SERVER = new Set(['benutzerListe', 'benutzerAnlegen', 'benutzerAendern', 'claudeToken', 'meineAufgaben', 'passkeyListe', 'passkeyLoeschen']);
+const NUR_SERVER = new Set(['benutzerListe', 'benutzerAnlegen', 'benutzerAendern', 'claudeToken', 'meineAufgaben', 'passkeyListe', 'passkeyLoeschen', 'personEinladen', 'einladungErneuern']);
 
 class Fehler extends Error { constructor(status, text) { super(text); this.status = status; } }
 
@@ -300,6 +300,22 @@ async function starten(o) {
       if (warten) throw new Fehler(429, `Zu viele Versuche. Bitte in ${warten} Sekunden noch einmal.`);
       const b = auth.anmelden(login, pw);
       if (!b) { auth.bremse.fehler(schluessel); throw new Fehler(401, 'Login oder Passwort falsch.'); }
+      auth.bremse.erfolg(schluessel);
+      return json(res, 200, { benutzer: b }, { 'Set-Cookie': cookie(req, 'mietshaus', auth.sitzungAnlegen(b.id, req.headers['user-agent']), 30) });
+    }
+    // Invitation: who is invited (shown on the page), then the password the person chooses.
+    if (o.modus === 'server' && p === '/api/einladung') {
+      const schluessel = `${ip(req)}|einladung`;
+      const warten = auth.bremse.gesperrt(schluessel);
+      if (warten) throw new Fehler(429, `Zu viele Versuche. Bitte in ${warten} Sekunden noch einmal.`);
+      if (!post) {
+        const info = auth.einladungPruefen(u.searchParams.get('token'));
+        if (!info) { auth.bremse.fehler(schluessel); throw new Fehler(404, 'Diese Einladung ist abgelaufen oder wurde schon benutzt. Bitte eine neue anfordern.'); }
+        return json(res, 200, info);
+      }
+      const { token, passwort: pw } = await jsonLesen(req);
+      let b;
+      try { b = auth.einladungEinloesen(token, pw); } catch (e) { if (/abgelaufen/.test(e.message)) auth.bremse.fehler(schluessel); throw new Fehler(400, e.message); }
       auth.bremse.erfolg(schluessel);
       return json(res, 200, { benutzer: b }, { 'Set-Cookie': cookie(req, 'mietshaus', auth.sitzungAnlegen(b.id, req.headers['user-agent']), 30) });
     }
@@ -578,6 +594,8 @@ async function starten(o) {
     if (fn === 'benutzerAendern') return auth.aendern(Number(args[0]), args[1] ?? {});
     if (fn === 'claudeToken') return auth.claudeToken(w.benutzer.id);
     if (fn === 'passkeyListe') return passkeys.liste(w.benutzer.id);
+    if (fn === 'personEinladen') return auth.einladen(args[0] ?? {});
+    if (fn === 'einladungErneuern') return auth.einladungErneuern(Number(args[0]));
     if (fn === 'passkeyLoeschen') return passkeys.loeschen(w.benutzer.id, args[0]);
     throw new Fehler(400, `Unbekannte Funktion: ${fn}`);
   }

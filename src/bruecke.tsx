@@ -32,6 +32,7 @@ export type Desktop = {
   verbindung: () => Promise<{ art: 'lokal' | 'server'; adresse: string | null }>;
   verbindungSetzen: (art: 'lokal' | 'server', adresse?: string) => Promise<void>;
   datenUebertragen: () => Promise<{ dateien: number }>;
+  paketErstellen: (p: { titel: string; anleitung: string; link: string }) => Promise<string | null>;
   bei: (kanal: string, fn: (...a: any[]) => void) => () => void;
 };
 declare global {

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { call, fehler, type Row } from '../api';
 import { abmelden, anfrage, dateienWaehlen, passkeyHinzufuegen, passkeyMoeglich } from '../bruecke';
+import { anleitungHtml, einladungsLink, verbindenLink, type Einladung } from '../einladung';
 import { ARTEN, homeBildschirmNoetig, pushAbo, pushAusschalten, pushEinschalten, pushMoeglich } from '../mitteilungen';
 import { useLoad } from '../useLoad';
 import { anzeige, SCHRIFTGROESSEN, type Thema } from '../anzeige';
@@ -333,38 +334,80 @@ function Wiederherstellen(props: { schliessen: () => void }) {
 // Users of the server: all with the same rights. A new password ends that user's sessions.
 function Benutzer() {
   const [liste, reload] = useLoad<Row[]>(() => call('benutzerListe'), []);
-  const [neu, setNeu] = useState({ login: '', name: '', passwort: '' });
+  const [ich] = useLoad(() => window.hv.info(), []);
+  const [neu, setNeu] = useState({ login: '', name: '' });
+  const [einladung, setEinladung] = useState<Einladung | null>(null);
   const [meldung, setMeldung] = useState('');
   const tun = async (fn: () => Promise<unknown>, text: string) => {
     try { await fn(); setMeldung(text); reload(); } catch (err) { fehler(err); }
   };
+  const zeigen = (b: Row, r: Row) =>
+    setEinladung({ name: b.name, login: b.login, token: r.token, bis: r.bis, adresse: location.origin, von: (ich as Row)?.benutzer?.name ?? 'Dein Verwalter', mitApp: !!window.hvDesktop });
   return (
     <div className="block">
       <h3>Benutzer</h3>
-      <p className="hinweis">Alle Benutzer haben dieselben Rechte. Im Änderungsprotokoll steht, wer was geändert hat.</p>
+      <p className="hinweis">Alle Benutzer haben dieselben Rechte. Im Änderungsprotokoll steht, wer was geändert hat. Neue Personen lädst du ein:
+        sie bekommen ein Paket mit Anleitung und legen ihr Passwort selbst fest – kein Passwort muss weitergegeben werden.</p>
       <table className="klein">
-        <thead><tr><th>Name</th><th>Login</th><th>Status</th><th /></tr></thead>
+        <thead><tr><th>Name</th><th>Benutzername</th><th>Status</th><th /></tr></thead>
         <tbody>{liste?.map((b) => (
-          <tr key={b.id}><td>{b.name}</td><td>{b.login}</td><td>{b.aktiv ? 'aktiv' : 'gesperrt'}{b.claude ? ' · Claude verbunden' : ''}</td>
+          <tr key={b.id}><td>{b.name}</td><td>{b.login}</td>
+            <td>{!b.aktiv ? 'gesperrt' : b.eingeladen ? `eingeladen${b.einladung_bis ? ` (bis ${new Date(b.einladung_bis).toLocaleDateString('de-DE')})` : ''}` : 'aktiv'}{b.claude ? ' · Claude verbunden' : ''}</td>
             <td className="aktionen">
-              <button onClick={async () => {
-                const pw = window.prompt(`Neues Passwort für ${b.name} (mindestens 10 Zeichen):`);
-                if (pw) tun(() => call('benutzerAendern', b.id, { passwort: pw }), 'Passwort geändert; bestehende Anmeldungen sind beendet.');
-              }}>Passwort…</button>
+              <button title="Neuer Einladungs-Link, z. B. bei vergessenem Passwort" onClick={() => tun(async () => zeigen(b, await call('einladungErneuern', b.id)), '')}>{b.eingeladen ? 'Einladung erneuern' : 'Passwort-Link'}</button>
               <button onClick={() => tun(() => call('benutzerAendern', b.id, { aktiv: !b.aktiv }), b.aktiv ? 'Gesperrt.' : 'Wieder aktiv.')}>{b.aktiv ? 'Sperren' : 'Entsperren'}</button>
             </td></tr>
         ))}</tbody>
       </table>
-      <div className="maske">
-        <label>Login<input value={neu.login} onChange={(ev) => setNeu({ ...neu, login: ev.target.value })} /></label>
-        <label>Name<input value={neu.name} onChange={(ev) => setNeu({ ...neu, name: ev.target.value })} /></label>
-        <label>Passwort<input type="password" autoComplete="new-password" value={neu.passwort} onChange={(ev) => setNeu({ ...neu, passwort: ev.target.value })} /></label>
-      </div>
+      {einladung ? <EinladungFertig e={einladung} schliessen={() => setEinladung(null)} /> : (
+        <div className="panel">
+          <b>Person einladen</b>
+          <div className="maske">
+            <label>Benutzername<input value={neu.login} placeholder="z. B. anna" onChange={(ev) => setNeu({ ...neu, login: ev.target.value.trim() })} /></label>
+            <label>Name<input value={neu.name} placeholder="z. B. Anna Bickel" onChange={(ev) => setNeu({ ...neu, name: ev.target.value })} /></label>
+          </div>
+          <div className="buttons"><span className="spacer" />
+            <button className="primary" disabled={!neu.login} onClick={() => tun(async () => {
+              const r = await call<Row>('personEinladen', neu);
+              zeigen({ name: neu.name || neu.login, login: neu.login }, r as { token: string; bis: string });
+              setNeu({ login: '', name: '' });
+            }, '')}>Einladen…</button>
+          </div>
+        </div>
+      )}
       <Passkeys />
       <div className="buttons">
-        <button className="primary" disabled={!neu.login || !neu.passwort} onClick={() => tun(async () => { await call('benutzerAnlegen', neu); setNeu({ login: '', name: '', passwort: '' }); }, 'Benutzer angelegt.')}>Benutzer anlegen</button>
         <button onClick={() => abmelden().then(() => location.reload())}>Abmelden</button>
         {meldung && <span className="meldung">{meldung}</span>}
+      </div>
+    </div>
+  );
+}
+
+// After inviting: the package (Mac app + guide + connect link), the guide alone, or the link – and the Tailscale step.
+function EinladungFertig(props: { e: Einladung; schliessen: () => void }) {
+  const e = props.e;
+  const [fortschritt, setFortschritt] = useState('');
+  const [meldung, setMeldung] = useState('');
+  useEffect(() => window.hvDesktop?.bei('fortschritt', setFortschritt), []);
+  return (
+    <div className="panel">
+      <div className="kz-zeile"><b>Einladung für {e.name}</b><button className="link" onClick={props.schliessen}>Fertig</button></div>
+      <ol className="klein">
+        <li><b>In Tailscale einladen:</b> Auf login.tailscale.com unter <i>Users → Invite users</i> die E-Mail-Adresse von {e.name} eintragen.
+          {' '}<button className="link" onClick={() => window.hv.extern('https://login.tailscale.com/admin/users')}>Tailscale öffnen</button></li>
+        <li><b>Paket weitergeben</b> (z. B. per AirDrop oder USB-Stick). Der Link darin gilt bis {new Date(e.bis).toLocaleDateString('de-DE')} und nur einmal.</li>
+      </ol>
+      <div className="buttons">
+        {fortschritt && <span className="hinweis">{fortschritt}</span>}{meldung && <span className="meldung">{meldung}</span>}<span className="spacer" />
+        <button onClick={async () => { await navigator.clipboard.writeText(einladungsLink(e)); setMeldung('Link kopiert.'); }}>Link kopieren</button>
+        <button onClick={() => window.hv.speichern(anleitungHtml({ ...e, mitApp: false }), `Mietshaus-Einladung ${e.name}.html`, { name: 'HTML', extensions: ['html'] })}>Nur Anleitung speichern</button>
+        {window.hvDesktop && <button className="primary" disabled={!!fortschritt} onClick={async () => {
+          try {
+            const p = await window.hvDesktop!.paketErstellen({ titel: e.name, anleitung: anleitungHtml({ ...e, mitApp: true }), link: verbindenLink(e) });
+            if (p) setMeldung(`Paket gespeichert: ${p}`);
+          } catch (err) { setFortschritt(''); fehler(err); }
+        }}>Paket mit Mac-App speichern…</button>}
       </div>
     </div>
   );

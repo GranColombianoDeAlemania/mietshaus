@@ -62,6 +62,15 @@ arbeiten“ zeigt sie weiter, aber ohne Abgleich).
    Morgenübersicht ab 7 Uhr, Probleme mit der Sicherung – auch wenn Mietshaus geschlossen ist.
 5. **Einstellungen → Benutzer → Passkey für dieses Gerät hinzufügen**: danach Anmeldung mit Face ID statt Passwort.
 
+## 6c. Weitere Personen einladen
+1. Mac-App (mit dem Server verbunden) → **Einstellungen → Benutzer → Person einladen**: Benutzername und Name → **Einladen…**
+2. **In Tailscale einladen:** login.tailscale.com → *Users → Invite users* → E-Mail-Adresse der Person
+   (der kostenlose Tarif erlaubt bis zu 3 Personen).
+3. **Paket mit Mac-App speichern…** – eine ZIP-Datei mit Mietshaus, einer persönlichen Anleitung und einem
+   „Mit Mietshaus verbinden“-Link. Weitergeben z. B. per AirDrop. Die Person legt ihr Passwort selbst fest; der Link gilt
+   14 Tage und nur einmal. Ohne Mac: **Nur Anleitung speichern** oder **Link kopieren**.
+4. Passwort vergessen? In der Liste **Passwort-Link** – derselbe Weg mit einem neuen Link.
+
 ## 7. Claude
 In der Mac-App (mit Server verbunden): **Einstellungen → Claude Desktop → Verbindung erneuern**. Die App holt für
 dich einen eigenen Claude-Schlüssel vom Server und trägt ihn in Claude Desktop ein; Claude arbeitet dann über den Server

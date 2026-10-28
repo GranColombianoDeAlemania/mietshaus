@@ -147,6 +147,14 @@ From the pick of 28.10.2026 („Paket 1 – ich will nichts bezahlen; Paket 2 so
 | Passkeys | Login with Touch ID / Face ID / security key (WebAuthn), password stays | done |
 | Offen | FinTS (automatic bank statements) – own plan; checks on the real Synology and iPhone (checklist in ANLEITUNG-NAS.md) | open |
 
+## Version 0.12 – invitations and a new face
+
+| Area | Contents | Status |
+|------|----------|--------|
+| Einladen | Invite a person: user without password plus a one-time link (14 days) to set it; the same link resets a forgotten password. Package from the Mac app: zip with Mietshaus.app, personal guide (Tailscale, app, iPhone) and a „Mit Mietshaus verbinden“ link; `mietshaus://verbinden?adresse=…&einladung=…` connects the app after asking | done |
+| Logo | House with a capybara in the door (resources/logo.svg); Mac icon, sidebar, login, browser tab, home screen (`scripts/icons.cjs`) | done |
+| Ersteinrichtung | Field „Benutzername wählen“ with explanation | done |
+
 ## Development
 
 ```

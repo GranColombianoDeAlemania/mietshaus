@@ -57,6 +57,26 @@ function client(url) {
   pruefe('Nach 5 Fehlversuchen gesperrt', (await fremd.anfrage('/api/anmelden', { methode: 'POST', json: { login: 'anna', passwort: 'geheim-genug-1' } })).status === 429);
   pruefe('Andere Logins nicht gesperrt', (await client(s.url).anfrage('/api/anmelden', { methode: 'POST', json: { login: 'ben', passwort: 'auch-geheim-22' } })).ok);
 
+  // ---------- 1b. invitations ----------
+  {
+    const e1 = await anna.call('personEinladen', { login: 'clara', name: 'Clara Neu' });
+    pruefe('Einladung erstellt', e1.id > 0 && e1.token.length > 20 && new Date(e1.bis) > new Date());
+    pruefe('Eingeladene kann sich noch nicht anmelden', (await fremd.anfrage('/api/anmelden', { methode: 'POST', json: { login: 'clara', passwort: '!' } })).status === 401);
+    const info = await (await fremd.anfrage(`/api/einladung?token=${e1.token}`)).json();
+    pruefe('Einladung zeigt Name und Benutzername', info.name === 'Clara Neu' && info.login === 'clara' && info.neu === true, JSON.stringify(info));
+    const clara = client(s.url);
+    const an = await clara.anfrage('/api/einladung', { methode: 'POST', json: { token: e1.token, passwort: 'claras-passwort-1' } });
+    pruefe('Passwort festgelegt und angemeldet', an.ok && Array.isArray(await clara.call('objekte', 'miete')));
+    pruefe('Einladung nur einmal', (await fremd.anfrage(`/api/einladung?token=${e1.token}`)).status === 404);
+    pruefe('Danach normale Anmeldung', (await client(s.url).anfrage('/api/anmelden', { methode: 'POST', json: { login: 'clara', passwort: 'claras-passwort-1' } })).ok);
+    const e2 = await anna.call('einladungErneuern', e1.id);
+    const e3 = await anna.call('einladungErneuern', e1.id);
+    pruefe('Neuer Link ersetzt den alten', (await fremd.anfrage(`/api/einladung?token=${e2.token}`)).status === 404 && (await (await fremd.anfrage(`/api/einladung?token=${e3.token}`)).json()).neu === false);
+    pruefe('Zurückgesetzt: alte Sitzung beendet', (await clara.anfrage('/api/einladung', { methode: 'POST', json: { token: e3.token, passwort: 'neues-passwort-22' } })).ok);
+    pruefe('Zu kurzes Passwort abgelehnt', (await fremd.anfrage('/api/einladung', { methode: 'POST', json: { token: 'x', passwort: 'kurz' } })).status === 400);
+    await anna.call('benutzerAendern', e1.id, { aktiv: false });
+  }
+
   // ---------- 2. changes carry the user ----------
   const o = await anna.call('neuesObjekt', { bezeichnung: 'Teststraße 1', art: 'miete', plz: '10115', ort: 'Berlin' });
   await ben.call('save', 'objekte', { id: o, notiz: 'von Ben' });

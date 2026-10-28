@@ -58,8 +58,11 @@ a { color: var(--accent-text); }
 .seitenleiste { grid-area: side; background: var(--seite); color: var(--seite-ink); display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--seite-line); }
 .marke { display: flex; align-items: center; gap: 8px; height: 52px; padding: 0 18px; font-weight: 600; font-size: 14px; letter-spacing: 0.2px; color: var(--seite-ink); -webkit-app-region: drag; flex-shrink: 0; }
 .marke svg { color: var(--accent); }
+.marke img { display: block; border-radius: 7px; flex-shrink: 0; }
 :root[data-plattform='darwin'] .marke { padding-left: 84px; }
 :root[data-plattform='darwin'] .marke span { display: none; }
+/* Mac app: the window buttons sit left, the logo moves to the right end of the bar. */
+:root[data-plattform='darwin'] .marke { justify-content: flex-end; padding-right: 16px; }
 
 /* Mode switch: three tabs with the icon above the label; the active one is a solid block in its colour. */
 .modi { display: grid; grid-template-columns: repeat(3, 1fr); margin: 0 12px 8px; border: 1px solid var(--seite-line); border-radius: 9px; overflow: hidden; flex-shrink: 0; }
@@ -654,7 +657,8 @@ textarea.brieftext { width: 100%; padding: 10px 12px; border: 1px solid var(--li
 /* Start screen of the server (login, first user). */
 .anmelden { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; background: var(--bg); }
 .anmelden form { width: min(380px, 100%); display: flex; flex-direction: column; gap: 12px; }
-.anmelden .marke { display: flex; align-items: center; gap: 8px; font-weight: 650; color: var(--accent-text); }
+.anmelden .marke { display: flex; align-items: center; gap: 10px; font-weight: 650; font-size: 17px; color: var(--accent-text); }
+.anmelden .marke img { border-radius: 11px; }
 .anmelden label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
 .anmelden input { padding: 9px 10px; border: 1px solid var(--line-stark); border-radius: 8px; background: var(--feld); color: var(--ink); font-size: 15px; }
 .anmelden h2 { margin: 4px 0; }

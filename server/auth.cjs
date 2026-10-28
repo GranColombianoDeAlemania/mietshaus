@@ -3,6 +3,9 @@
 const crypto = require('node:crypto');
 
 const SITZUNG_TAGE = 30;
+const EINLADUNG_TAGE = 14;
+// A user invited but not yet active has no password: nobody can log in with it.
+const KEIN_PASSWORT = '!';
 const sha = (t) => crypto.createHash('sha256').update(t).digest('hex');
 const jetzt = () => new Date().toISOString();
 
@@ -40,7 +43,14 @@ module.exports = function auth(rawDb) {
   const pruefePasswort = (p) => {
     if (typeof p !== 'string' || p.length < 10) throw new Error('Das Passwort braucht mindestens 10 Zeichen.');
   };
-  const oeffentlich = (b) => b && { id: b.id, login: b.login, name: b.name, aktiv: !!b.aktiv, claude: !!b.claude_token_hash, erstellt: b.erstellt };
+  const oeffentlich = (b) => b && { id: b.id, login: b.login, name: b.name, aktiv: !!b.aktiv, claude: !!b.claude_token_hash, erstellt: b.erstellt,
+    eingeladen: b.passwort_hash === KEIN_PASSWORT, einladung_bis: b.einladung_bis ?? null };
+  const einladung = (id) => {
+    const token = crypto.randomBytes(24).toString('base64url');
+    const bis = new Date(Date.now() + EINLADUNG_TAGE * 864e5).toISOString();
+    db().prepare('UPDATE benutzer SET einladung_hash = ?, einladung_bis = ? WHERE id = ?').run(sha(token), bis, id);
+    return { token, bis };
+  };
 
   return {
     anzahl: () => db().prepare('SELECT count(*) AS n FROM benutzer').get().n,
@@ -97,6 +107,31 @@ module.exports = function auth(rawDb) {
     claudeBenutzer: (token) => {
       if (!token) return null;
       return oeffentlich(db().prepare('SELECT * FROM benutzer WHERE claude_token_hash = ? AND aktiv = 1').get(sha(token)));
+    },
+    // Invites a new person: a user without password plus a one-time link. Returns { id, token, bis }.
+    einladen: ({ login, name }) => {
+      if (!/^[a-z0-9._-]{2,40}$/i.test(login ?? '')) throw new Error('Der Benutzername darf nur Buchstaben, Ziffern, Punkt, Minus und Unterstrich enthalten (2–40 Zeichen).');
+      if (db().prepare('SELECT 1 FROM benutzer WHERE login = ?').get(login)) throw new Error('Diesen Benutzernamen gibt es schon.');
+      const id = Number(db().prepare('INSERT INTO benutzer (login, name, passwort_hash) VALUES (?, ?, ?)').run(login, (name || login).trim(), KEIN_PASSWORT).lastInsertRowid);
+      return { id, ...einladung(id) };
+    },
+    // A new link for an existing user (lost invitation, forgotten password). The old link stops working.
+    einladungErneuern: (id) => {
+      if (!db().prepare('SELECT 1 FROM benutzer WHERE id = ?').get(id)) throw new Error('Benutzer nicht gefunden.');
+      return einladung(id);
+    },
+    einladungPruefen: (token) => {
+      const b = db().prepare('SELECT * FROM benutzer WHERE einladung_hash = ? AND einladung_bis >= ? AND aktiv = 1').get(sha(String(token ?? '')), jetzt());
+      return b ? { login: b.login, name: b.name, neu: b.passwort_hash === KEIN_PASSWORT } : null;
+    },
+    // Sets the password with the link; the link is used up and other sessions of the user end. Returns the user.
+    einladungEinloesen: (token, passwort) => {
+      pruefePasswort(passwort);
+      const b = db().prepare('SELECT * FROM benutzer WHERE einladung_hash = ? AND einladung_bis >= ? AND aktiv = 1').get(sha(String(token ?? '')), jetzt());
+      if (!b) throw new Error('Diese Einladung ist abgelaufen oder wurde schon benutzt. Bitte eine neue anfordern.');
+      db().prepare('UPDATE benutzer SET passwort_hash = ?, einladung_hash = NULL, einladung_bis = NULL WHERE id = ?').run(hashen(passwort), b.id);
+      db().prepare('DELETE FROM sitzungen WHERE benutzer_id = ?').run(b.id);
+      return oeffentlich(b);
     },
     // Signed-in devices: an id (start of the token hash), user, device (browser) and last use.
     sitzungen: (eigenesToken) => db().prepare(`SELECT substr(s.token_hash, 1, 16) AS id, s.token_hash = ? AS eigene, s.erstellt, s.zuletzt, s.geraet, b.name

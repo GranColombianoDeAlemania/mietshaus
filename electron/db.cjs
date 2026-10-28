@@ -792,6 +792,9 @@ const MIGRATIONS = [
     erstellt TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     zuletzt TEXT
   );`,
+  // Invitations: a one-time link (hash kept) with which a new user sets the password; also to reset a forgotten one.
+  `ALTER TABLE benutzer ADD COLUMN einladung_hash TEXT;
+   ALTER TABLE benutzer ADD COLUMN einladung_bis TEXT;`,
 ];
 
 // Tables without change time: the log itself, settings of this installation and page state.

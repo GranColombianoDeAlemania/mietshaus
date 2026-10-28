@@ -5,4 +5,4 @@ import type { api } from '../electron/db.cjs';
 export type DbApi = ReturnType<typeof api>;
 // Plus the user management the server answers itself (server/server.cjs, NUR_SERVER).
 export type DbFn = ({ [K in keyof DbApi]: DbApi[K] extends (...a: never[]) => unknown ? K : never }[keyof DbApi] & string)
-  | 'benutzerListe' | 'benutzerAnlegen' | 'benutzerAendern' | 'claudeToken' | 'meineAufgaben' | 'passkeyListe' | 'passkeyLoeschen';
+  | 'benutzerListe' | 'benutzerAnlegen' | 'benutzerAendern' | 'claudeToken' | 'meineAufgaben' | 'passkeyListe' | 'passkeyLoeschen' | 'personEinladen' | 'einladungErneuern';
