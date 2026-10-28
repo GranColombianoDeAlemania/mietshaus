@@ -8,7 +8,7 @@ import { painUeberweisung } from '../bankformate';
 import { bestaetigen, hinweis } from '../frage';
 
 const istBild = (datei: string) => /\.(png|jpe?g|gif|webp|bmp|tiff?)$/i.test(datei);
-export const dokUrl = (datei: string) => `hvdok://dokument/${encodeURIComponent(datei)}`;
+export const dokUrl = (datei: string) => `/dateien/dokument/${encodeURIComponent(datei)}`;
 
 // Readable view of an e-invoice (XRechnung has no visual layout of its own).
 export function ERechnungAnsicht(props: { e: Row }) {

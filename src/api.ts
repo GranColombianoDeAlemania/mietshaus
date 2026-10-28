@@ -27,8 +27,8 @@ declare global {
       neuAnalysieren: (id: number) => Promise<void>;
       bei: (kanal: string, fn: (...a: any[]) => void) => () => void;
       extern: (url: string) => Promise<void>;
-      info: () => Promise<{ dbFile: string; dokumente: string; version: string; sicherungen: string; geraet: string;
-        stand: { zeit: string | null; geraet_name: string | null }; letzte_auto_sicherung: string | null }>;
+      info: () => Promise<{ modus?: 'server' | 'lokal'; dbFile: string; dokumente: string; version: string; sicherungen: string; geraet: string | null;
+        stand: { zeit: string | null; geraet_name: string | null }; letzte_auto_sicherung: string | null; eingangsordner_fest?: boolean; eingangsordner?: string | null }>;
       eingangsordnerWaehlen: () => Promise<string | null>;
       eingangsordnerAus: () => Promise<void>;
       mailSpeichern: (cfg: Row, pw?: string) => Promise<{ verschluesselt: boolean }>;

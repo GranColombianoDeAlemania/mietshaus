@@ -96,6 +96,40 @@ const wirft = (name, fn, muster) => {
   pruefe('Buchungstext im Protokoll', 'text' in JSON.parse(b.neu));
 
   raw.close();
+
+  // ---------- 3. through the Mietshaus server (forwarding with a Claude token) ----------
+  {
+    const { starten } = require('../server/server.cjs');
+    const srv = await starten({ modus: 'server', daten: path.join(ordner, 'server'), port: 0, geraet: { id: 'nas', name: 'NAS' }, mcp: require('../server/mcp-http.cjs').bearbeiten });
+    const kopf = { 'Content-Type': 'application/json', 'X-Mietshaus': '1' };
+    const r = await fetch(`${srv.url}/api/einrichten`, { method: 'POST', headers: kopf, body: JSON.stringify({ login: 'eva', name: 'Eva', passwort: 'geheim-genug-1' }) });
+    const keks = r.headers.get('set-cookie').split(';')[0];
+    const ruf = async (fn, ...args) => (await (await fetch(`${srv.url}/api/call`, { method: 'POST', headers: { ...kopf, Cookie: keks }, body: JSON.stringify({ fn, args }) })).json()).wert;
+    const so = await ruf('neuesObjekt', { bezeichnung: 'Serverstraße 2', art: 'miete' });
+    const token = await ruf('claudeToken');
+    pruefe('Claude-Token erzeugt', /^mh_/.test(token ?? ''));
+    pruefe('Ohne Token kein /mcp', (await fetch(`${srv.url}/mcp`, { method: 'POST', headers: kopf, body: '{}' })).status === 401);
+    pruefe('Token nicht für die übrige API', (await fetch(`${srv.url}/api/call`, { method: 'POST', headers: { ...kopf, Authorization: `Bearer ${token}` }, body: JSON.stringify({ fn: 'objekte', args: ['miete'] }) })).status === 403);
+    const c2 = new Client({ name: 'test', version: '1.0.0' });
+    await c2.connect(new StdioClientTransport({ command: process.execPath, args: [path.join(__dirname, '..', 'electron', 'mcp.cjs')],
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', MIETSHAUS_SERVER: srv.url, MIETSHAUS_TOKEN: token }, stderr: 'pipe' }));
+    const werkzeuge = (await c2.listTools()).tools.map((t) => t.name);
+    pruefe('Weiterleitung kennt die Werkzeuge', werkzeuge.includes('postfach_liste') && werkzeuge.includes('rechnung_buchen'), werkzeuge.length);
+    const liste = JSON.parse((await c2.callTool({ name: 'objekte_liste', arguments: {} })).content[0].text);
+    pruefe('Claude liest über den Server', liste.some((x) => x.bezeichnung === 'Serverstraße 2'));
+    const t5 = (await c2.callTool({ name: 'person_anlegen', arguments: { vorname: 'Lea', nachname: 'Server' } })).content[0].text;
+    pruefe('Claude schreibt über den Server', /^Person angelegt/.test(t5), t5);
+    const sraw = srv.raw();
+    const eintrag = sraw.prepare(`SELECT quelle, benutzer FROM protokoll WHERE tabelle = 'personen' ORDER BY id DESC LIMIT 1`).get();
+    pruefe('… als Claude für Eva protokolliert', eintrag?.quelle === 'claude' && eintrag?.benutzer === 1, JSON.stringify(eintrag));
+    const kt2 = Object.fromEntries((await ruf('konten', so)).map((k) => [k.nr, k.id]));
+    const t6 = (await c2.callTool({ name: 'buchen', arguments: { objekt_id: so, datum: '2026-10-02', text: 'Test über Server',
+      positionen: [{ soll_konto_id: (await ruf('konten', so, 'kosten'))[0].id, haben_konto_id: kt2[1200], betrag_eur: 10 }] } })).content[0].text;
+    pruefe('Buchung über den Server wird Vorschlag', /^Vorschlag \d+ angelegt/.test(t6) && (await ruf('vorschlaege', 'offen')).length === 1, t6);
+    await c2.close();
+    await srv.beenden();
+  }
+
   fs.rmSync(ordner, { recursive: true, force: true });
   console.log(`Claude- und Rückgängig-Test: ${richtig} Prüfungen richtig, ${falsch} falsch.`);
   process.exit(falsch ? 1 : 0);

@@ -38,7 +38,7 @@ Two modes, kept separate but linked:
 | Projekte | Third mode: projects with Gantt, dependencies, quotes/orders/invoices, budget forecast, year plan | done |
 | Auswertungen | Yield per object, Anlage V (inflow principle, AfA), cost take-over from external WEG statements | done |
 | Bank | Returned debits detected (with case), outgoing payments matched to open invoices | done |
-| NAS-Sync | ~~One shared database file on the Synology (SMB)~~ – SQLite in WAL mode must not be shared over SMB (its lock and shared-memory files do not work across the network, the file can break). New approach, see 0.9.1: each device keeps its own database; copies are exchanged through the NAS and merged record by record, the newest change wins | open (prepared in 0.9.1) |
+| NAS-Sync | Replaced in 0.10 by the Mietshaus server on the NAS (one database, no merge) – see below | replaced |
 
 ## Version 0.6 – linked and checked
 
@@ -116,12 +116,30 @@ benutzen; sonst alle Punkte so angenommen“, pick „Beides“).
 | Entwicklung | Git; `npm test` (type check, calculation, backup, Claude/undo tests), `npm run test:klick`; database function names typed in `call()`; one HTML-to-PDF path | done |
 | Offen | pain.001/pain.008 schemas for the click test (XSD files from ISO 20022 not in the repository); merge of several users' copies | open |
 
+## Version 0.10 – server on the NAS
+
+From the pick „Ja, planen“ of 28.10.2026 (Synology with Container Manager, 2–3 users with the same rights, local mode
+stays, also in the browser). Instead of merging copies of several users there is one database on the NAS.
+
+| Area | Contents | Status |
+|------|----------|--------|
+| Kern | PDF reading with pdf.js in Node (`electron/pdf.cjs`, scans rendered with @napi-rs/canvas), OCR without a browser window; HEIC with sips or heic-convert; source, device and user of every change from `temp.kontext` (schema 21: `benutzer`, `sitzungen`, `geaendert_benutzer`, `protokoll.benutzer`) | done |
+| Server | `server/server.cjs` (node:http): database API over `POST /api/call`, login with scrypt and session cookie, lockout per login, first user, user management, Server-Sent Events, upload and analysis, documents only for logged-in users, filing, tax package, backup download and restore in two steps, inbox folder, mail (password AES-GCM with key file), monthly charges and daily backup | done |
+| Oberfläche | `src/bruecke.ts`: the same `window.hv` over HTTP for browser and Mac app; login and first-user screen, users, connection, restore dialog; browser stand-ins (download, print dialog for PDFs, own context menu); phone layout with slide-in menu below 800 px | done |
+| Mac-App | Window onto a server: embedded on 127.0.0.1 with a token (local mode) or the NAS address; desktop extras in `electron/desktop.cjs` (PDF, save dialogs, opening documents, native menus, Claude Desktop); one-time transfer of a Mac's data and documents into an empty server | done |
+| Claude | Tools in `electron/mcpWerkzeuge.cjs`; on the server under `/mcp` (Streamable HTTP, Claude token per user, changes logged as „Claude“ for that user); on the Mac `mcp.cjs` forwards stdio to the server | done |
+| Betrieb | `Dockerfile` (node 24 slim, no Electron), `compose.yaml` for Container Manager (port only on 127.0.0.1, Tailscale serve in front), GitHub Action builds amd64/arm64 to ghcr.io, `ANLEITUNG-NAS.md` | done |
+| Tests | `scripts/servertest.cjs` (HTTP, users, events, upload, restore, local mode), Claude test also through the server and the forwarding, click and screenshot tests through the embedded server (`scripts/harness.cjs`), container checked locally (OCR of a scan and the inbox folder under Linux) | done |
+| Offen | Checks on the real Synology (checklist in ANLEITUNG-NAS.md); pain.001/pain.008 schemas for the click test | open |
+
 ## Development
 
 ```
 npm ci && node node_modules/electron/install.js   # Electron's own download is skipped by npm's install-script guard
 npm run dev        # Vite + Electron with hot reload
-npm test           # type check, calculation test, backup test, Claude/undo test
+npm test           # type check, calculation, backup, Claude/undo and server tests
+MIETSHAUS_DATEN=/tmp/mh PORT=8080 ELECTRON_RUN_AS_NODE=1 npx electron server/server.cjs   # server without container
+docker build -t mietshaus . && docker compose up   # container (see compose.yaml, ANLEITUNG-NAS.md)
 npm run test:klick # click test (XSD=<folder with pain.*.xsd> for the SEPA schema check)
 npm run dist:mac   # Apple Silicon app (zip) in release/; on a Mac signed with codesign (MIETSHAUS_SIGNATUR=<certificate>), on Linux ad hoc with rcodesign
 ```

@@ -1,26 +1,19 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, protocol, safeStorage, Menu } = require('electron');
-const { pathToFileURL } = require('node:url');
+// The Mac app: a window onto a Mietshaus server. Locally the server runs embedded in this app on 127.0.0.1 (the data
+// stay on this Mac); with a server address it is the one on the NAS, reached through Tailscale. The window loads the
+// user interface from that server; the app adds only what a desktop can do (desktop.cjs).
+const { app, BrowserWindow, ipcMain, safeStorage, shell } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
-const { open, api, datenStand, sicherungsOrdner } = require('./db.cjs');
-const sicherung = require('./sicherung.cjs');
+const desktop = require('./desktop.cjs');
 const { geraet: geraetLesen } = require('./geraet.cjs');
-const analyse = require('./analyse.cjs');
-const hvdok = require('./hvdok.cjs');
-const eingang = require('./eingang.cjs');
-const { zip } = require('./zip.cjs');
-const ortszeit = require('./zeit.cjs');
 
-let db;
-let rawDb;
-let dbFile;
-let ana;
-let hauptfenster;
-let geraet;
+let hauptfenster = null;
+let lokal = null; // the embedded server in local mode
+let geraet = null;
 
-// One running copy per computer: a second start brings the window to the front instead of watching the same inbox
-// folder, fetching the same mails and running the monthly charges twice.
+// One running copy per computer: a second start brings the window to the front instead of running the embedded
+// server twice (same inbox folder, same mails, same monthly charges).
 const ersteInstanz = !!process.env.MIETSHAUS_MEHRFACH || app.requestSingleInstanceLock();
 if (!ersteInstanz) app.exit(0);
 app.on('second-instance', () => {
@@ -28,9 +21,6 @@ app.on('second-instance', () => {
   if (hauptfenster.isMinimized()) hauptfenster.restore();
   hauptfenster.focus();
 });
-
-// Stored documents and previews are served to the windows under hvdok:// (also for the built-in PDF viewer).
-protocol.registerSchemesAsPrivileged([hvdok.SCHEMA]);
 
 // German date inputs and number formats regardless of the system language.
 app.commandLine.appendSwitch('lang', 'de-DE');
@@ -48,223 +38,82 @@ function alteDatenUebernehmen() {
 }
 if (ersteInstanz) alteDatenUebernehmen();
 
-const dokumentOrdner = () => path.join(app.getPath('userData'), 'dokumente');
-const vorschauOrdner = () => path.join(dokumentOrdner(), 'vorschau');
-const seite = (name) => (process.env.VITE_DEV_SERVER_URL ? new URL(name, process.env.VITE_DEV_SERVER_URL).href : pathToFileURL(path.join(__dirname, '..', 'dist', name)).href);
-const melden = (kanal, ...args) => { if (hauptfenster && !hauptfenster.isDestroyed()) hauptfenster.webContents.send(kanal, ...args); };
+const dbFile = () => process.env.MIETSHAUS_DB || path.join(app.getPath('userData'), 'mietshaus.sqlite');
 
-function createWindow() {
-  const win = new BrowserWindow({
-    width: 1400,
-    height: 900,
-    minWidth: 1000,
-    minHeight: 640,
-    title: 'Mietshaus',
-    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
-    // The traffic lights sit on the charcoal sidebar; the same colour avoids a white flash while loading.
-    trafficLightPosition: { x: 18, y: 18 },
-    backgroundColor: '#1c2324',
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.cjs'),
-      contextIsolation: true,
-      sandbox: true,
-      plugins: true, // built-in PDF viewer for document previews
-    },
-  });
-  hauptfenster = win;
-  win.loadURL(seite('index.html'));
-  // Back/forward: three-finger swipe (macOS) and the mouse's side buttons (Windows/Linux).
-  win.on('swipe', (_e, richtung) => melden('navigation', richtung === 'right' ? 'zurueck' : richtung === 'left' ? 'vor' : null));
-  win.on('app-command', (_e, cmd) => melden('navigation', cmd === 'browser-backward' ? 'zurueck' : cmd === 'browser-forward' ? 'vor' : null));
-}
-
-// Native right-click menu built from the renderer's entries.
-ipcMain.handle('kontextmenue', (e, eintraege) => new Promise((resolve) => {
-  let gewaehlt = null;
-  const menu = Menu.buildFromTemplate(eintraege.map((x) => (x === '-' ? { type: 'separator' }
-    : { label: x.label, enabled: x.enabled !== false, click: () => { gewaehlt = x.id; resolve(x.id); } })));
-  menu.popup({ window: BrowserWindow.fromWebContents(e.sender), callback: () => setTimeout(() => resolve(gewaehlt), 30) });
-}));
-
-function oeffneDb() {
-  rawDb = open(dbFile, 'app', geraet);
-  db = api(rawDb);
-}
-
-// Notices changes written by another process (Claude Desktop via MCP) and tells the window to reload its data.
-let letzteVersion = null;
-setInterval(() => {
-  if (!db) return;
-  const v = db.datenVersion();
-  if (letzteVersion != null && v !== letzteVersion) melden('aktualisiert');
-  letzteVersion = v;
-}, 2000);
-
-// Renders HTML to PDF bytes.
-async function htmlZuPdf(html) {
-  const tmp = path.join(app.getPath('temp'), `hv-${crypto.randomUUID()}.html`);
-  fs.writeFileSync(tmp, html);
-  const win = new BrowserWindow({ show: false, webPreferences: { sandbox: true, javascript: false } });
+// ---------- connection: local or server ----------
+const verbindungsDatei = () => path.join(app.getPath('userData'), 'verbindung.json');
+function verbindung() {
   try {
-    await win.loadFile(tmp);
-    return await win.webContents.printToPDF({ pageSize: 'A4', printBackground: true, preferCSSPageSize: true });
-  } finally {
-    win.destroy();
-    fs.rmSync(tmp, { force: true });
-  }
+    const v = JSON.parse(fs.readFileSync(verbindungsDatei(), 'utf8'));
+    if (v.art === 'server' && /^https?:\/\//.test(v.adresse ?? '')) return { art: 'server', adresse: v.adresse.replace(/\/+$/, '') };
+  } catch {}
+  return { art: 'lokal', adresse: null };
+}
+function verbindungSetzen(art, adresse) {
+  fs.writeFileSync(verbindungsDatei(), JSON.stringify(art === 'server' ? { art, adresse } : { art: 'lokal', adresse: verbindung().adresse }, null, 2));
+  // Simplest and safest switch: start again with the new connection.
+  app.relaunch();
+  app.exit(0);
 }
 
-// Tax adviser package: Anlage V as PDF, journal, balances and account sheets as CSV, receipts of the year – one ZIP file.
-async function steuerpaket(objektId, jahr, anlageVHtml) {
-  const d = db.steuerpaketDaten(objektId, jahr);
-  const dateien = [
-    { name: `Anlage V ${jahr}.pdf`, daten: await htmlZuPdf(anlageVHtml) },
-    { name: `Journal ${jahr}.csv`, daten: d.journal },
-    { name: `Saldenliste ${jahr}.csv`, daten: d.salden },
-    { name: `Kontenblätter ${jahr}.csv`, daten: d.kontenblaetter },
-  ];
-  let fehlend = 0;
-  for (const b of d.belege) {
-    const p = path.join(dokumentOrdner(), b.datei);
-    if (fs.existsSync(p)) dateien.push({ name: b.name, daten: fs.readFileSync(p) });
-    else fehlend++;
-  }
-  dateien.push({ name: 'Liesmich.txt', daten: [`Steuerunterlagen ${d.objekt} – ${jahr}`, '',
-    `Anlage V ${jahr}.pdf: Aufstellung der Einnahmen und Werbungskosten (Zufluss-/Abflussprinzip).`,
-    'Journal: alle Buchungen des Jahres. Saldenliste: Stand aller Konten. Kontenblätter: jede Buchung je Konto.',
-    `Belege: ${d.belege.length - fehlend} Dokumente (Rechnungen, Bescheide, Kontoauszüge und mit Buchungen verknüpfte Belege).`,
-    'CSV-Dateien: Semikolon getrennt, Beträge mit Komma, UTF-8 – öffnen mit Excel oder Numbers.', '',
-    `Erstellt am ${new Date().toLocaleDateString('de-DE')} mit Mietshaus.`].join('\r\n') });
-  const ziel = await dialog.showSaveDialog({ defaultPath: path.join(app.getPath('documents'), `Steuerunterlagen ${d.objekt} ${jahr}.zip`), filters: [{ name: 'ZIP-Archiv', extensions: ['zip'] }] });
-  if (ziel.canceled || !ziel.filePath) return null;
-  fs.writeFileSync(ziel.filePath, zip(dateien));
-  shell.showItemInFolder(ziel.filePath);
-  return { datei: ziel.filePath, belege: d.belege.length - fehlend, buchungen: d.anzahl_buchungen };
-}
+// The mail password of the embedded server is encrypted with the system keychain (always available on macOS).
+const passwortLokal = (db) => ({
+  lesen: () => {
+    const e = db().einstellungen();
+    // A password encrypted under an older signature of the app (ad-hoc builds) cannot be decrypted any more.
+    if (e.mail_passwort_enc && safeStorage.isEncryptionAvailable()) {
+      try { return safeStorage.decryptString(Buffer.from(e.mail_passwort_enc, 'base64')); } catch {
+        throw new Error('Das gespeicherte E-Mail-Passwort lässt sich nicht mehr entschlüsseln (z. B. nach einem Programm-Update). Bitte unter Einstellungen → Dokumenteneingang neu eingeben.');
+      }
+    }
+    return e.mail_passwort_klar ? Buffer.from(e.mail_passwort_klar, 'base64').toString('utf8') : '';
+  },
+  setzen: (pw) => {
+    if (safeStorage.isEncryptionAvailable()) db().setzeEinstellungen({ mail_passwort_enc: safeStorage.encryptString(pw).toString('base64'), mail_passwort_klar: null });
+    else db().setzeEinstellungen({ mail_passwort_klar: Buffer.from(pw, 'utf8').toString('base64'), mail_passwort_enc: null });
+  },
+  verschluesselt: safeStorage.isEncryptionAvailable(),
+});
 
-// Renders an HTML document to a PDF file the user picks, then opens it.
-async function pdf(html, name) {
-  const data = await htmlZuPdf(html);
-  const ziel = await dialog.showSaveDialog({ defaultPath: path.join(app.getPath('documents'), name), filters: [{ name: 'PDF', extensions: ['pdf'] }] });
-  if (ziel.canceled || !ziel.filePath) return null;
-  fs.writeFileSync(ziel.filePath, data);
-  shell.openPath(ziel.filePath);
-  return ziel.filePath;
-}
-
-// Renders HTML to PDF and files it in the archive (e.g. a signed hand-over protocol); returns the document.
-async function pdfAblegen(html, name, meta) {
-  const tmpPdf = path.join(app.getPath('temp'), name.replace(/[/\\:*?"<>|]/g, '_'));
-  try {
-    fs.writeFileSync(tmpPdf, await htmlZuPdf(html));
-    const [r] = ana.importieren([tmpPdf], { objekt_id: meta.objekt_id ?? null, einheit_id: meta.einheit_id ?? null, projekt_id: meta.projekt_id ?? null, typ: meta.typ ?? null, status: 'abgelegt', quelle: 'programm' });
-    db.dokumentSpeichern({ id: r.id, titel: meta.titel ?? name.replace(/\.pdf$/i, ''), person_id: meta.person_id ?? null, datum: meta.datum ?? null });
-    return { id: r.id, datei: db.dokument(r.id).datei };
-  } finally {
-    fs.rmSync(tmpPdf, { force: true });
-  }
-}
-
-async function speichern(inhalt, name, filter) {
-  const ziel = await dialog.showSaveDialog({ defaultPath: path.join(app.getPath('documents'), name), filters: filter ? [filter] : [] });
-  if (ziel.canceled || !ziel.filePath) return null;
-  fs.writeFileSync(ziel.filePath, inhalt);
-  return ziel.filePath;
-}
-
-async function oeffnen(filter) {
-  const r = await dialog.showOpenDialog({ properties: ['openFile'], filters: filter ? [filter] : [] });
-  if (r.canceled || !r.filePaths[0]) return null;
-  const p = r.filePaths[0];
-  return { name: path.basename(p), base64: fs.readFileSync(p).toString('base64') };
-}
-
-async function sicherungErstellen() {
-  const name = `Mietshaus-Sicherung-${ortszeit.heute()}.sqlite`;
-  const ziel = await dialog.showSaveDialog({ defaultPath: path.join(app.getPath('documents'), name), filters: [{ name: 'Sicherung', extensions: ['sqlite'] }] });
-  if (ziel.canceled || !ziel.filePath) return null;
-  sicherung.schreiben(rawDb, ziel.filePath, geraet);
-  db.setzeEinstellungen({ letzte_sicherung: new Date().toISOString() });
-  return ziel.filePath;
-}
-
-const zeitDe = (iso) => (iso ? new Date(iso).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' }) : 'unbekannt');
-const standText = (s) => `${zeitDe(s.zeit)}${s.geraet_name ? ` (${s.geraet_name})` : ''}`;
-
-// Restores a backup. The file is checked first; when it is older than the data in use, or a newer backup of the same
-// data set exists (e.g. made by another user), the newest state is offered instead.
-async function wiederherstellen() {
-  const ordner = sicherungsOrdner(dbFile);
-  const r = await dialog.showOpenDialog(hauptfenster, { defaultPath: fs.existsSync(ordner) ? ordner : app.getPath('documents'), properties: ['openFile'],
-    filters: [{ name: 'Sicherung', extensions: ['sqlite'] }] });
-  if (r.canceled || !r.filePaths[0]) return null;
-  let gewaehlt = sicherung.pruefen(r.filePaths[0]);
-  const jetzt = datenStand(rawDb);
-  const gleicherBestand = (s) => !s.datenbank_id || !jetzt.datenbank_id || s.datenbank_id === jetzt.datenbank_id;
-  const neueste = sicherung.liste([ordner, path.dirname(gewaehlt.datei), app.getPath('documents')], { ohne: [dbFile] })
-    .filter((s) => s.datei !== gewaehlt.datei && gleicherBestand(s))[0];
-  const zeilen = [`Gewählte Sicherung: Stand ${standText(gewaehlt)}`, `Aktueller Datenbestand: Stand ${standText(jetzt)}`];
-  if (!gleicherBestand(gewaehlt)) zeilen.push('', 'Achtung: Die Sicherung gehört zu einem anderen Datenbestand.');
-  const aelter = !!(jetzt.zeit && gewaehlt.zeit < jetzt.zeit);
-  const besser = neueste && neueste.zeit > gewaehlt.zeit ? neueste : null;
-  if (aelter) zeilen.push('', 'Die Sicherung ist älter als der aktuelle Datenbestand. Alles, was danach eingetragen wurde – auch von anderen Nutzern –, ginge verloren.');
-  if (besser) zeilen.push('', `Neuere Sicherung gefunden: ${path.basename(besser.datei)}, Stand ${standText(besser)}.`);
-  const knoepfe = [...(besser ? ['Neueste Sicherung verwenden'] : []), aelter ? 'Trotzdem diese wiederherstellen' : 'Wiederherstellen', 'Abbrechen'];
-  const antwort = await dialog.showMessageBox(hauptfenster, {
-    type: aelter || besser ? 'warning' : 'question', message: 'Sicherung wiederherstellen?', detail: zeilen.join('\n'),
-    buttons: knoepfe, defaultId: 0, cancelId: knoepfe.length - 1,
+async function lokalStarten() {
+  const { starten } = require('../server/server.cjs');
+  const token = crypto.randomBytes(32).toString('base64url');
+  let server;
+  server = await starten({
+    modus: 'lokal', daten: app.getPath('userData'), dbFile: dbFile(), token, geraet,
+    // In development (npm run dev) the Vite server forwards /api and /dateien to this fixed port.
+    port: Number(process.env.MIETSHAUS_PORT ?? 0),
+    dist: path.join(__dirname, '..', 'dist'),
+    tessdata: app.isPackaged ? path.join(process.resourcesPath, 'tessdata') : path.join(__dirname, '..', 'resources', 'tessdata'),
+    passwort: passwortLokal(() => server.dbSystem),
   });
-  const wahl = knoepfe[antwort.response];
-  if (wahl === 'Abbrechen') return null;
-  if (wahl === 'Neueste Sicherung verwenden') gewaehlt = sicherung.pruefen(besser.datei);
-  const { vorher } = sicherung.einspielen({ quelle: gewaehlt.datei, dbFile, rawDb, geraet, schliessen: () => rawDb.close(), oeffnen: oeffneDb });
-  return { datei: gewaehlt.datei, stand: standText(gewaehlt), vorher };
+  return { ...server, token };
 }
 
-// Daily copy into the backup folder (unless switched off); checked at start and every hour.
-function autoSicherung() {
-  try {
-    if (db.einstellungen().auto_sicherung === '0') return;
-    const ziel = sicherung.automatisch(rawDb, sicherungsOrdner(dbFile), geraet);
-    if (ziel) db.setzeEinstellungen({ letzte_auto_sicherung: new Date().toISOString() });
-  } catch (e) {
-    console.error('Automatische Sicherung', e);
-    melden('meldung', `Automatische Sicherung fehlgeschlagen: ${e?.message ?? e}`);
-  }
-}
-
-// Copies a file into the app's document folder; the database stores only the relative name.
-async function dokumentAblegen() {
-  const r = await dialog.showOpenDialog({ properties: ['openFile', 'multiSelections'] });
-  if (r.canceled) return [];
-  fs.mkdirSync(dokumentOrdner(), { recursive: true });
-  return r.filePaths.map((p) => {
-    const datei = `${crypto.randomUUID()}${path.extname(p)}`;
-    fs.copyFileSync(p, path.join(dokumentOrdner(), datei));
-    return { name: path.basename(p), datei, groesse: fs.statSync(p).size };
-  });
-}
-
-// Only plain file names inside the document folder are accepted.
-const sichererDokPfad = (datei) => path.join(dokumentOrdner(), path.basename(datei));
-
-// Claude Desktop starts Mietshaus's MCP server from this entry in its configuration file.
+// ---------- Claude Desktop ----------
+// Claude Desktop starts Mietshaus's MCP server from this entry in its configuration file: locally it opens the database
+// of this Mac, with a server it forwards to the server's /mcp with the user's Claude token.
 const claudeKonfig = () => (process.platform === 'darwin'
   ? path.join(app.getPath('home'), 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json')
-  : process.platform === 'win32' ? path.join(app.getPath('appData'), 'Claude', 'claude_desktop_config.json')
-    : path.join(app.getPath('appData'), 'Claude', 'claude_desktop_config.json'));
-const mcpEintrag = () => ({
-  command: process.execPath,
-  args: [path.join(app.getAppPath(), 'electron', 'mcp.cjs')],
-  env: { ELECTRON_RUN_AS_NODE: '1', MIETSHAUS_DATEN: app.getPath('userData'), MIETSHAUS_DB: dbFile },
-});
+  : path.join(app.getPath('appData'), 'Claude', 'claude_desktop_config.json'));
+const mcpEintrag = (token) => {
+  const v = verbindung();
+  return {
+    command: process.execPath,
+    args: [path.join(app.getAppPath(), 'electron', 'mcp.cjs')],
+    env: v.art === 'server' && token
+      ? { ELECTRON_RUN_AS_NODE: '1', MIETSHAUS_SERVER: v.adresse, MIETSHAUS_TOKEN: token }
+      : { ELECTRON_RUN_AS_NODE: '1', MIETSHAUS_DATEN: app.getPath('userData'), MIETSHAUS_DB: dbFile() },
+  };
+};
 function claudeStatus() {
   const datei = claudeKonfig();
   let k = null;
   try { k = JSON.parse(fs.readFileSync(datei, 'utf8')); } catch {}
-  return { datei, installiert: fs.existsSync(path.dirname(datei)), verbunden: !!k?.mcpServers?.mietshaus, eintrag: mcpEintrag() };
+  const eintrag = k?.mcpServers?.mietshaus;
+  return { datei, installiert: fs.existsSync(path.dirname(datei)), verbunden: !!eintrag, server: eintrag?.env?.MIETSHAUS_SERVER ?? null };
 }
-function claudeVerbinden() {
+function claudeVerbinden(token) {
   const datei = claudeKonfig();
   fs.mkdirSync(path.dirname(datei), { recursive: true });
   let k = {};
@@ -274,115 +123,118 @@ function claudeVerbinden() {
   }
   // The entry from the Hausverwalter days points at the old app and database, so it is replaced.
   const { hausverwalter: _alt, ...andere } = k.mcpServers ?? {};
-  k.mcpServers = { ...andere, mietshaus: mcpEintrag() };
-  fs.writeFileSync(datei, JSON.stringify(k, null, 2));
+  k.mcpServers = { ...andere, mietshaus: mcpEintrag(token) };
+  fs.writeFileSync(datei, JSON.stringify(k, null, 2), { mode: 0o600 });
   return claudeStatus();
 }
-// A connection set up under the old name is carried over to the new one.
+// A connection set up under the old name, or pointing at the database of this Mac, follows the app.
 function claudeUmziehen() {
-  try { if (JSON.parse(fs.readFileSync(claudeKonfig(), 'utf8')).mcpServers?.hausverwalter) claudeVerbinden(); } catch {}
+  try {
+    const m = JSON.parse(fs.readFileSync(claudeKonfig(), 'utf8')).mcpServers ?? {};
+    if (m.hausverwalter || (m.mietshaus?.env?.MIETSHAUS_DB && verbindung().art === 'lokal')) claudeVerbinden();
+  } catch {}
 }
 
-app.whenReady().then(() => {
-  if (!ersteInstanz) return;
-  dbFile = process.env.MIETSHAUS_DB || path.join(app.getPath('userData'), 'mietshaus.sqlite');
-  geraet = geraetLesen(app.getPath('userData'));
-  oeffneDb();
-  claudeUmziehen();
-  hvdok.protokollRegistrieren(dokumentOrdner, vorschauOrdner);
-  ana = analyse({ db: new Proxy({}, { get: (_t, k) => db[k] }), dokumentOrdner, vorschauOrdner,
-    tessdata: app.isPackaged ? path.join(process.resourcesPath, 'tessdata') : path.join(__dirname, '..', 'resources', 'tessdata'),
-    cacheOrdner: path.join(app.getPath('userData'), 'ocr-cache'),
-    onFertig: (id) => melden('dokumentAnalysiert', id) });
-  ana.warteschlange();
-  // Routine work (monthly charges) at start and then hourly.
-  const automatik = () => { try { if (db.automatikLauf().erzeugt) melden('aktualisiert'); } catch (e) { console.error('Automatik', e); } };
-  automatik();
-  setTimeout(autoSicherung, 60_000);
-  setInterval(() => { automatik(); autoSicherung(); }, 3600_000);
-  ipcMain.handle('importieren', (_e, pfade, opt) => ana.importieren(pfade, opt));
-  ipcMain.handle('dateienImportieren', async (_e, opt) => {
-    const r = await dialog.showOpenDialog({ properties: ['openFile', 'multiSelections'] });
-    return r.canceled ? [] : ana.importieren(r.filePaths, opt);
-  });
-  ipcMain.handle('neuAnalysieren', (_e, id) => ana.neuAnalysieren(id));
-
-  // The mail password is encrypted with the system keychain where available (always on macOS).
-  const passwort = {
-    lesen: () => {
-      const e = db.einstellungen();
-      // A password encrypted under the old app name cannot be decrypted any more and has to be entered again.
-      // The same happens when macOS no longer recognises the app after an update (a new ad-hoc signature).
-      if (e.mail_passwort_enc && safeStorage.isEncryptionAvailable()) {
-        try { return safeStorage.decryptString(Buffer.from(e.mail_passwort_enc, 'base64')); } catch {
-          throw new Error('Das gespeicherte E-Mail-Passwort lässt sich nicht mehr entschlüsseln (z. B. nach einem Programm-Update). Bitte unter Einstellungen → Dokumenteneingang neu eingeben.');
-        }
-      }
-      return e.mail_passwort_klar ? Buffer.from(e.mail_passwort_klar, 'base64').toString('utf8') : '';
-    },
-    setzen: (pw) => {
-      if (safeStorage.isEncryptionAvailable()) db.setzeEinstellungen({ mail_passwort_enc: safeStorage.encryptString(pw).toString('base64'), mail_passwort_klar: null });
-      else db.setzeEinstellungen({ mail_passwort_klar: Buffer.from(pw, 'utf8').toString('base64'), mail_passwort_enc: null });
-    },
+// ---------- moving this Mac's data to the server ----------
+// Only into an empty server: the database goes up as a backup and replaces the empty one, then every stored document
+// and preview follows under its archive name. Progress reaches the window as hv:fortschritt.
+async function datenUebertragen(e) {
+  const v = verbindung();
+  if (v.art !== 'server') throw new Error('Erst mit dem Server verbinden.');
+  if (!fs.existsSync(dbFile())) throw new Error('Auf diesem Mac gibt es keine Mietshaus-Daten.');
+  const ses = e.sender.session;
+  const melde = (text) => e.sender.send('hv:fortschritt', text);
+  const anfrage = async (pfad, body, json = false) => {
+    const r = await ses.fetch(new URL(pfad, v.adresse).href, { method: 'POST', headers: { 'X-Mietshaus': '1', ...(json ? { 'Content-Type': 'application/json' } : {}) },
+      body: json ? JSON.stringify(body) : body });
+    const t = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(t.fehler ?? `Server antwortet mit ${r.status}`);
+    return t;
   };
-  const ein = eingang({
-    db: new Proxy({}, { get: (_t, k) => db[k] }),
-    importieren: (pfade, opt) => { const r = ana.importieren(pfade, opt); melden('aktualisiert'); return r; },
-    melden: (text) => melden('meldung', text),
-    passwort,
+  const leer = async (modus) => (await anfrage('/api/call', { fn: 'objekte', args: [modus] }, true)).wert.length === 0;
+  if (!(await leer('miete')) || !(await leer('weg'))) throw new Error('Auf dem Server gibt es schon Objekte. Übertragen geht nur in einen leeren Server.');
+  melde('Datenbank wird gesichert …');
+  const { DatabaseSync } = require('node:sqlite');
+  const tmp = path.join(app.getPath('temp'), `mietshaus-uebertragung-${crypto.randomUUID()}.sqlite`);
+  const quelle = new DatabaseSync(dbFile(), { readOnly: true });
+  try { quelle.prepare('VACUUM INTO ?').run(tmp); } finally { quelle.close(); }
+  try {
+    melde('Datenbank wird hochgeladen …');
+    const p = await anfrage('/api/sicherung/pruefen', fs.readFileSync(tmp));
+    await anfrage('/api/sicherung/einspielen', { kennung: p.kennung }, true);
+  } finally { fs.rmSync(tmp, { force: true }); }
+  const ordner = path.join(path.dirname(dbFile()), 'dokumente');
+  const dateien = [
+    ...(fs.existsSync(ordner) ? fs.readdirSync(ordner).filter((n) => fs.statSync(path.join(ordner, n)).isFile()).map((n) => ({ n, o: '' })) : []),
+    ...(fs.existsSync(path.join(ordner, 'vorschau')) ? fs.readdirSync(path.join(ordner, 'vorschau')).map((n) => ({ n, o: 'vorschau' })) : []),
+  ];
+  let i = 0;
+  for (const d of dateien) {
+    melde(`Dokumente: ${++i} von ${dateien.length} …`);
+    await anfrage(`/api/dokument-datei?name=${encodeURIComponent(d.n)}${d.o ? '&ordner=vorschau' : ''}`, fs.readFileSync(path.join(ordner, d.o, d.n)));
+  }
+  melde(`Fertig: Datenbank und ${dateien.length} Dateien übertragen.`);
+  return { dateien: dateien.length };
+}
+
+// ---------- window ----------
+function fehlerSeite(win, adresse, text) {
+  const html = `<!doctype html><meta charset="utf-8"><body style="font:15px -apple-system,sans-serif;background:#1c2324;color:#eee;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
+    <div style="max-width:460px"><h2>Mietshaus-Server nicht erreichbar</h2><p>${text}</p><p style="opacity:.7">${adresse}</p>
+    <p>Läuft der Server auf der Synology, und ist Tailscale auf diesem Mac verbunden?</p>
+    <button onclick="location.reload()">Erneut versuchen</button> <button onclick="window.hvDesktop.verbindungSetzen('lokal')">Lokal arbeiten</button></div>`;
+  win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+}
+
+async function createWindow() {
+  const v = verbindung();
+  const win = new BrowserWindow({
+    width: 1400, height: 900, minWidth: 1000, minHeight: 640, title: 'Mietshaus',
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    // The traffic lights sit on the charcoal sidebar; the same colour avoids a white flash while loading.
+    trafficLightPosition: { x: 18, y: 18 },
+    backgroundColor: '#1c2324',
+    webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true, plugins: true },
   });
-  ein.ordnerSetzen(db.einstellungen().eingangsordner);
-  ein.mailPlanen();
-  if (db.einstellungen().mail_aktiv === '1') setTimeout(() => ein.mailAbrufen().catch(() => {}), 20_000);
-  ipcMain.handle('eingangsordnerWaehlen', async () => {
-    const r = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] });
-    if (r.canceled || !r.filePaths[0]) return null;
-    db.setzeEinstellungen({ eingangsordner: r.filePaths[0] });
-    ein.ordnerSetzen(r.filePaths[0]);
-    return r.filePaths[0];
+  hauptfenster = win;
+  const basis = v.art === 'server' ? v.adresse : (process.env.VITE_DEV_SERVER_URL?.replace(/\/$/, '') ?? lokal.url);
+  const herkunft = new URL(basis).origin;
+  // The window stays on its server: other pages never get the desktop functions; links open in the browser.
+  win.webContents.on('will-navigate', (e, url) => { if (!url.startsWith(herkunft) && !url.startsWith('data:')) { e.preventDefault(); if (/^https:/.test(url)) shell.openExternal(url); } });
+  win.webContents.setWindowOpenHandler(({ url }) => { if (/^(https:|mailto:)/.test(url)) shell.openExternal(url); return { action: 'deny' }; });
+  win.webContents.on('did-fail-load', (_e, code, text, url, istHaupt) => { if (istHaupt && code !== -3 && !url.startsWith('data:')) fehlerSeite(win, basis, text); });
+  // Back/forward: three-finger swipe (macOS) and the mouse's side buttons (Windows/Linux).
+  const melden = (richtung) => { if (richtung) win.webContents.send('hv:navigation', richtung); };
+  win.on('swipe', (_e, r) => melden(r === 'right' ? 'zurueck' : r === 'left' ? 'vor' : null));
+  win.on('app-command', (_e, c) => melden(c === 'browser-backward' ? 'zurueck' : c === 'browser-forward' ? 'vor' : null));
+  win.loadURL(v.art === 'server' ? basis : `${basis}/lokal?token=${lokal.token}`);
+}
+
+app.whenReady().then(async () => {
+  if (!ersteInstanz) return;
+  geraet = geraetLesen(app.getPath('userData'));
+  if (verbindung().art === 'lokal') lokal = await lokalStarten();
+  desktop.einrichten({
+    ipcMain, geraet: () => geraet, lokal: () => !!lokal, lokalOrdner: () => (lokal ? path.dirname(dbFile()) : null),
+    verbindung, verbindungSetzen, claudeStatus, claudeVerbinden,
+    ueberschreiben: { datenUebertragen },
   });
-  ipcMain.handle('eingangsordnerAus', () => { db.setzeEinstellungen({ eingangsordner: null }); ein.ordnerSetzen(null); });
-  ipcMain.handle('mailSpeichern', (_e, cfg, pw) => {
-    db.setzeEinstellungen(cfg);
-    if (pw) passwort.setzen(pw);
-    ein.mailPlanen();
-    return { verschluesselt: safeStorage.isEncryptionAvailable() };
-  });
-  ipcMain.handle('mailTesten', () => ein.mailTesten());
-  ipcMain.handle('mailAbrufen', () => ein.mailAbrufen());
-  // One channel for the database API; errors reach the renderer as rejected promises.
-  ipcMain.handle('db', (_e, fn, args) => {
-    if (typeof db[fn] !== 'function') throw new Error(`Unbekannte Funktion: ${fn}`);
-    return db[fn](...args);
-  });
-  ipcMain.handle('pdf', (_e, html, name) => pdf(html, name));
-  ipcMain.handle('steuerpaket', (_e, objektId, jahr, html) => steuerpaket(objektId, jahr, html));
-  ipcMain.handle('pdfAblegen', (_e, html, name, meta) => pdfAblegen(html, name, meta));
-  ipcMain.handle('speichern', (_e, inhalt, name, filter) => speichern(inhalt, name, filter));
-  ipcMain.handle('oeffnen', (_e, filter) => oeffnen(filter));
-  ipcMain.handle('sicherung', () => sicherungErstellen());
-  ipcMain.handle('wiederherstellen', () => wiederherstellen());
-  ipcMain.handle('dokumentAblegen', () => dokumentAblegen());
-  ipcMain.handle('dokumentOeffnen', (_e, datei) => shell.openPath(sichererDokPfad(datei)));
-  ipcMain.handle('dokumentLoeschen', (_e, id) => {
-    const datei = db.dokumentLoeschen(id);
-    if (datei) fs.rmSync(sichererDokPfad(datei), { force: true });
-  });
-  ipcMain.handle('extern', (_e, url) => {
-    if (/^(mailto:|https:)/.test(url)) shell.openExternal(url);
-  });
-  ipcMain.handle('claudeStatus', () => claudeStatus());
-  ipcMain.handle('claudeVerbinden', () => claudeVerbinden());
-  ipcMain.handle('info', () => ({ dbFile, dokumente: dokumentOrdner(), version: app.getVersion(), sicherungen: sicherungsOrdner(dbFile),
-    geraet: geraet.name, stand: datenStand(rawDb), letzte_auto_sicherung: db.einstellungen().letzte_auto_sicherung ?? null }));
-  ipcMain.handle('sicherungsOrdnerOeffnen', () => { fs.mkdirSync(sicherungsOrdner(dbFile), { recursive: true }); return shell.openPath(sicherungsOrdner(dbFile)); });
-  createWindow();
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
-  });
+  claudeUmziehen();
+  await createWindow();
+  app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
+}).catch((e) => {
+  console.error(e);
+  require('electron').dialog.showErrorBox('Mietshaus konnte nicht starten', String(e?.message ?? e));
+  app.exit(1);
 });
 
-app.on('before-quit', () => ana?.beenden());
+let beendet = false;
+app.on('before-quit', (e) => {
+  if (beendet || !lokal) return;
+  e.preventDefault();
+  beendet = true;
+  lokal.beenden().finally(() => app.quit());
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();

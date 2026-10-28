@@ -1,16 +1,13 @@
 // Renders the built app with sample data and saves screenshots: electron scripts/screenshot.cjs <outdir>
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { open, api } = require('../electron/db.cjs');
-const analyse = require('../electron/analyse.cjs');
-const hvdok = require('../electron/hvdok.cjs');
-const { protocol } = require('electron');
-const { pathToFileURL } = require('node:url');
-protocol.registerSchemesAsPrivileged([hvdok.SCHEMA]);
+const { harness } = require('./harness.cjs');
 
 const out = process.argv[process.argv.length - 1];
-const db = api(open(':memory:'));
+const raw = open(':memory:');
+const db = api(raw);
 const o = db.neuesObjekt({ bezeichnung: 'Lindenstraße 5', art: 'gemischt', strasse: 'Lindenstraße 5', plz: '10115', ort: 'Berlin' });
 db.neuesObjekt({ bezeichnung: 'Am Park 12', art: 'miete', plz: '10117', ort: 'Berlin' });
 const e = [['EG links', 72.5, 3, 250], ['EG rechts', 64, 2, 220], ['1. OG', 88, 4, 300], ['Garage 1', 18, 0, 30]]
@@ -60,22 +57,7 @@ db.save('interessenten', { einheit_id: e[3], name: 'Max Huber', personen: 1, ein
 db.save('interessenten', { einheit_id: e[3], name: 'Familie Yilmaz', personen: 4, einkommen_ct: 510000, bewertung: 4, status: 'neu' });
 db.save('schluessel', { objekt_id: o, bezeichnung: 'Haustür / Wohnung', nummer: 'A-12', anzahl: 8 });
 db.save('termine', { titel: 'Wohnungsübergabe EG rechts', datum: new Date(Date.now() + 2 * 864e5).toISOString().slice(0, 10), uhrzeit: '10:00', objekt_id: o });
-ipcMain.handle('db', (_e, fn, args) => db[fn](...args));
-// PDFs are printed straight into the output folder instead of asking for a file name.
-ipcMain.handle('pdf', async (_e, html, name) => {
-  const tmp = path.join(out, 'tmp.html');
-  fs.writeFileSync(tmp, html);
-  const w = new BrowserWindow({ show: false, webPreferences: { offscreen: true } });
-  await w.loadFile(tmp);
-  const data = await w.webContents.printToPDF({ pageSize: 'A4', printBackground: true, preferCSSPageSize: true });
-  w.destroy();
-  fs.writeFileSync(path.join(out, name.replace(/[^\w.-]+/g, '_')), data);
-  return name;
-});
-ipcMain.handle('mailTesten', () => 'ok');
-ipcMain.handle('kontextmenue', () => null);
-ipcMain.handle('claudeStatus', () => ({ datei: '-', installiert: true, verbunden: false, eintrag: {} }));
-ipcMain.handle('info', () => ({ dbFile: ':memory:', dokumente: '-', version: app.getVersion(), sicherungen: '-', geraet: 'Test', stand: { zeit: null, geraet_name: null }, letzte_auto_sicherung: null }));
+// PDFs, saved files and menus: see the harness overrides below.
 app.commandLine.appendSwitch('lang', 'de-DE');
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -83,9 +65,12 @@ app.on('window-all-closed', () => {});
 app.whenReady().then(async () => {
   fs.mkdirSync(out, { recursive: true });
   // Documents from the archive test (scripts/archivtest.cjs) go into the inbox.
-  const docs = path.join(out, 'dokumente');
-  hvdok.protokollRegistrieren(() => docs, () => path.join(docs, 'vorschau'));
-  const ana = analyse({ db, dokumentOrdner: () => docs, vorschauOrdner: () => path.join(docs, 'vorschau') });
+  // The app's window onto an embedded server with this sample data; PDFs and files are written into the output folder.
+  const { win, server } = await harness({ db, raw, out, breite: 1300, hoehe: 760, ueberschreiben: {
+    speichern: (inhalt, name) => { fs.writeFileSync(path.join(out, name.replace(/[^\w.-]+/g, '_')), typeof inhalt === 'string' ? inhalt : Buffer.from(inhalt)); return name; },
+    kontextmenue: () => null, dateiOeffnen: () => '', extern: () => {}, ordnerWaehlen: () => null,
+  } });
+  const ana = { importieren: server.importieren, warteschlange: async () => {} };
   const testDocs = process.env.TESTDOKS ? fs.readdirSync(process.env.TESTDOKS).filter((f) => /\.(pdf|png)$/.test(f)).map((f) => path.join(process.env.TESTDOKS, f)) : [];
   ana.importieren(testDocs);
   // A few photos filed directly with the house, a unit and the project for the galleries.
@@ -102,18 +87,6 @@ app.whenReady().then(async () => {
   const fassade = db.dokumentListe({ q: '' }).find((d) => d.name === 'Fassade.png');
   if (fassade) db.save('objekte', { id: o, titelbild_id: fassade.id });
   db.darlehenSpeichern({ objekt_id: o, bank: 'Sparkasse Berlin', vertragsnr: '4711', betrag_ct: 60000000, zinssatz: 3.2, tilgung_satz: 2, erste_rate: '2022-03-30', zinsbindung_bis: '2027-03-30' });
-  ipcMain.handle('neuAnalysieren', (_e, id) => ana.neuAnalysieren(id));
-  ipcMain.handle('pdfAblegen', async (_e, html, name, meta) => {
-    const tmp = path.join(out, 'ablage.html'); fs.writeFileSync(tmp, html);
-    const w = new BrowserWindow({ show: false, webPreferences: { offscreen: true } }); await w.loadFile(tmp);
-    const pdfPfad = path.join(out, name.replace(/[^\w.-]+/g, '_')); fs.writeFileSync(pdfPfad, await w.webContents.printToPDF({ pageSize: 'A4', printBackground: true, preferCSSPageSize: true })); w.destroy();
-    const [r] = ana.importieren([pdfPfad], { ...meta, status: 'abgelegt' }); return { id: r.id, datei: db.dokument(r.id).datei };
-  });
-  ipcMain.handle('dokumentOeffnen', () => '');
-  ipcMain.handle('dokumentLoeschen', (_e, id) => db.dokumentLoeschen(id));
-  const win = new BrowserWindow({ width: 1300, height: 760, show: false,
-    webPreferences: { preload: path.join(__dirname, '..', 'electron', 'preload.cjs'), contextIsolation: true, sandbox: true, offscreen: true } });
-  await win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   const js = (s) => win.webContents.executeJavaScript(s).catch((e) => { console.log('SCRIPT-FEHLER bei:', s.slice(0, 160)); throw e; });
   // Renderer errors are printed so a test run shows broken pages.
   win.webContents.on('console-message', (e) => { if (e.level === 'error' || e.level === 3) console.log('RENDERER-FEHLER:', e.message, e.sourceId?.split('/').pop(), e.lineNumber); });

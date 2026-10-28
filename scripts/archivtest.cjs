@@ -1,17 +1,15 @@
 // End-to-end test of document intake: text PDF, scanned PDF and photo → text, fields, search.
 // Run: npm run build && electron scripts/archivtest.cjs <outdir>
-const { app, BrowserWindow, protocol } = require('electron');
+const { app, BrowserWindow } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { pathToFileURL } = require('node:url');
 const { open, api } = require('../electron/db.cjs');
 const analyse = require('../electron/analyse.cjs');
-const hvdok = require('../electron/hvdok.cjs');
 
 const out = path.resolve(process.argv[process.argv.length - 1]);
 fs.rmSync(out, { recursive: true, force: true });
 fs.mkdirSync(out, { recursive: true });
-protocol.registerSchemesAsPrivileged([hvdok.SCHEMA]);
 app.commandLine.appendSwitch('lang', 'de-DE');
 // Keep running while helper windows open and close.
 app.on('window-all-closed', () => {});
@@ -25,7 +23,6 @@ Gesamtbetrag: 1.232,40 €<br>Zahlbar bis 31.03.2026 auf IBAN DE89 3704 0044 053
 
 app.whenReady().then(async () => {
   const docs = path.join(out, 'dokumente');
-  hvdok.protokollRegistrieren(() => docs, () => path.join(docs, 'vorschau'));
   const db = api(open(path.join(out, 'test.sqlite')));
   db.neuesObjekt({ bezeichnung: 'Lindenstraße 5', art: 'miete', strasse: 'Lindenstraße 5', plz: '10115', ort: 'Berlin' });
 

@@ -1,13 +1,12 @@
 // Quick look at selected pages with the harness sample data: electron scripts/blick.cjs <outdir>
-const { app, BrowserWindow, ipcMain, protocol } = require('electron');
+const { app } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { open, api } = require('../electron/db.cjs');
-const analyse = require('../electron/analyse.cjs');
-const hvdok = require('../electron/hvdok.cjs');
-protocol.registerSchemesAsPrivileged([hvdok.SCHEMA]);
+const { harness } = require('./harness.cjs');
 const out = process.argv[process.argv.length - 1];
-const db = api(open(':memory:'));
+const raw = open(':memory:');
+const db = api(raw);
 const o = db.neuesObjekt({ bezeichnung: 'Lindenstraße 5', art: 'gemischt', strasse: 'Lindenstraße 5', plz: '10115', ort: 'Berlin' });
 db.neuesObjekt({ bezeichnung: 'Am Park 12', art: 'miete', plz: '10117', ort: 'Berlin' });
 const e = [['EG links', 72.5, 3, 250], ['EG rechts', 64, 2, 220], ['1. OG', 88, 4, 300], ['Garage 1', 18, 0, 30]]
@@ -58,22 +57,15 @@ db.save('interessenten', { einheit_id: e[3], name: 'Familie Yilmaz', personen: 4
 db.save('schluessel', { objekt_id: o, bezeichnung: 'Haustür / Wohnung', nummer: 'A-12', anzahl: 8 });
 db.save('termine', { titel: 'Wohnungsübergabe EG rechts', datum: new Date(Date.now() + 2 * 864e5).toISOString().slice(0, 10), uhrzeit: '10:00', objekt_id: o });
 
-ipcMain.handle('db', (_e, fn, args) => db[fn](...args));
-ipcMain.handle('kontextmenue', () => null);
-ipcMain.handle('info', () => ({ dbFile: ':memory:', dokumente: '-', version: app.getVersion(), sicherungen: '-', geraet: 'Test', stand: { zeit: null, geraet_name: null }, letzte_auto_sicherung: null }));
-ipcMain.handle('claudeStatus', () => ({ datei: '-', installiert: true, verbunden: false, eintrag: {} }));
 app.commandLine.appendSwitch('lang', 'de-DE');
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 app.on('window-all-closed', () => {});
 app.whenReady().then(async () => {
   fs.mkdirSync(out, { recursive: true });
-  hvdok.protokollRegistrieren(() => path.join(out, 'dok'), () => path.join(out, 'dok', 'vorschau'));
   db.automatikLauf();
   const breite = Number(process.env.BREITE) || 1400, hoehe = Number(process.env.HOEHE) || 900;
-  const win = new BrowserWindow({ width: breite, height: hoehe, show: false,
-    webPreferences: { preload: path.join(__dirname, '..', 'electron', 'preload.cjs'), contextIsolation: true, sandbox: true, offscreen: true } });
+  const { win } = await harness({ db, raw, out, breite, hoehe, ueberschreiben: { kontextmenue: () => null } });
   win.webContents.on('console-message', (e) => { if (e.level === 'error' || e.level === 3) console.log('RENDERER-FEHLER:', e.message, e.sourceId?.split('/').pop(), e.lineNumber); });
-  await win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   const js = (s) => win.webContents.executeJavaScript(s).catch((e) => { console.log('SCRIPT-FEHLER:', s.slice(0, 120), e.message); });
   await js(`localStorage.clear(); localStorage.setItem('thema', '${process.env.THEMA || 'hell'}')`);
   await win.reload(); await wait(700);

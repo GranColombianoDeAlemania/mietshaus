@@ -2,17 +2,15 @@
 // opens and closes dialogs, writes the important letters and files and checks their content
 // (PDF text, SEPA XML against the ISO 20022 schemas, ZIP, CSV).
 // Run: npm run build && npx electron scripts/klicktest.cjs <outdir>   (XSD=<folder with pain.*.xsd> for the schema check)
-const { app, BrowserWindow, ipcMain, protocol } = require('electron');
+const { app } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { execFileSync } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
-const analyse = require('../electron/analyse.cjs');
-const hvdok = require('../electron/hvdok.cjs');
-protocol.registerSchemesAsPrivileged([hvdok.SCHEMA]);
+const { harness } = require('./harness.cjs');
 
 const out = path.resolve(process.argv[process.argv.length - 1]);
-const { db, o, w, V } = require('./rechentest.cjs');
+const { db, raw, o, w, V } = require('./rechentest.cjs');
 const DATEIEN = path.join(out, 'dateien');
 fs.rmSync(out, { recursive: true, force: true });
 fs.mkdirSync(DATEIEN, { recursive: true });
@@ -27,60 +25,25 @@ let fehlerZahl = 0;
 const meldeFehler = (...t) => { fehlerZahl++; console.log('FEHLER', ...t); };
 let menueAntwort = null; // answer of the next native menu
 
-async function pdfDrucken(html, datei) {
-  const tmp = path.join(out, `tmp-${Date.now()}.html`);
-  fs.writeFileSync(tmp, html);
-  const w = new BrowserWindow({ show: false, webPreferences: { offscreen: true } });
-  await w.loadFile(tmp);
-  fs.writeFileSync(datei, await w.webContents.printToPDF({ pageSize: 'A4', printBackground: true, preferCSSPageSize: true }));
-  w.destroy();
-  fs.rmSync(tmp, { force: true });
-}
 const sauber = (n) => n.replace(/[^\wäöüÄÖÜß.-]+/g, '_');
 
 app.commandLine.appendSwitch('lang', 'de-DE');
 app.on('window-all-closed', () => {});
 app.whenReady().then(async () => {
-  const docs = path.join(out, 'dokumente');
-  hvdok.protokollRegistrieren(() => docs, () => path.join(docs, 'vorschau'));
-  const ana = analyse({ db, dokumentOrdner: () => docs, vorschauOrdner: () => path.join(docs, 'vorschau') });
-
-  ipcMain.handle('db', (_e, fn, args) => {
-    if (typeof db[fn] !== 'function') { meldeFehler('Unbekannte Funktion', fn); throw new Error(`db.${fn} fehlt`); }
-    return db[fn](...args);
-  });
-  ipcMain.handle('pdf', async (_e, html, name) => { await pdfDrucken(html, path.join(DATEIEN, sauber(name))); return name; });
-  ipcMain.handle('pdfAblegen', async (_e, html, name, meta) => {
-    const datei = path.join(DATEIEN, sauber(name));
-    await pdfDrucken(html, datei);
-    const [r] = ana.importieren([datei], { ...meta, status: 'abgelegt' });
-    return { id: r.id, datei: db.dokument(r.id).datei };
-  });
-  ipcMain.handle('speichern', (_e, inhalt, name) => { fs.writeFileSync(path.join(DATEIEN, sauber(name)), inhalt); return name; });
-  ipcMain.handle('steuerpaket', (_e, objektId, jahr) => {
-    const d = db.steuerpaketDaten(objektId, jahr);
-    const { zip } = require('../electron/zip.cjs');
-    fs.writeFileSync(path.join(DATEIEN, `Steuerpaket ${jahr}.zip`), zip([{ name: 'Journal.csv', daten: d.journal }, { name: 'Salden.csv', daten: d.salden }, { name: 'Kontenblätter.csv', daten: d.kontenblaetter }]));
-    return 'ok';
-  });
-  ipcMain.handle('kontextmenue', (_e, eintraege) => { const a = menueAntwort; menueAntwort = null; return a && eintraege.some((x) => x.id === a) ? a : null; });
-  for (const k of ['oeffnen', 'sicherung', 'wiederherstellen', 'dokumentOeffnen', 'extern', 'eingangsordnerWaehlen', 'eingangsordnerAus', 'mailSpeichern', 'claudeVerbinden', 'neuAnalysieren'])
-    ipcMain.handle(k, () => null);
-  for (const k of ['dokumentAblegen', 'importieren', 'dateienImportieren']) ipcMain.handle(k, () => []);
-  ipcMain.handle('dokumentLoeschen', (_e, id) => db.dokumentLoeschen(id));
-  ipcMain.handle('mailTesten', () => 'ok');
-  ipcMain.handle('mailAbrufen', () => ({ neu: 0 }));
-  ipcMain.handle('claudeStatus', () => ({ datei: '-', installiert: true, verbunden: false, eintrag: {} }));
-  ipcMain.handle('info', () => ({ dbFile: ':memory:', dokumente: docs, version: app.getVersion(), sicherungen: '-', geraet: 'Test', stand: { zeit: null, geraet_name: null }, letzte_auto_sicherung: null }));
-
-  const win = new BrowserWindow({ width: 1300, height: 860, show: false,
-    webPreferences: { preload: path.join(__dirname, '..', 'electron', 'preload.cjs'), contextIsolation: true, sandbox: true, offscreen: true } });
+  // The app's window onto an embedded server with the sample data; files land in the output folder instead of a dialog.
+  const { win } = await harness({ db, raw, out, ueberschreiben: {
+    speichern: (inhalt, name) => { fs.writeFileSync(path.join(DATEIEN, sauber(name)), typeof inhalt === 'string' ? inhalt : Buffer.from(inhalt)); return name; },
+    kontextmenue: (eintraege) => { const a = menueAntwort; menueAntwort = null; return a && eintraege.some((x) => x.id === a) ? a : null; },
+    // Letters filed in the archive and then opened: a copy goes to the output folder for the content checks.
+    dateiOeffnen: (_url, name) => { fs.copyFileSync(path.join(out, 'dokumente', path.basename(name)), path.join(DATEIEN, `archiv-${path.basename(name)}`)); return name; },
+    extern: () => {},
+    ordnerWaehlen: () => null,
+  } });
   win.webContents.on('console-message', (e) => {
     if (e.level === 'error' || e.level === 3) meldeFehler('Renderer:', e.message, e.sourceId?.split('/').pop(), e.lineNumber);
     else if (/^ALERT:/.test(e.message)) console.log('  Meldung:', e.message.slice(7, 220));
   });
   win.webContents.on('render-process-gone', (_e, d) => meldeFehler('Renderer abgestürzt:', d.reason));
-  await win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const js = (s) => win.webContents.executeJavaScript(s).catch((e) => { meldeFehler('Skript:', s.slice(0, 120), e.message); return null; });
   const stubs = `window.confirm = () => true; window.alert = (m) => console.log('ALERT: ' + m); window.prompt = () => null;

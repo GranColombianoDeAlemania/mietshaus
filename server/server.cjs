@@ -40,7 +40,7 @@ class Fehler extends Error { constructor(status, text) { super(text); this.statu
  * @param {string} [o.tessdata]   OCR language files
  * @param {string} [o.eingang]    server: fixed inbox folder (e.g. /eingang in the container)
  * @param {{lesen:Function,setzen:Function,verschluesselt:boolean}} [o.passwort] mail password store (default: key file)
- * @param {Function} [o.mcp]      ({ dbFuer }) => (req, res, dbFuer) handler for /mcp (see mcp-http.cjs)
+ * @param {Function} [o.mcp]      (req, res, db, { dokumente, aktualisiert }) handler for /mcp (server/mcp-http.cjs)
  */
 async function starten(o) {
   const daten = path.resolve(o.daten);
@@ -52,7 +52,11 @@ async function starten(o) {
   const SYSTEM = { quelle: 'app', geraet: o.geraet?.id ?? null, benutzer: null };
 
   let raw = null, roh = null;
-  const oeffneDb = () => { raw = open(dbFile, 'app', o.geraet); roh = api(raw); };
+  // Tests hand over a prepared database (o.verbindung = { raw, api }); restoring a backup then is not possible.
+  const oeffneDb = () => {
+    if (o.verbindung) ({ raw, api: roh } = o.verbindung);
+    else { raw = open(dbFile, 'app', o.geraet); roh = api(raw); }
+  };
   oeffneDb();
   // Background work goes through this proxy: it marks its changes as the server's own (no user).
   const dbSystem = new Proxy({}, { get: (_t, k) => { kontextSetzen(raw, SYSTEM); return roh[k]; } });
@@ -180,11 +184,13 @@ async function starten(o) {
   }
 
   // Errors of the business logic (e.g. "Diese Person ist noch … zugeordnet") are answers for the user, not server faults.
+  // Network errors (e.g. mail server not reachable) come as AggregateError without a message of their own.
+  const alsFehler = (e) => (e instanceof Fehler ? e : new Fehler(400, e?.message || e?.errors?.[0]?.message || e?.code || String(e)));
   const fachlich = (fn) => {
     try {
       const r = fn();
-      return r instanceof Promise ? r.catch((e) => { throw e instanceof Fehler ? e : new Fehler(400, String(e?.message ?? e)); }) : r;
-    } catch (e) { throw e instanceof Fehler ? e : new Fehler(400, String(e?.message ?? e)); }
+      return r instanceof Promise ? r.catch((e) => { throw alsFehler(e); }) : r;
+    } catch (e) { throw alsFehler(e); }
   };
 
   // ---------- routes ----------
@@ -231,7 +237,7 @@ async function starten(o) {
       // Claude's tools run asynchronously: every access to the database marks the change as Claude's, for this user.
       const k = { quelle: 'claude', geraet: o.geraet?.id ?? null, benutzer: w.benutzer?.id ?? null };
       const dbClaude = new Proxy({}, { get: (_t, n) => { kontextSetzen(raw, k); return roh[n]; } });
-      return o.mcp(req, res, dbClaude, () => senden('aktualisiert'));
+      return o.mcp(req, res, dbClaude, { dokumente: dokumentOrdner(), aktualisiert: () => senden('aktualisiert') });
     }
     if (w.claude) throw new Fehler(403, 'Ein Claude-Schlüssel gilt nur für /mcp.');
 
@@ -253,7 +259,9 @@ async function starten(o) {
       if (typeof fn !== 'string' || typeof roh[fn] !== 'function') throw new Fehler(400, `Unbekannte Funktion: ${fn}`);
       const vorher = aenderungen();
       kontext(req, w);
-      const wert = await fachlich(() => roh[fn](...args));
+      let wert = await fachlich(() => roh[fn](...args));
+      // Stored mail passwords (encrypted) stay on the server; the page only learns that one is set.
+      if (fn === 'einstellungen') wert = Object.fromEntries(Object.entries(wert).map(([k, v]) => [k, /^mail_passwort/.test(k) && v ? 'gesetzt' : v]));
       if (aenderungen() !== vorher) senden('aktualisiert', null, req.headers['x-client'] ?? null);
       return json(res, 200, { wert: wert === undefined ? null : wert });
     }
@@ -282,6 +290,18 @@ async function starten(o) {
       const d = roh.dokumentLoeschen(id);
       if (d) fs.rmSync(path.join(dokumentOrdner(), path.basename(d)), { force: true });
       return json(res, 200, { ok: true });
+    }
+    // Moving a Mac's data to the server: stored files under their archive names, never overwriting one.
+    if (post && p === '/api/dokument-datei') {
+      const name = String(u.searchParams.get('name') ?? '');
+      const vorschau = u.searchParams.get('ordner') === 'vorschau';
+      if (!/^[0-9a-f-]{36}(-\d+)?\.[a-z0-9]{1,5}$/i.test(name)) throw new Fehler(400, 'Ungültiger Dateiname.');
+      const ziel = path.join(vorschau ? vorschauOrdner() : dokumentOrdner(), name);
+      const inhalt = await lesen(req);
+      if (fs.existsSync(ziel)) return json(res, 200, { vorhanden: true });
+      fs.mkdirSync(path.dirname(ziel), { recursive: true });
+      fs.writeFileSync(ziel, inhalt);
+      return json(res, 200, { gespeichert: true });
     }
     if (post && p === '/api/neu-analysieren') {
       const { id } = await jsonLesen(req);
@@ -383,8 +403,8 @@ async function starten(o) {
       ein.mailPlanen();
       return json(res, 200, { verschluesselt: passwort.verschluesselt });
     }
-    if (post && p === '/api/mail/testen') return json(res, 200, { text: await ein.mailTesten() });
-    if (post && p === '/api/mail/abrufen') return json(res, 200, await ein.mailAbrufen());
+    if (post && p === '/api/mail/testen') return json(res, 200, { text: await fachlich(() => ein.mailTesten()) });
+    if (post && p === '/api/mail/abrufen') return json(res, 200, await fachlich(() => ein.mailAbrufen()));
     throw new Fehler(404, 'Unbekannte Adresse.');
   }
 

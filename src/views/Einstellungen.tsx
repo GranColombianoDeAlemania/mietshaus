@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { call, fehler, type Row } from '../api';
+import { abmelden, anfrage, dateienWaehlen } from '../bruecke';
 import { useLoad } from '../useLoad';
 import { anzeige, SCHRIFTGROESSEN, type Thema } from '../anzeige';
 import { Tabs } from '../ui';
-import { bestaetigen, hinweis } from '../frage';
+import { bestaetigen, frage, hinweis } from '../frage';
 
 const FELDER: [string, string][] = [
   ['verwalter_name', 'Name / Firma'],
@@ -26,6 +27,7 @@ const zeitpunkt = (iso: string | null) => (iso ? new Date(iso).toLocaleString('d
 export function Einstellungen() {
   const [e, reload] = useLoad<Row>(() => call('einstellungen'), []);
   const [info] = useLoad(() => window.hv.info(), []);
+  const [wiederherstellen, setWiederherstellen] = useState(false);
   const [werte, setWerte] = useState<Row>({});
   const [meldung, setMeldung] = useState('');
   const wert = (k: string) => werte[k] ?? e?.[k] ?? '';
@@ -54,7 +56,9 @@ export function Einstellungen() {
       <SteuerKalender />
       <Automatik />
       <Festschreibung />
-      <ClaudeVerbindung />
+      {info?.modus === 'server' && <Benutzer />}
+      {window.hvDesktop && <Verbindung />}
+      {window.hvDesktop && <ClaudeVerbindung />}
       <Dokumenteneingang />
       <div className="block">
         <h3>Datensicherung</h3>
@@ -77,17 +81,13 @@ export function Einstellungen() {
               if (p) setMeldung(`Sicherung gespeichert: ${p}`);
             } catch (err) { fehler(err); }
           }}>Sicherung erstellen…</button>
-          <button onClick={async () => {
-            // The main process checks the file, compares it with the data in use and asks before anything is replaced.
-            try {
-              if (await window.hv.wiederherstellen()) location.reload();
-            } catch (err) { fehler(err); }
-          }}>Sicherung wiederherstellen…</button>
-          <button onClick={() => window.hv.sicherungsOrdnerOeffnen()}>Sicherungsordner öffnen</button>
+          <button onClick={() => setWiederherstellen(true)}>Sicherung wiederherstellen…</button>
+          {window.hvDesktop?.lokal && <button onClick={() => window.hv.sicherungsOrdnerOeffnen()}>Sicherungsordner öffnen</button>}
         </div>
+        {wiederherstellen && <Wiederherstellen schliessen={() => setWiederherstellen(false)} />}
         {info && (
           <p className="klein hinweis">
-            Datenbank: {info.dbFile}<br />Dokumente: {info.dokumente}<br />Sicherungen: {info.sicherungen}<br />
+            {info.modus === 'server' ? 'Auf dem Mietshaus-Server. ' : ''}Datenbank: {info.dbFile}<br />Dokumente: {info.dokumente}<br />Sicherungen: {info.sicherungen}<br />
             Letzte Änderung: {zeitpunkt(info.stand?.zeit ?? null)}{info.stand?.geraet_name ? ` (${info.stand.geraet_name})` : ''}{info.geraet ? ` · Dieses Gerät: ${info.geraet}` : ''}<br />
             Letzte automatische Sicherung: {zeitpunkt(info.letzte_auto_sicherung ?? null)} · Version {info.version}
           </p>
@@ -151,7 +151,8 @@ function Dokumenteneingang() {
       <p className="hinweis">Alles, was hier ankommt, landet automatisch im Postfach und wird gelesen.</p>
       <div className="panel">
         <b>Eingangsordner</b>
-        <p className="klein hinweis">Z. B. der Scan-Ordner deines Scanners, ein Ordner auf der Synology oder in der iCloud, in den du vom iPhone Fotos speicherst. Eingelesene Dateien werden in den Unterordner „eingelesen“ verschoben.</p>
+        <p className="klein hinweis">Z. B. der Scan-Ordner deines Scanners, ein Ordner auf der Synology oder in der iCloud, in den du vom iPhone Fotos speicherst. Eingelesene Dateien werden in den Unterordner „eingelesen“ verschoben.
+          Auf dem Server ist das die Freigabe „eingang“ der Synology.</p>
         <div className="buttons">
           <span>{e?.eingangsordner ? <b>{e.eingangsordner}</b> : 'kein Ordner gewählt'}</span><span className="spacer" />
           {e?.eingangsordner && <button onClick={async () => { await window.hv.eingangsordnerAus(); reload(); }}>Ausschalten</button>}
@@ -166,7 +167,7 @@ function Dokumenteneingang() {
           <label>Port<input value={w('mail_port') || '993'} onChange={(ev) => set('mail_port', ev.target.value)} /></label>
           <label>Ordner<input value={w('mail_ordner') || 'INBOX'} onChange={(ev) => set('mail_ordner', ev.target.value)} /></label>
           <label className="breit">Benutzer<input value={w('mail_benutzer')} onChange={(ev) => set('mail_benutzer', ev.target.value)} /></label>
-          <label className="breit">Passwort {e?.mail_passwort_enc || e?.mail_passwort_klar ? '(gespeichert)' : ''}<input type="password" value={pw} placeholder={e?.mail_passwort_enc || e?.mail_passwort_klar ? '••••••••' : ''} onChange={(ev) => setPw(ev.target.value)} /></label>
+          <label className="breit">Passwort {e?.mail_passwort_enc || e?.mail_passwort_klar || e?.mail_passwort_server ? '(gespeichert)' : ''}<input type="password" value={pw} placeholder={e?.mail_passwort_enc || e?.mail_passwort_klar || e?.mail_passwort_server ? '••••••••' : ''} onChange={(ev) => setPw(ev.target.value)} /></label>
           <label>Erstmals Mails ab<input type="date" value={w('mail_ab')} onChange={(ev) => set('mail_ab', ev.target.value)} /></label>
           <label className="check"><input type="checkbox" checked={w('mail_texte') === '1'} onChange={(ev) => set('mail_texte', ev.target.checked ? '1' : '0')} /> Mails ohne Anhang als Text ablegen</label>
           <label className="check"><input type="checkbox" checked={w('mail_aktiv') === '1'} onChange={(ev) => set('mail_aktiv', ev.target.checked ? '1' : '0')} /> automatisch abrufen</label>
@@ -273,6 +274,131 @@ function Festschreibung() {
           reload();
         }}>Festschreiben</button>
       </div>
+    </div>
+  );
+}
+
+// Restore: one of the server's own backups or an uploaded file. The server checks it and compares it with the data in
+// use; when it is older, or a newer backup of the same data exists (e.g. from another user), that is offered instead.
+function Wiederherstellen(props: { schliessen: () => void }) {
+  const [liste] = useLoad<Row[]>(() => anfrage('/api/sicherungen').then((r) => r.json()), []);
+  const [laeuft, setLaeuft] = useState(false);
+  const zeit = (iso: string | null) => (iso ? new Date(iso).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' }) : 'unbekannt');
+  const stand = (s: Row) => `${zeit(s.zeit)}${s.geraet ? ` (${s.geraet})` : ''}`;
+  const pruefen = async (r: Response) => {
+    const p = await r.json();
+    const zeilen = [`Gewählte Sicherung: ${p.gewaehlt.name}, Stand ${stand(p.gewaehlt)}`, `Aktueller Datenbestand: Stand ${stand(p.jetzt)}`];
+    if (p.anderer_bestand) zeilen.push('', 'Achtung: Die Sicherung gehört zu einem anderen Datenbestand.');
+    if (p.aelter) zeilen.push('', 'Die Sicherung ist älter als der aktuelle Datenbestand. Alles, was danach eingetragen wurde – auch von anderen Nutzern –, ginge verloren.');
+    if (p.neuere) zeilen.push('', `Neuere Sicherung gefunden: ${p.neuere.name}, Stand ${stand(p.neuere)}.`);
+    zeilen.push('', 'Der jetzige Stand wird vorher automatisch gesichert.');
+    const wahl = await frage({ titel: 'Sicherung wiederherstellen?', text: <>{zeilen.map((z, i) => (z ? <p key={i}>{z}</p> : <br key={i} />))}</>, optionen: [
+      { id: 'nein', label: 'Abbrechen' },
+      ...(p.neuere ? [{ id: 'neueste', label: 'Neueste Sicherung verwenden', primary: true }] : []),
+      { id: 'ja', label: p.aelter ? 'Trotzdem diese wiederherstellen' : 'Wiederherstellen', primary: !p.neuere },
+    ] });
+    if (wahl !== 'ja' && wahl !== 'neueste') return;
+    await anfrage('/api/sicherung/einspielen', { json: { kennung: p.kennung, neueste: wahl === 'neueste' } });
+    location.reload();
+  };
+  const tun = async (fn: () => Promise<Response | null>) => {
+    setLaeuft(true);
+    try { const r = await fn(); if (r) await pruefen(r); } catch (err) { fehler(err); } finally { setLaeuft(false); }
+  };
+  return (
+    <div className="panel">
+      <div className="kz-zeile"><b>Sicherung wiederherstellen</b><button className="link" onClick={props.schliessen}>Schließen</button></div>
+      <div className="buttons">
+        <button disabled={laeuft} onClick={() => tun(async () => {
+          const [f] = await dateienWaehlen({ endungen: ['sqlite'] });
+          return f ? anfrage('/api/sicherung/pruefen', { roh: f, typ: 'application/octet-stream' }) : null;
+        })}>Datei hochladen…</button>
+      </div>
+      {liste && liste.length > 0 && (
+        <table className="klein">
+          <thead><tr><th>Sicherung auf dem {window.hvDesktop?.lokal ? 'Mac' : 'Server'}</th><th>Stand</th><th /></tr></thead>
+          <tbody>{liste.map((s) => (
+            <tr key={s.name}><td>{s.name}</td><td>{stand(s)}</td>
+              <td className="aktionen"><button disabled={laeuft} onClick={() => tun(() => anfrage(`/api/sicherung/pruefen?name=${encodeURIComponent(s.name)}`, { json: {} }))}>Prüfen…</button></td></tr>
+          ))}</tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+// Users of the server: all with the same rights. A new password ends that user's sessions.
+function Benutzer() {
+  const [liste, reload] = useLoad<Row[]>(() => call('benutzerListe'), []);
+  const [neu, setNeu] = useState({ login: '', name: '', passwort: '' });
+  const [meldung, setMeldung] = useState('');
+  const tun = async (fn: () => Promise<unknown>, text: string) => {
+    try { await fn(); setMeldung(text); reload(); } catch (err) { fehler(err); }
+  };
+  return (
+    <div className="block">
+      <h3>Benutzer</h3>
+      <p className="hinweis">Alle Benutzer haben dieselben Rechte. Im Änderungsprotokoll steht, wer was geändert hat.</p>
+      <table className="klein">
+        <thead><tr><th>Name</th><th>Login</th><th>Status</th><th /></tr></thead>
+        <tbody>{liste?.map((b) => (
+          <tr key={b.id}><td>{b.name}</td><td>{b.login}</td><td>{b.aktiv ? 'aktiv' : 'gesperrt'}{b.claude ? ' · Claude verbunden' : ''}</td>
+            <td className="aktionen">
+              <button onClick={async () => {
+                const pw = window.prompt(`Neues Passwort für ${b.name} (mindestens 10 Zeichen):`);
+                if (pw) tun(() => call('benutzerAendern', b.id, { passwort: pw }), 'Passwort geändert; bestehende Anmeldungen sind beendet.');
+              }}>Passwort…</button>
+              <button onClick={() => tun(() => call('benutzerAendern', b.id, { aktiv: !b.aktiv }), b.aktiv ? 'Gesperrt.' : 'Wieder aktiv.')}>{b.aktiv ? 'Sperren' : 'Entsperren'}</button>
+            </td></tr>
+        ))}</tbody>
+      </table>
+      <div className="maske">
+        <label>Login<input value={neu.login} onChange={(ev) => setNeu({ ...neu, login: ev.target.value })} /></label>
+        <label>Name<input value={neu.name} onChange={(ev) => setNeu({ ...neu, name: ev.target.value })} /></label>
+        <label>Passwort<input type="password" autoComplete="new-password" value={neu.passwort} onChange={(ev) => setNeu({ ...neu, passwort: ev.target.value })} /></label>
+      </div>
+      <div className="buttons">
+        <button className="primary" disabled={!neu.login || !neu.passwort} onClick={() => tun(async () => { await call('benutzerAnlegen', neu); setNeu({ login: '', name: '', passwort: '' }); }, 'Benutzer angelegt.')}>Benutzer anlegen</button>
+        <button onClick={() => abmelden().then(() => location.reload())}>Abmelden</button>
+        {meldung && <span className="meldung">{meldung}</span>}
+      </div>
+    </div>
+  );
+}
+
+// Mac app only: work on this Mac (local) or with the Mietshaus server on the NAS.
+function Verbindung() {
+  const [v, reload] = useLoad(() => window.hvDesktop!.verbindung(), []);
+  const [adresse, setAdresse] = useState<string | null>(null);
+  const [fortschritt, setFortschritt] = useState('');
+  useEffect(() => window.hvDesktop!.bei('fortschritt', setFortschritt), []);
+  if (!v) return null;
+  const wert = adresse ?? v.adresse ?? '';
+  return (
+    <div className="block">
+      <h3>Verbindung</h3>
+      <p className="hinweis">
+        <b>Server:</b> Alle arbeiten mit derselben Datenbank auf der Synology, erreichbar über Tailscale (z. B. https://nas.dein-tailnet.ts.net).
+        <b> Lokal:</b> Die Daten liegen nur auf diesem Mac, z. B. zum Arbeiten ohne Verbindung. Zwischen beiden wird nichts abgeglichen.
+      </p>
+      <div className="maske">
+        <label className="breit">Server-Adresse<input value={wert} placeholder="https://nas.dein-tailnet.ts.net" onChange={(ev) => setAdresse(ev.target.value)} /></label>
+      </div>
+      <div className="buttons">
+        <span>Jetzt: <b>{v.art === 'server' ? `Server ${v.adresse}` : 'lokal auf diesem Mac'}</b></span><span className="spacer" />
+        {v.art === 'server' && <button onClick={() => window.hvDesktop!.verbindungSetzen('lokal').then(reload)}>Lokal arbeiten</button>}
+        <button className="primary" disabled={!/^https?:\/\/\S+$/.test(wert)} onClick={() => window.hvDesktop!.verbindungSetzen('server', wert.trim()).then(reload)}>Mit Server verbinden</button>
+      </div>
+      {v.art === 'server' && (
+        <div className="buttons">
+          <span className="klein hinweis">Einmalig: die Daten und Dokumente dieses Macs in den noch leeren Server übernehmen.</span><span className="spacer" />
+          <button onClick={async () => {
+            if (!await bestaetigen('Datenbank und alle Dokumente dieses Macs auf den Server übertragen? Das geht nur, solange der Server noch leer ist.', { ja: 'Übertragen' })) return;
+            try { await window.hvDesktop!.datenUebertragen(); location.reload(); } catch (err) { setFortschritt(''); fehler(err); }
+          }}>Daten dieses Macs übertragen…</button>
+        </div>
+      )}
+      {fortschritt && <p className="meldung">{fortschritt}</p>}
     </div>
   );
 }

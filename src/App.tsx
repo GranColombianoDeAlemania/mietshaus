@@ -347,6 +347,7 @@ export default function App() {
   const markiert = detail ? LISTE_ZU_DETAIL[seite] : aktiv?.id;
   const gruppen = [...new Set(sichtbar.map((s) => s.gruppe))].sort((a, b) => REIHENFOLGE.indexOf(a) - REIHENFOLGE.indexOf(b));
 
+  const [menueOffen, setMenueOffen] = useState(false);
   const [zugeklappt, setZugeklappt] = useState<string[]>(() => { try { return JSON.parse(lesen('zugeklappt') ?? '[]'); } catch { return []; } });
   const klappen = (g: string) => {
     const neu = zugeklappt.includes(g) ? zugeklappt.filter((x) => x !== g) : [...zugeklappt, g];
@@ -437,7 +438,8 @@ export default function App() {
     <NaviContext.Provider value={navi}>
       <div className={`app${ziehen ? ' ziehen' : ''}`} onDragOver={ueber}
         onDragLeave={(e) => { if (e.currentTarget === e.target) { setZiehen(false); dropZiel.current?.classList.remove('drop-ziel'); dropZiel.current = null; } }} onDrop={abgelegt}>
-        <aside className="seitenleiste">
+        {menueOffen && <div className="menuehintergrund" onClick={() => setMenueOffen(false)} />}
+        <aside className={`seitenleiste${menueOffen ? ' offen' : ''}`} onClick={(e) => { if ((e.target as Element).closest('.eintrag')) setMenueOffen(false); }}>
           <div className="marke"><I.House size={17} strokeWidth={2.2} /><span>Mietshaus</span></div>
           <div className="modi" role="tablist">
             {([['miete', 'Miete', I.KeyRound], ['weg', 'WEG', I.Building2], ['projekt', 'Projekte', I.Hammer]] as [Modus, string, I.LucideIcon][]).map(([m, l, Icon]) => (
@@ -497,6 +499,8 @@ export default function App() {
           </nav>
         </aside>
         <header className="kopfleiste">
+          {/* Narrow screens (phone): the sidebar becomes a menu behind this button. */}
+          <button className="rund menueknopf" title="Menü" aria-expanded={menueOffen} onClick={() => setMenueOffen(!menueOffen)}><I.Menu size={18} /></button>
           <div className="navknoepfe">
             <button className="rund" title="Zurück (⌘[)" disabled={!navi.kannZurueck} onClick={zurueck}><I.ChevronLeft size={18} /></button>
             <button className="rund" title="Vor (⌘])" disabled={!navi.kannVor} onClick={vor}><I.ChevronRight size={18} /></button>

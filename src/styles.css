@@ -650,3 +650,37 @@ textarea.brieftext { width: 100%; padding: 10px 12px; border: 1px solid var(--li
 .leer.ablagezone { border: 1.5px dashed var(--line-stark); border-radius: var(--radius); padding: 28px 24px; text-align: center; max-width: 620px; margin: 24px auto; }
 .vorschlagliste { list-style: none; margin: 12px 0 0; padding: 0; }
 .vorschlagliste pre { white-space: pre-wrap; font-size: 12px; margin: 6px 0 0; }
+
+/* Start screen of the server (login, first user). */
+.anmelden { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; background: var(--bg); }
+.anmelden form { width: min(380px, 100%); display: flex; flex-direction: column; gap: 12px; }
+.anmelden .marke { display: flex; align-items: center; gap: 8px; font-weight: 650; color: var(--accent-text); }
+.anmelden label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+.anmelden input { padding: 9px 10px; border: 1px solid var(--line-stark); border-radius: 8px; background: var(--feld); color: var(--ink); font-size: 15px; }
+.anmelden h2 { margin: 4px 0; }
+.fehlertext { color: var(--rot); margin: 0; }
+
+/* Context menu in a browser (the Mac app uses the native one). */
+.webmenue { position: fixed; z-index: 60; min-width: 200px; background: var(--panel); border: 1px solid var(--line-stark); border-radius: 8px; box-shadow: var(--schatten-gross); padding: 4px; display: flex; flex-direction: column; }
+.webmenue button { text-align: left; border: 0; background: transparent; padding: 7px 10px; border-radius: 6px; color: var(--ink); font-weight: 400; }
+.webmenue button:hover:not(:disabled) { background: var(--accent-soft); }
+.webmenue hr { border: 0; border-top: 1px solid var(--line); margin: 4px 0; }
+
+/* Phone and small tablet: one column; the sidebar slides in as a menu (button in the header). */
+.menueknopf, .menuehintergrund { display: none; }
+@media (max-width: 800px) {
+  .app { grid-template: 'kopf' auto 'main' 1fr 'foot' auto / minmax(0, 1fr); }
+  .seitenleiste { position: fixed; z-index: 45; inset: 0 auto 0 0; width: min(290px, 86vw); transform: translateX(-100%); transition: transform 0.2s; }
+  .seitenleiste.offen { transform: none; box-shadow: var(--schatten-gross); }
+  .menuehintergrund { display: block; position: fixed; inset: 0; z-index: 44; background: rgba(20, 26, 27, 0.45); }
+  .menueknopf { display: inline-flex; }
+  .kopfleiste { padding: 0 10px; gap: 8px; }
+  .kopfleiste .navknoepfe { display: none; }
+  .kopfleiste .pfad { display: none; }
+  .kopfleiste .suche { min-width: 0; flex: 1 1 auto; width: auto; }
+  .objektwahl svg { display: none; }
+  .objektwahl select { min-width: 0; max-width: 34vw; }
+  main { padding: 16px 14px 40px; }
+  .kz-raster > .kz { grid-column: span 12 !important; }
+  table { display: block; overflow-x: auto; }
+}

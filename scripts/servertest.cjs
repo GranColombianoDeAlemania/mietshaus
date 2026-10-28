@@ -89,6 +89,12 @@ function client(url) {
   pruefe('Dokument nicht für Fremde', (await fremd.anfrage(`/dateien/dokument/${dok.datei}`)).status === 401);
   pruefe('Kein Pfad aus dem Ordner heraus', (await anna.anfrage('/dateien/dokument/..%2F..%2Fmietshaus.sqlite')).status === 404);
 
+  // ---------- 4b. moving files of a Mac ----------
+  const name = '0123abcd-0000-4000-8000-000000000001.pdf';
+  pruefe('Dokumentdatei übertragen', (await (await anna.anfrage(`/api/dokument-datei?name=${name}`, { methode: 'POST', roh: Buffer.from('%PDF-1') })).json()).gespeichert === true);
+  pruefe('… wird nicht überschrieben', (await (await anna.anfrage(`/api/dokument-datei?name=${name}`, { methode: 'POST', roh: Buffer.from('anders') })).json()).vorhanden === true);
+  pruefe('… kein fremder Dateiname', (await anna.anfrage('/api/dokument-datei?name=..%2Fmietshaus.sqlite', { methode: 'POST', roh: Buffer.from('x') })).status === 400);
+
   // ---------- 5. backup and restore ----------
   const sich = Buffer.from(await (await anna.anfrage('/api/sicherung')).arrayBuffer());
   pruefe('Sicherung heruntergeladen', sich.subarray(0, 15).toString() === 'SQLite format 3', sich.length);

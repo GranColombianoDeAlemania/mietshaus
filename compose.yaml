@@ -1,0 +1,19 @@
+# Mietshaus on the Synology: Container Manager → Projekt → Erstellen, this file as compose.yaml (see ANLEITUNG-NAS.md).
+services:
+  mietshaus:
+    image: ghcr.io/grancolombianodealemania/mietshaus:latest
+    container_name: mietshaus
+    restart: unless-stopped
+    # The Synology user that owns the folders below (find it with `id` over SSH; the first admin is usually 1026:100).
+    user: "1026:100"
+    environment:
+      TZ: Europe/Berlin
+      # Scanner and iPhone drop documents into the shared folder "eingang"; they land in the inbox.
+      MIETSHAUS_EINGANG: /eingang
+    volumes:
+      - /volume1/docker/mietshaus:/daten
+      - /volume1/eingang:/eingang
+    # Only reachable on the NAS itself: Tailscale serve forwards https://<nas>.<tailnet>.ts.net to it.
+    # Never open this port on the router.
+    ports:
+      - "127.0.0.1:8080:8080"

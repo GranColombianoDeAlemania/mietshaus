@@ -46,7 +46,8 @@ for (const [m, d] of Object.entries(HAND)) gleich(`Handwert 3. Werktag ${m}`, dr
 for (const m of monate('2025-01', '2027-12')) gleich(`3. Werktag Miete ${m}`, kalender.mieteFaellig(m, 'BE'), dritterWerktagMiete(m));
 
 // ---------- 2. Sample data: rented house ----------
-const db = api(open(':memory:'));
+const raw = open(':memory:');
+const db = api(raw);
 db.setzeEinstellungen({ bundesland: 'BE', verwalter_name: 'Hausverwaltung Muster', verwalter_strasse: 'Hauptstr. 1', verwalter_plz: '10115', verwalter_ort: 'Berlin' });
 const o = db.neuesObjekt({ bezeichnung: 'Musterhaus Lindenstraße 5', art: 'miete', strasse: 'Lindenstraße 5', plz: '10115', ort: 'Berlin',
   kaufpreis_ct: 120000000, kaufnebenkosten_ct: 9600000, kaufdatum: '2024-05-01', gebaeudeanteil: 75, afa_satz: 2 });
@@ -1089,4 +1090,4 @@ const wa = db.wegAbrechnung(w, '2025-01-01', '2025-12-31');
 console.log(`\nRechentest: ${ok} Prüfungen richtig, ${falsch} falsch.`);
 if (falsch) process.exitCode = 1;
 // The click test reuses the sample data.
-module.exports = { db, o, w, V, E, P, falsch };
+module.exports = { db, raw, o, w, V, E, P, falsch };
