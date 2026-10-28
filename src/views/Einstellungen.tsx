@@ -363,8 +363,8 @@ function Benutzer() {
         <div className="panel">
           <b>Person einladen</b>
           <div className="maske">
-            <label>Benutzername<input value={neu.login} placeholder="z. B. anna" onChange={(ev) => setNeu({ ...neu, login: ev.target.value.trim() })} /></label>
-            <label>Name<input value={neu.name} placeholder="z. B. Anna Bickel" onChange={(ev) => setNeu({ ...neu, name: ev.target.value })} /></label>
+            <label>Benutzername<input value={neu.login} placeholder="z. B. erika" onChange={(ev) => setNeu({ ...neu, login: ev.target.value.trim() })} /></label>
+            <label>Name<input value={neu.name} placeholder="z. B. Erika Mustermann" onChange={(ev) => setNeu({ ...neu, name: ev.target.value })} /></label>
           </div>
           <div className="buttons"><span className="spacer" />
             <button className="primary" disabled={!neu.login} onClick={() => tun(async () => {
@@ -555,7 +555,7 @@ function Passkeys() {
       <div className="buttons">
         {meldung && <span className="meldung">{meldung}</span>}<span className="spacer" />
         {passkeyMoeglich() ? <button onClick={async () => {
-          const name = window.prompt('Name für diesen Passkey, z. B. „iPhone Julian“:', /iPhone/.test(navigator.userAgent) ? 'iPhone' : /iPad/.test(navigator.userAgent) ? 'iPad' : 'Mac');
+          const name = window.prompt('Name für diesen Passkey, z. B. „Mein iPhone“:', /iPhone/.test(navigator.userAgent) ? 'iPhone' : /iPad/.test(navigator.userAgent) ? 'iPad' : 'Mac');
           if (!name) return;
           try { await passkeyHinzufuegen(name); setMeldung('Passkey gespeichert.'); reload(); } catch (e) {
             if ((e as Error).name !== 'NotAllowedError') setMeldung(`Fehler: ${(e as Error).message}`);

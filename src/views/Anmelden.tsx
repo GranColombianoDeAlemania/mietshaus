@@ -57,9 +57,9 @@ function Anmelden(props: { einrichtung: boolean; fertig: () => void }) {
       <h2>{props.einrichtung ? 'Ersten Benutzer anlegen' : 'Anmelden'}</h2>
       {props.einrichtung && <p className="hinweis">Der Server ist neu. Lege den ersten Benutzer an; weitere Personen fügst du danach unter Einstellungen → Benutzer hinzu.</p>}
       <label>{props.einrichtung ? 'Benutzername wählen' : 'Benutzername'}
-        <input autoFocus autoComplete="username" value={login} onChange={(e) => setLogin(e.target.value)} placeholder={props.einrichtung ? 'z. B. julian' : ''} /></label>
+        <input autoFocus autoComplete="username" value={login} onChange={(e) => setLogin(e.target.value)} placeholder={props.einrichtung ? 'z. B. max' : ''} /></label>
       {props.einrichtung && <p className="klein hinweis">Damit meldest du dich künftig an – kurz, ohne Leerzeichen.</p>}
-      {props.einrichtung && <label>Angezeigter Name<input value={name} onChange={(e) => setName(e.target.value)} placeholder="z. B. Julian Bickel" /></label>}
+      {props.einrichtung && <label>Angezeigter Name<input value={name} onChange={(e) => setName(e.target.value)} placeholder="z. B. Max Mustermann" /></label>}
       <label>Passwort<input type="password" autoComplete={props.einrichtung ? 'new-password' : 'current-password'} value={pw} onChange={(e) => setPw(e.target.value)} /></label>
       {props.einrichtung && <label>Passwort wiederholen<input type="password" autoComplete="new-password" value={pw2} onChange={(e) => setPw2(e.target.value)} /></label>}
       {props.einrichtung && <p className="klein hinweis">Mindestens 10 Zeichen.</p>}
