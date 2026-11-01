@@ -74,6 +74,7 @@ export function Status() {
           </table>
         </div>
       )}
+      <p className="klein hinweis">Postleitzahlen: <a href="https://www.geonames.org" onClick={(e) => { e.preventDefault(); window.hv.extern('https://www.geonames.org'); }}>GeoNames</a> (CC BY 4.0).</p>
     </section>
   );
 }

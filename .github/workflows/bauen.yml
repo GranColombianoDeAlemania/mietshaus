@@ -1,6 +1,7 @@
 # Tests, server image and Mac app.
-#   Every push to master and every pull request: type check and all tests (plain Node, no Electron needed).
-#   Push to master (tests green): image ghcr.io/grancolombianodealemania/mietshaus:latest – for trying out.
+#   Every push to master and every pull request: security audit of the libraries, type check and all tests.
+#   Push to master (tests green): image ghcr.io/grancolombianodealemania/mietshaus:latest – for trying out – after a
+#   smoke test of the locked-down container and a security scan.
 #   Tag vX.Y.Z (tests green): image X.Y.Z, X.Y and stable – what the Synology runs – and a GitHub release with the
 #   Mac app (zip + SHA-256), from which the app updates itself.
 name: Bauen
@@ -23,6 +24,8 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci --ignore-scripts
+      # Known security holes in the libraries the server runs with stop the build.
+      - run: npm audit --omit=dev --audit-level=high
       - run: npx tsc --noEmit
       - run: node scripts/rechentest.cjs
       - run: node scripts/sicherungstest.cjs
@@ -54,10 +57,26 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=stable,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+      # First the image for this runner, started locked down like on the Synology, must pass the smoke test.
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: mietshaus:rauchtest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - run: bash scripts/rauchtest.sh mietshaus:rauchtest
+      # Known holes in the base system and libraries of the image: reported, not blocking.
+      - run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.75.0 image --quiet --severity HIGH,CRITICAL \
+            --ignore-unfixed --exit-code 0 mietshaus:rauchtest | tee trivy.txt
+          { echo '### Sicherheitsscan des Images'; echo '```'; cat trivy.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64,linux/arm64
+          cache-from: type=gha
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

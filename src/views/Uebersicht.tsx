@@ -95,21 +95,20 @@ export function Uebersicht(props: { modus: Modus; objekte: Row[]; oeffne: (seite
             </div>
           )}
           <div className="panel">
-            <div className="panelkopf"><h3>Diese Woche</h3></div>
-            {f.termine.length + offeneVorgaenge.length === 0 && <p className="hinweis">Keine Termine oder fälligen Vorgänge.</p>}
+            <div className="panelkopf"><h3>Nächste 14 Tage</h3><L zu={{ seite: 'kalender' }} className="klein">Kalender</L></div>
+            {c.bald.length === 0 && <p className="hinweis">Keine Termine, Fristen oder fälligen Vorgänge.</p>}
             <ul className="hinweisliste">
-              {f.termine.map((t: Row) => (
-                <li key={'t' + t.id}>
-                  <span className="punkt"><I.CalendarDays size={14} /></span>
-                  <div className="inhalt"><L zu={{ seite: 'termine' }}>{t.titel}</L><div className="klein hinweis">{datum(t.datum)} {t.uhrzeit}{t.objekt ? ` · ${t.objekt}` : ''}</div></div>
-                </li>
-              ))}
-              {offeneVorgaenge.map((v) => (
-                <li key={'v' + v.id}>
-                  <span className="punkt"><I.ListChecks size={14} /></span>
-                  <div className="inhalt"><L zu={{ vorgang: v.id, objektId: v.objekt_id }}>{v.titel}</L><div className="klein hinweis">fällig {datum(v.faellig)}{v.objekt ? ` · ${v.objekt}` : ''}</div></div>
-                </li>
-              ))}
+              {c.bald.slice(0, 12).map((t: Row, i: number) => {
+                const Icon = { termin: I.CalendarDays, vorgang: I.ListChecks, frist: I.AlarmClock, projekt: I.HardHat, umzug: I.Truck }[t.art as string] ?? I.CalendarDays;
+                return (
+                  <li key={i} className={t.wichtig ? 'wichtig' : ''}>
+                    <span className="punkt"><Icon size={14} /></span>
+                    <div className="inhalt">{t.ziel ? <L zu={t.ziel}>{t.titel}</L> : t.titel}
+                      <div className="klein hinweis">{datum(t.datum)}{t.uhrzeit ? ` ${t.uhrzeit}` : ''}{t.objekt ? ` · ${t.objekt}` : ''}</div></div>
+                  </li>
+                );
+              })}
+              {c.bald.length > 12 && <li><span className="punkt" /><div className="inhalt"><L zu={{ seite: 'kalender' }}>{c.bald.length - 12} weitere im Kalender</L></div></li>}
             </ul>
           </div>
           {chancen.length > 0 && (

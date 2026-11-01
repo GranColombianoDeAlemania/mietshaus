@@ -766,8 +766,9 @@ module.exports = function kennzahlen({ all, get, PERSON_NAME, bh, aw, ab, vw, dl
       }
       for (const m of all(`SELECT m.*, e.bezeichnung AS einheit, ${PERSON_NAME} AS name FROM mietverhaeltnisse m JOIN einheiten e ON e.id = m.einheit_id
           JOIN personen p ON p.id = m.person_id WHERE e.objekt_id IN (${ids}) AND ((m.ende > ?1 AND m.ende <= ?2) OR (m.beginn > ?1 AND m.beginn <= ?2))`, t, bisD)) {
-        if (m.ende > t && m.ende <= bisD) add(m.ende, `Auszug ${m.name} (${m.einheit}) – Übergabe und Zählerstände`, { ziel: { vertrag: m.id, typ: 'miete' } });
-        if (m.beginn > t && m.beginn <= bisD) add(m.beginn, `Einzug ${m.name} (${m.einheit})`, { ziel: { vertrag: m.id, typ: 'miete' } });
+        // kurz: the same without the tenant's name, for the calendar subscription (it may end up in a cloud).
+        if (m.ende > t && m.ende <= bisD) add(m.ende, `Auszug ${m.name} (${m.einheit}) – Übergabe und Zählerstände`, { ziel: { vertrag: m.id, typ: 'miete' }, kurz: `Auszug ${m.einheit} – Übergabe und Zählerstände` });
+        if (m.beginn > t && m.beginn <= bisD) add(m.beginn, `Einzug ${m.name} (${m.einheit})`, { ziel: { vertrag: m.id, typ: 'miete' }, kurz: `Einzug ${m.einheit}` });
       }
       if (get(`SELECT 1 FROM kautionen k JOIN mietverhaeltnisse m ON m.id = k.vertrag_id JOIN einheiten e ON e.id = m.einheit_id WHERE e.objekt_id IN (${ids}) AND k.zinssatz > 0`))
         add(`${jahr}-12-31`, 'Kautionszinsen gutschreiben', { ziel: { seite: 'kaution' } });
@@ -810,6 +811,37 @@ module.exports = function kennzahlen({ all, get, PERSON_NAME, bh, aw, ab, vw, dl
       umlagefaehig_anteil: summe ? uml / summe : null, nicht_umlagefaehig_qm_ct: flaeche ? Math.round((summe - uml) / flaeche) : null, flaeche };
   }
 
+  // Calendar: appointments, deadlines (rental and WEG), due cases, project tasks, moves – each with a kind and a target.
+  // benutzerId marks the cases assigned to that user (filter "nur meine").
+  function kalender(von, bis, benutzerId = null) {
+    const out = [];
+    const gesehen = new Set();
+    const add = (x) => {
+      const k = `${x.datum}|${x.titel}`;
+      if (!gesehen.has(k)) { gesehen.add(k); out.push(x); }
+    };
+    for (const typ of ['miete', 'weg']) {
+      for (const f of fristen(objekteFuer(typ), typ, vorTag(von), tageZwischen(von, bis) + 1)) {
+        add({ datum: f.datum, titel: f.text, kurz: f.kurz ?? null, art: /^(Einzug|Auszug)/.test(f.text) ? 'umzug' : /Versammlung$|^Eigentümerversammlung/.test(f.text) ? 'termin' : 'frist',
+          wichtig: !!f.wichtig, ziel: f.ziel ?? null });
+      }
+    }
+    for (const t of all(`SELECT t.*, o.bezeichnung AS objekt FROM termine t LEFT JOIN objekte o ON o.id = t.objekt_id WHERE t.datum BETWEEN ? AND ?`, von, bis)) {
+      add({ datum: t.datum, uhrzeit: t.uhrzeit || null, dauer_min: t.dauer_min ?? null, titel: t.titel, ort: t.ort || null, objekt: t.objekt, art: 'termin',
+        erledigt: !!t.erledigt, termin_id: t.id, ziel: { seite: 'kalender' } });
+    }
+    for (const v of all(`SELECT v.*, o.bezeichnung AS objekt FROM vorgaenge v LEFT JOIN objekte o ON o.id = v.objekt_id
+        WHERE v.status <> 'erledigt' AND v.faellig BETWEEN ? AND ?`, von, bis)) {
+      add({ datum: v.faellig, titel: v.titel, objekt: v.objekt, art: 'vorgang', wichtig: v.prioritaet === 1, meins: benutzerId != null && v.zustaendig === benutzerId,
+        zustaendig: v.zustaendig ?? null, ziel: { vorgang: v.id, objektId: v.objekt_id } });
+    }
+    for (const a of all(`SELECT a.*, p.titel AS projekt FROM projektaufgaben a JOIN projekte p ON p.id = a.projekt_id
+        WHERE p.status <> 'abgeschlossen' AND a.fortschritt < 100 AND a.ende BETWEEN ? AND ?`, von, bis)) {
+      add({ datum: a.ende, titel: `${a.meilenstein ? 'Meilenstein' : 'Ende'}: ${a.titel}`, objekt: a.projekt, art: 'projekt', ziel: { projekt: a.projekt_id } });
+    }
+    return out.sort((a, b) => a.datum.localeCompare(b.datum) || String(a.uhrzeit ?? '').localeCompare(String(b.uhrzeit ?? '')));
+  }
+
   function cockpitKennzahlen(modus = 'miete', stichtag = heute()) {
     const typ = modus === 'weg' ? 'weg' : 'miete';
     const objekte = objekteFuer(modus);
@@ -822,6 +854,8 @@ module.exports = function kennzahlen({ all, get, PERSON_NAME, bh, aw, ab, vw, dl
       vergleich: jahresvergleich(objekte, typ, stichtag),
       radar: typ === 'miete' ? radar(objekte, stichtag) : null,
       fristen: fristen(objekte, typ, stichtag),
+      // Everything of the calendar in the next 14 days (all objects).
+      bald: kalender(stichtag, plusTage(stichtag, 14)),
       kosten: kostenNachArt(objekte, stichtag),
     };
   }
@@ -861,5 +895,5 @@ module.exports = function kennzahlen({ all, get, PERSON_NAME, bh, aw, ab, vw, dl
     return out;
   }
 
-  return { zahlungsverhalten, kontoverlauf, mieterKennzahlen, einheitKennzahlen, hausansicht, cockpitKennzahlen, listenKennzahlen, selbstKosten, verbrauchSpruenge, belegung };
+  return { zahlungsverhalten, kontoverlauf, mieterKennzahlen, einheitKennzahlen, hausansicht, cockpitKennzahlen, listenKennzahlen, selbstKosten, verbrauchSpruenge, belegung, kalender };
 };

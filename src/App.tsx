@@ -21,7 +21,8 @@ import { Wirtschaftsplan } from './views/Wirtschaftsplan';
 import { Ruecklagen } from './views/Ruecklagen';
 import { Kautionen, Mietanpassung, Schluesselverwaltung, Versicherungen } from './views/MieteExtras';
 import { Beschluesse, Kontakte, Versammlungen } from './views/WegExtras';
-import { Briefe, Termine, Vorgaenge } from './views/Kommunikation';
+import { Briefe, Vorgaenge } from './views/Kommunikation';
+import { Kalender } from './views/Kalender';
 import { Archiv, DokumentDialog, Postfach, Rechnungen } from './views/Archiv';
 import { Export } from './views/Export';
 import { Protokoll } from './views/Protokoll';
@@ -110,7 +111,7 @@ const SEITEN: Seite[] = [
   { id: 'versicherungen', label: 'Versicherungen', gruppe: 'Verwaltung', objekt: true, render: (c) => <Versicherungen key={c.objekt.id} objekt={c.objekt} /> },
   { id: 'briefe', label: 'Briefe', gruppe: 'Kommunikation', objekt: true, render: (c) => <Briefe key={c.objekt.id + c.modus} objekt={c.objekt} modus={c.modus} /> },
   { id: 'vorgaenge', label: 'Vorgänge', gruppe: 'Kommunikation', objekt: true, render: (c) => <Vorgaenge key={c.objekt.id} objekt={c.objekt} /> },
-  { id: 'termine', label: 'Termine', gruppe: 'Kommunikation', alle: true, render: (c) => <Termine objekte={c.modus === 'projekt' ? [] : c.objekte} /> },
+  { id: 'kalender', label: 'Kalender', gruppe: 'Kommunikation', alle: true, render: (c) => <Kalender objekte={c.modus === 'projekt' ? [] : c.objekte} /> },
   { id: 'pruefung', label: 'Prüfbericht', gruppe: 'System', render: (c) => <Pruefbericht modus={c.modus} /> },
   { id: 'status', label: 'Status', gruppe: 'System', alle: true, render: () => <Status /> },
   { id: 'protokoll', label: 'Änderungsprotokoll', gruppe: 'System', alle: true, render: () => <Protokoll /> },
@@ -131,7 +132,9 @@ const labelVon = (s: Seite, m: Modus) => (typeof s.label === 'function' ? s.labe
 function startOrt(): Ort {
   const m = lesen('modus');
   const modus: Modus = m === 'weg' || m === 'projekt' ? m : 'miete';
-  return { modus, seite: lesen(`seite_${modus}`) ?? lesen('seite') ?? (modus === 'projekt' ? 'pcockpit' : 'uebersicht'), objektId: Number(lesen(`objekt_${modus}`)) || null };
+  const seite = lesen(`seite_${modus}`) ?? lesen('seite') ?? (modus === 'projekt' ? 'pcockpit' : 'uebersicht');
+  // "Termine" became the calendar (0.13).
+  return { modus, seite: seite === 'termine' ? 'kalender' : seite, objektId: Number(lesen(`objekt_${modus}`)) || null };
 }
 const gleich = (a: Ort, b: Ort) => a.modus === b.modus && a.seite === b.seite && a.objektId === b.objektId && (a.param ?? '') === (b.param ?? '');
 
@@ -387,7 +390,7 @@ export default function App(props: { benutzer?: Row | null }) {
     setZugeklappt(neu);
     schreiben('zugeklappt', JSON.stringify(neu));
   };
-  const favSeiten = favoriten.map((id) => sichtbar.find((s) => s.id === id)).filter((s): s is Seite => !!s);
+  const favSeiten = favoriten.map((id) => sichtbar.find((s) => s.id === (id === 'termine' ? 'kalender' : id))).filter((s): s is Seite => !!s);
 
   // Units of the current house in the sidebar (tree under "Einheiten").
   const [baumEinheiten] = useLoad<Row[]>(() => (objektId && modus !== 'projekt' ? call('einheiten', objektId) : Promise.resolve([])), [objektId, modus]);
@@ -410,7 +413,7 @@ export default function App(props: { benutzer?: Row | null }) {
       { label: 'Prüfbericht', stichworte: 'prüfen fehler vollständig', icon: I.ShieldCheck, run: () => zu({ seite: 'pruefung' }) },
     ] : []),
     { label: 'Neue Person', stichworte: 'kontakt mieter eigentümer adresse', icon: I.UserPlus, run: () => zu({ seite: 'personen', aktion: 'neue-person' }) },
-    { label: 'Neuer Termin', stichworte: 'kalender', icon: I.CalendarPlus, run: () => zu({ seite: 'termine', aktion: 'neuer-termin' }) },
+    { label: 'Neuer Termin', stichworte: 'kalender', icon: I.CalendarPlus, run: () => zu({ seite: 'kalender', aktion: 'neuer-termin' }) },
     { label: 'Zur Mietverwaltung', icon: I.KeyRound, run: () => wechsle('miete') },
     { label: 'Zur WEG-Verwaltung', icon: I.Building2, run: () => wechsle('weg') },
     { label: 'Zu den Projekten', icon: I.Hammer, run: () => wechsle('projekt') },

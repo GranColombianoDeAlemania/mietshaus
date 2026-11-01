@@ -13,6 +13,7 @@ const eingang = require('../electron/eingang.cjs');
 const sicherung = require('../electron/sicherung.cjs');
 const { zip } = require('../electron/zip.cjs');
 const ortszeit = require('../electron/zeit.cjs');
+const { ics } = require('./ics.cjs');
 const authModul = require('./auth.cjs');
 const geheim = require('./geheim.cjs');
 const versandModul = require('./versand.cjs');
@@ -26,7 +27,7 @@ const TYPEN = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '
 const SICHERHEIT = { 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'SAMEORIGIN', 'Cross-Origin-Opener-Policy': 'same-origin' };
 const MAX_UPLOAD = 300 * 1024 * 1024;
 // Functions answered by the server itself, not by the database API.
-const NUR_SERVER = new Set(['benutzerListe', 'benutzerAnlegen', 'benutzerAendern', 'claudeToken', 'meineAufgaben', 'passkeyListe', 'passkeyLoeschen', 'personEinladen', 'einladungErneuern']);
+const NUR_SERVER = new Set(['benutzerListe', 'benutzerAnlegen', 'benutzerAendern', 'claudeToken', 'meineAufgaben', 'passkeyListe', 'passkeyLoeschen', 'personEinladen', 'einladungErneuern', 'kalenderAbo']);
 
 class Fehler extends Error { constructor(status, text) { super(text); this.status = status; } }
 
@@ -284,6 +285,17 @@ async function starten(o) {
       return json(res, 200, { modus: o.modus, version: VERSION, desktop_schnittstelle: DESKTOP_SCHNITTSTELLE, angemeldet: !!w, benutzer: w?.benutzer ?? null,
         einrichtung: o.modus === 'server' && auth.anzahl() === 0 });
     }
+    // Calendar subscription: the secret link is the key (calendar apps send no cookie).
+    const abo = /^\/kalender\/([A-Za-z0-9_-]{20,64})\.ics$/.exec(p);
+    if (o.modus === 'server' && req.method === 'GET' && abo) {
+      const b = auth.kalenderBenutzer(abo[1]);
+      if (!b) throw new Fehler(404, 'Unbekannter Kalender.');
+      const t = ortszeit.heute();
+      const plus = (n) => new Date(Date.parse(`${t}T12:00:00Z`) + n * 864e5).toISOString().slice(0, 10);
+      const inhalt = ics(dbSystem.kalender(plus(-90), plus(365), b.id), { name: 'Mietshaus' });
+      res.writeHead(200, { 'Content-Type': 'text/calendar; charset=utf-8', 'Cache-Control': 'no-store', 'Content-Disposition': 'inline; filename="mietshaus.ics"', ...SICHERHEIT });
+      return res.end(inhalt);
+    }
     if (o.modus === 'lokal' && p === '/lokal') {
       // The Mac app opens /lokal?token=…: the token becomes a cookie and is gone from the address.
       if (!tokenGleich(u.searchParams.get('token') ?? '', o.token)) throw new Fehler(401, 'Falscher Schlüssel.');
@@ -362,7 +374,9 @@ async function starten(o) {
       return;
     }
     if (post && p === '/api/call') {
-      const { fn, args = [] } = await jsonLesen(req);
+      const { fn, args: argumente = [] } = await jsonLesen(req);
+      // The calendar marks the cases of the signed-in user (filter "nur meine").
+      const args = fn === 'kalender' ? [argumente[0], argumente[1], w.benutzer?.id ?? null] : argumente;
       if (NUR_SERVER.has(fn)) return json(res, 200, { wert: fachlich(() => serverFunktion(fn, args, w)) });
       if (typeof fn !== 'string' || typeof roh[fn] !== 'function') throw new Fehler(400, `Unbekannte Funktion: ${fn}`);
       const vorher = aenderungen();
@@ -601,6 +615,7 @@ async function starten(o) {
     if (fn === 'personEinladen') return auth.einladen(args[0] ?? {});
     if (fn === 'einladungErneuern') return auth.einladungErneuern(Number(args[0]));
     if (fn === 'passkeyLoeschen') return passkeys.loeschen(w.benutzer.id, args[0]);
+    if (fn === 'kalenderAbo') return { token: auth.kalenderToken(w.benutzer.id) };
     throw new Fehler(400, `Unbekannte Funktion: ${fn}`);
   }
 

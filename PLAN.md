@@ -163,6 +163,16 @@ From the pick of 28.10.2026 („Paket 1 – ich will nichts bezahlen; Paket 2 so
 | Hausnummer | Street and house number in two fields (objects, address book, manager), stored together as one line for letters and e-invoices | done |
 | Browser | Letter/PDF tab blocked by Safari: a button opens it; failed page loads show why; object list says „lädt …“ while loading; shortcut hint per platform | done |
 
+## Version 0.13 – calendar and a locked-down container
+
+| Area | Contents | Status |
+|------|----------|--------|
+| PLZ | Postcode fills the place (objects, address book, manager); GeoNames DE, CC BY 4.0 (`scripts/plz.cjs` → `src/plz.json`, loaded on first use) | done |
+| Kalender | Page Kalender (month grid, list on phones): appointments, deadlines, due cases (filter „nur meine“), project tasks, moves – db `kalender(von, bis)`. Cockpit „Nächste 14 Tage“ | done |
+| Kalender-Abo | Secret link per user `/kalender/<token>.ics` (only the hash stored, new link stops the old one); no amounts, no tenant names | done |
+| Änderungsinfo | „Zuletzt geändert von … am …“ in every edit dialog (`aenderungsNamen`) | done |
+| Härtung | compose: read_only, tmpfs /tmp, cap_drop ALL, no-new-privileges, memory/pids limits; CI starts the image that way (`scripts/rauchtest.sh`: status, logo, user, receipt OCR) before publishing; Trivy scan in the summary; `npm audit` stops on high; Dependabot | done |
+
 ## Development
 
 ```

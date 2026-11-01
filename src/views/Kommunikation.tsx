@@ -336,6 +336,15 @@ function Vorgang(props: { v: Row; onClose: () => void }) {
   );
 }
 
+// Fields of an appointment (list of appointments and calendar).
+export const terminFelder = (objekte: Row[], personen: Row[]): Field[] => [
+  { key: 'titel', label: 'Titel', required: true, wide: true }, { key: 'datum', label: 'Datum', type: 'date', required: true },
+  { key: 'uhrzeit', label: 'Uhrzeit (z. B. 14:30)' }, { key: 'dauer_min', label: 'Dauer (Minuten)', type: 'number' }, { key: 'ort', label: 'Ort' },
+  { key: 'objekt_id', label: 'Objekt', type: 'select', options: objekte.map((o) => [o.id, o.bezeichnung]) },
+  { key: 'person_id', label: 'Person', type: 'select', options: personen.map((p) => [p.id, personName(p)]) },
+  { key: 'erledigt', label: 'Erledigt', type: 'check' }, { key: 'notiz', label: 'Notiz', type: 'textarea' },
+];
+
 export function Termine(props: { objekte: Row[] }) {
   const [von, setVon] = useState(heute());
   const bis = new Date(Date.parse(von) + 90 * 864e5).toISOString().slice(0, 10);
@@ -343,13 +352,7 @@ export function Termine(props: { objekte: Row[] }) {
   const [personen] = useLoad<Row[]>(() => call('personen'), []);
   const [edit, setEdit] = useState<Row | null>(null);
   useAktion('neuer-termin', () => setEdit({ datum: heute() }));
-  const felder: Field[] = [
-    { key: 'titel', label: 'Titel', required: true, wide: true }, { key: 'datum', label: 'Datum', type: 'date', required: true },
-    { key: 'uhrzeit', label: 'Uhrzeit (z. B. 14:30)' }, { key: 'dauer_min', label: 'Dauer (Minuten)', type: 'number' }, { key: 'ort', label: 'Ort' },
-    { key: 'objekt_id', label: 'Objekt', type: 'select', options: props.objekte.map((o) => [o.id, o.bezeichnung]) },
-    { key: 'person_id', label: 'Person', type: 'select', options: (personen ?? []).map((p) => [p.id, personName(p)]) },
-    { key: 'erledigt', label: 'Erledigt', type: 'check' }, { key: 'notiz', label: 'Notiz', type: 'textarea' },
-  ];
+  const felder = terminFelder(props.objekte, personen ?? []);
   const tage = [...new Set((rows ?? []).map((r) => r.datum))];
   return (
     <section>

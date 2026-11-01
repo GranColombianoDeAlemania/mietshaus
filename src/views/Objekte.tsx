@@ -8,7 +8,7 @@ const FELDER: Field[] = [
   { key: 'art', label: 'Verwaltungsart', type: 'select', required: true, options: Object.entries(OBJEKT_ART) },
   { key: 'baujahr', label: 'Baujahr', type: 'number' },
   { key: 'strasse', label: 'Straße', type: 'strasse', wide: true, section: 'Anschrift' },
-  { key: 'plz', label: 'PLZ' },
+  { key: 'plz', label: 'PLZ', type: 'plz', ort: 'ort' },
   { key: 'ort', label: 'Ort' },
   { key: 'wj_beginn', label: 'Beginn Wirtschaftsjahr (MM-TT)', section: 'Verwaltung' },
   { key: 'hausmeister', label: 'Hausmeister' },

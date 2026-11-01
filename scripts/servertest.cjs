@@ -66,6 +66,32 @@ function client(url) {
     pruefe('Seitenadresse liefert die App', (await (await fremd.anfrage('/objekte')).text()).includes('<div id="root">'));
   }
 
+  // ---------- 1c. calendar and its subscription ----------
+  {
+    const heute = new Date().toISOString().slice(0, 10);
+    const morgen = new Date(Date.now() + 864e5).toISOString().slice(0, 10);
+    const oid = await anna.call('save', 'objekte', { bezeichnung: 'Kalenderhaus', art: 'miete' });
+    await anna.call('save', 'termine', { titel: 'Heizungswartung', datum: morgen, uhrzeit: '9:30', dauer_min: 90, objekt_id: oid, ort: 'Keller' });
+    await anna.call('save', 'vorgaenge', { titel: 'Dachrinne reinigen', objekt_id: oid, faellig: morgen, zustaendig: 1 });
+    const k = await anna.call('kalender', heute, morgen);
+    pruefe('Kalender mit Termin und Vorgang', k.some((x) => x.art === 'termin' && x.titel === 'Heizungswartung') && k.some((x) => x.art === 'vorgang' && x.meins), JSON.stringify(k));
+    pruefe('Vorgang nicht bei Ben als seiner', (await ben.call('kalender', heute, morgen)).some((x) => x.art === 'vorgang' && !x.meins));
+    pruefe('Ohne Abo-Link kein Kalender', (await fremd.anfrage('/kalender/abcdefghijklmnopqrstuvwxyz012345.ics')).status === 404);
+    const { token } = await anna.call('kalenderAbo');
+    const r = await fremd.anfrage(`/kalender/${token}.ics`);
+    const text = await r.text();
+    pruefe('Abo liefert iCalendar', r.ok && r.headers.get('content-type').startsWith('text/calendar') && text.startsWith('BEGIN:VCALENDAR') && text.includes('SUMMARY:Heizungswartung')
+      && text.includes(`DTSTART;TZID=Europe/Berlin:${morgen.replaceAll('-', '')}T093000`) && text.includes('T110000') && text.includes('LOCATION:Keller\\, Kalenderhaus'), text.slice(0, 900));
+    pruefe('Zeilen mit CRLF und höchstens 75 Bytes', text.split('\r\n').every((z) => Buffer.byteLength(z) <= 75));
+    const { token: neu } = await anna.call('kalenderAbo');
+    pruefe('Neuer Link sperrt den alten', (await fremd.anfrage(`/kalender/${token}.ics`)).status === 404 && (await fremd.anfrage(`/kalender/${neu}.ics`)).ok);
+    const namen = await anna.call('aenderungsNamen');
+    const t = (await anna.call('kalender', heute, morgen)).find((x) => x.termin_id);
+    const termin = await anna.call('get', 'termine', t.termin_id);
+    pruefe('Änderung mit Benutzername', namen.benutzer[termin.geaendert_benutzer] === 'Anna Meier', JSON.stringify([termin.geaendert_benutzer, namen]));
+    await anna.call('remove', 'objekte', oid);
+  }
+
   // ---------- 1b. invitations ----------
   {
     const e1 = await anna.call('personEinladen', { login: 'clara', name: 'Clara Neu' });
@@ -131,6 +157,14 @@ function client(url) {
   pruefe('Dokument für Angemeldete', (await anna.anfrage(`/dateien/dokument/${dok.datei}`)).headers.get('content-type') === 'application/pdf');
   pruefe('Dokument nicht für Fremde', (await fremd.anfrage(`/dateien/dokument/${dok.datei}`)).status === 401);
   pruefe('Kein Pfad aus dem Ordner heraus', (await anna.anfrage('/dateien/dokument/..%2F..%2Fmietshaus.sqlite')).status === 404);
+
+  // ---------- 4a. photographed receipt: OCR finds the amount ----------
+  {
+    const foto = await (await anna.anfrage('/api/hochladen?name=beleg.png&opt=%7B%7D', { methode: 'POST', roh: fs.readFileSync(path.join(__dirname, 'testdaten', 'beleg.png')) })).json();
+    let d;
+    for (let i = 0; i < 240 && (d = await anna.call('dokument', foto[0].id))?.analyse !== 'fertig'; i++) await warte(250);
+    pruefe('Beleg-Foto gelesen', d.analyse === 'fertig' && d.betrag_ct === 4890 && d.ocr === 1, `${d.analyse} ${d.betrag_ct} ${d.ocr}`);
+  }
 
   // ---------- 4b. moving files of a Mac ----------
   const name = '0123abcd-0000-4000-8000-000000000001.pdf';

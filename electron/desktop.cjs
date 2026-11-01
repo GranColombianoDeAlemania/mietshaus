@@ -63,7 +63,7 @@ function einrichten(o) {
       await shell.openPath(datei);
       return datei;
     },
-    extern: (_e, url) => { if (/^(mailto:|https:)/.test(String(url))) return shell.openExternal(String(url)); },
+    extern: (_e, url) => { if (/^(mailto:|https:|webcal:)/.test(String(url))) return shell.openExternal(String(url)); },
     kontextmenue: (e, eintraege) => new Promise((resolve) => {
       let gewaehlt = null;
       const menu = Menu.buildFromTemplate(eintraege.map((x) => (x === '-' ? { type: 'separator' }

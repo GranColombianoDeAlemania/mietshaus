@@ -308,7 +308,7 @@ export function brueckeEinrichten() {
       hoerer.get(kanal)!.add(fn);
       return () => hoerer.get(kanal)?.delete(fn);
     },
-    extern: async (url) => { if (d) await d.extern(url); else if (/^(mailto:|https:)/.test(url)) window.open(url, url.startsWith('mailto:') ? '_self' : '_blank'); },
+    extern: async (url) => { if (d) await d.extern(url); else if (/^(mailto:|https:|webcal:)/.test(url)) window.open(url, /^(mailto|webcal):/.test(url) ? '_self' : '_blank'); },
     info: () => jsonVon('/api/info'),
     eingangsordnerWaehlen: async () => {
       const info = await jsonVon('/api/info');

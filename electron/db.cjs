@@ -795,6 +795,8 @@ const MIGRATIONS = [
   // Invitations: a one-time link (hash kept) with which a new user sets the password; also to reset a forgotten one.
   `ALTER TABLE benutzer ADD COLUMN einladung_hash TEXT;
    ALTER TABLE benutzer ADD COLUMN einladung_bis TEXT;`,
+  // Calendar subscription (iPhone, Mac): a secret link per user, of which only the hash is kept.
+  `ALTER TABLE benutzer ADD COLUMN kalender_token_hash TEXT;`,
 ];
 
 // Tables without change time: the log itself, settings of this installation and page state.
@@ -1353,6 +1355,11 @@ function api(db) {
   const alles = {
     ...bh, ...ab, ...vw, ...ar, ...au, ...pj, ...aw, ...ak, ...dl, ...mw, ...pr, ...kz, ...basis, ...vorschlaege,
     protokollRueckgaengig: rueckgaengig,
+    // Names behind the change columns of the records (geaendert_benutzer, geaendert_von), for "Zuletzt geändert von …".
+    aenderungsNamen: () => ({
+      benutzer: Object.fromEntries(all('SELECT id, name FROM benutzer').map((b) => [b.id, b.name])),
+      geraete: Object.fromEntries(all('SELECT id, name FROM geraete').map((g) => [g.id, g.name])),
+    }),
     // Object tiles carry a small house view (units by floor and their state).
     objektKacheln: (modus) => ak.objektKacheln(modus).map((o) => ({ ...o, haus: kz.hausansicht(o.id, modus === 'weg' ? 'weg' : 'miete') })),
     // Cockpit hints plus one pointing to the data check when it found errors.

@@ -108,6 +108,13 @@ module.exports = function auth(rawDb) {
       if (!token) return null;
       return oeffentlich(db().prepare('SELECT * FROM benutzer WHERE claude_token_hash = ? AND aktiv = 1').get(sha(token)));
     },
+    // A new calendar link for a user (shown once); the old one stops working.
+    kalenderToken: (benutzerId) => {
+      const token = crypto.randomBytes(24).toString('base64url');
+      db().prepare('UPDATE benutzer SET kalender_token_hash = ? WHERE id = ?').run(sha(token), benutzerId);
+      return token;
+    },
+    kalenderBenutzer: (token) => (token ? oeffentlich(db().prepare('SELECT * FROM benutzer WHERE kalender_token_hash = ? AND aktiv = 1').get(sha(String(token)))) : null),
     // Invites a new person: a user without password plus a one-time link. Returns { id, token, bis }.
     einladen: ({ login, name }) => {
       if (!/^[a-z0-9._-]{2,40}$/i.test(login ?? '')) throw new Error('Der Benutzername darf nur Buchstaben, Ziffern, Punkt, Minus und Unterstrich enthalten (2–40 Zeichen).');

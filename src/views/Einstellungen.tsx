@@ -6,6 +6,7 @@ import { ARTEN, homeBildschirmNoetig, pushAbo, pushAusschalten, pushEinschalten,
 import { useLoad } from '../useLoad';
 import { anzeige, SCHRIFTGROESSEN, type Thema } from '../anzeige';
 import { strasseTeilen, strasseVerbinden } from '../adresse';
+import { orteZurPlz } from '../plz';
 import { Tabs } from '../ui';
 import { bestaetigen, frage, hinweis } from '../frage';
 
@@ -55,7 +56,12 @@ export function Einstellungen() {
               <input aria-label="Hausnummer" placeholder="Nr." value={teil(1)} onChange={(ev) => setzeTeil(1, ev.target.value)} />
             </span></label>
           ) : (
-            <label key={k}>{l}<input value={wert(k)} onChange={(ev) => setWerte({ ...werte, [k]: ev.target.value })} /></label>
+            <label key={k}>{l}<input value={wert(k)} inputMode={k === 'verwalter_plz' ? 'numeric' : undefined} onChange={(ev) => {
+              const v = ev.target.value;
+              setWerte({ ...werte, [k]: v });
+              // A postcode fills an empty place.
+              if (k === 'verwalter_plz') orteZurPlz(v).then((orte) => orte.length === 1 && setWerte((w) => (String(w.verwalter_ort ?? e?.verwalter_ort ?? '').trim() ? w : { ...w, verwalter_ort: orte[0] })));
+            }} /></label>
           ))}
         </div>
         <div className="buttons">

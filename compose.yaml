@@ -18,3 +18,14 @@ services:
     # Never open this port on the router.
     ports:
       - "127.0.0.1:8080:8080"
+    # Locked down: the program cannot change itself, gains no extra rights and has limits for memory and processes.
+    # It only writes to /daten, /eingang and the temporary /tmp.
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 1g
+    pids_limit: 256

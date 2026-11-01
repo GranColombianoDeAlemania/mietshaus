@@ -34,6 +34,11 @@ Mac-App / Browser ──Tailscale (verschlüsselt)──▶ Synology: tailscale 
 3. Das Image `ghcr.io/grancolombianodealemania/mietshaus` baut GitHub bei jedem Push (Aktion „Server-Image“). Es ist
    wie das Repository öffentlich, die Synology lädt es ohne Anmeldung (Daten sind im Image keine).
 4. Projekt starten. Unter `https://<synology>.<tailnet>.ts.net` erscheint **„Ersten Benutzer anlegen“**.
+5. **Abgesichert** (ab 0.13): `compose.yaml` startet den Container schreibgeschützt (`read_only`, nur `/daten`,
+   `/eingang` und `/tmp` sind beschreibbar), ohne Sonderrechte (`cap_drop: ALL`, `no-new-privileges`) und mit
+   Grenzen für Speicher und Prozesse. Wer eine ältere `compose.yaml` hat: den Block ab `read_only:` aus der
+   aktuellen [`compose.yaml`](compose.yaml) unter `ports:` ergänzen und `docker compose up -d` ausführen. GitHub
+   startet jedes neue Image genau so eingeschränkt und prüft es, bevor es veröffentlicht wird.
 
 ## 4. Benutzer
 - Den ersten Benutzer legst du beim ersten Aufruf an, weitere unter **Einstellungen → Benutzer** (alle haben dieselben
@@ -119,3 +124,4 @@ selten ein Update; ist sie zu alt für den Server, sagt sie das.
 - [ ] Auf dem iPhone (Home-Bildschirm) kommt „Test senden“ als Mitteilung an.
 - [ ] Anmeldung mit Passkey (Face ID) klappt über die Tailscale-Adresse.
 - [ ] Der Aufgabenplaner holt nachts das neue Image (Container Manager zeigt danach die neue Version).
+- [ ] Das Kalender-Abo (Kalender → Kalender-Abo…) erscheint im iPhone-Kalender, solange Tailscale verbunden ist.

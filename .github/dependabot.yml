@@ -1,0 +1,21 @@
+# GitHub proposes updates on its own: libraries (weekly, minor/patch in one pull request), the actions of the
+# workflow and the base image of the server. Security fixes come at once. Nothing is merged without a look.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      kleine-updates:
+        update-types: [minor, patch]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: monthly
