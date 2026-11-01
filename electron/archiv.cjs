@@ -80,6 +80,28 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME }) {
     };
   }
 
+  // What was learnt about a sender before beats the guess from the text: the company name of the matching contact, else
+  // the name on the newest filed document with the same VAT id, IBAN or e-mail (as corrected there).
+  function gelernt(st, dokId) {
+    if (!st) return st;
+    const kontakt = kontaktFinden(st);
+    const p = kontakt ? get('SELECT firma, strasse, plz, ort FROM personen WHERE id = ?', kontakt) : null;
+    if (p?.firma) {
+      const { name_unsicher, ...rest } = st;
+      return { ...rest, name: p.firma, ...(!st.plz && p.plz ? { strasse: p.strasse, plz: p.plz, ort: p.ort } : {}) };
+    }
+    for (const [k, v] of [['ust_id', st.ust_id], ['iban', st.iban], ['email', st.email]]) {
+      if (!v) continue;
+      const frueher = get(`SELECT json_extract(steller, '$.name') AS name FROM dokumente WHERE id <> ? AND status = 'abgelegt' AND steller IS NOT NULL
+        AND json_extract(steller, '$.${k}') = ? AND json_extract(steller, '$.name') IS NOT NULL ORDER BY coalesce(geaendert_am, '') DESC, id DESC LIMIT 1`, dokId, v);
+      if (frueher?.name) {
+        const { name_unsicher, ...rest } = st;
+        return { ...rest, name: frueher.name };
+      }
+    }
+    return st;
+  }
+
   // The contact behind a sender: by VAT id, IBAN, e-mail, then company name.
   function kontaktFinden(st) {
     if (!st) return null;
@@ -186,7 +208,7 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME }) {
     dokumentTypen: () => TYPEN,
 
     // Stores recognised text and fills empty fields from the rule-based extraction.
-    analyseSpeichern: (id, text, seiten, ocr, er = null) => tx(() => {
+    analyseSpeichern: (id, text, seiten, ocr, er = null, layout = null) => tx(() => {
       const d = get('SELECT * FROM dokumente WHERE id = ?', id);
       const f = felderErkennen(text ?? '');
       const z = zuordnungVorschlagen(text ?? '');
@@ -205,7 +227,7 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME }) {
           .run(`${er.gutschrift ? 'Gutschrift' : 'Rechnung'} ${er.verkaeufer?.name ?? ''} ${er.nummer ?? ''}`.replace(/\s+/g, ' ').trim(), id);
       } else {
         // Sender from letterhead and imprint; for invoices also VAT, line items and the labour share.
-        const steller = belege.stellerErkennen(text ?? '', eigene());
+        const steller = gelernt(belege.stellerErkennen(text ?? '', eigene(), layout), id);
         const typ = d?.typ ?? f.typ;
         const rechnung = ['Rechnung', 'Gutschrift', 'Angebot', 'Mahnung'].includes(typ);
         const brutto = d?.betrag_ct ?? f.betrag_ct ?? null;
@@ -255,6 +277,8 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME }) {
         'steller', 'steuer', 'positionen', 'lohn_ct'];
       // Sender, VAT and items come as objects/lists and are kept as JSON; the VAT sums follow the rates.
       const r = { ...row };
+      // Filed means checked: the sender's name is no longer marked uncertain.
+      if (row.status === 'abgelegt' && r.steller && typeof r.steller === 'object') { const { name_unsicher, ...rest } = r.steller; r.steller = rest; }
       for (const k of ['steller', 'steuer', 'positionen']) {
         if (r[k] != null && typeof r[k] !== 'string') r[k] = (Array.isArray(r[k]) ? r[k].length : Object.values(r[k]).some((x) => x != null && x !== '')) ? JSON.stringify(r[k]) : null;
       }

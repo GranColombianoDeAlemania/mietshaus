@@ -147,9 +147,43 @@ const STRASSE = /([A-ZÄÖÜ][\wäöüß.\-]*(?:\s+[A-Za-zÄÖÜäöüß][\wäö
 const PLZORT = /\b(\d{5})\s+([A-ZÄÖÜ][\wäöüß.\-]+(?:\s+(?:[A-ZÄÖÜ][\wäöüß.\-]+|a\.\s?d\.|am|an|der|im|in|bei|ob|vor))*(?:\s*\/\s*[A-ZÄÖÜ][\wäöüß]+)?)/;
 const segmente = (z) => z.split(/\s*[|•·●▪◦]\s*|\s+[–-]\s+|\s{3,}|;\s*/).map((s) => s.trim()).filter(Boolean);
 
+// Where a company name ends in an imprint line: "Müller Haustechnik GmbH Sitz München HRB 1234" → "Müller Haustechnik GmbH".
+const NAME_ENDE = /\s+(?:sitz\b|registergericht|amtsgericht|handelsregister|hr\s?[ab]\b|geschäftsführ\w*|inhaber\w*|inh\.|vertreten\b|vorstand\b|tel\.?\b|telefon|fon\b|fax\b|e-?mail|mail\b|www\.|ust\b|ust-?id\w*|steuer\w*|st\.?-?nr|bankverbindung|iban\b|bic\b|konto\b|blz\b|\d{5}\s)/i;
+const FORM = /gmbh\s*&\s*co\.?\s*kg|gmbh|ug\s*\(haftungsbeschränkt\)|\bug\b|\bag\b|\bkg\b|\bohg\b|\bgbr\b|e\.\s?k\.|e\.\s?kfm\.?|e\.\s?v\.|\bmbh\b|partg(?:mbb)?|\bltd\.?|\bse\b/i;
+function nameSchneiden(x) {
+  let n = String(x).replace(/^(?:firma|absender|von)\s*:?\s*/i, '');
+  const e = NAME_ENDE.exec(n);
+  if (e && e.index > 2) n = n.slice(0, e.index);
+  // After the legal form nothing belongs to the name any more (a street, a city, the register).
+  const f = FORM.exec(n);
+  if (f) n = n.slice(0, f.index + f[0].length);
+  const s = STRASSE.exec(n);
+  if (s && s.index > 2) n = n.slice(0, s.index);
+  return n.replace(/[\s,;:–-]+$/, '').trim();
+}
+
+// The part of an e-mail or web address that names the company ("mueller-haustechnik"); none for mail providers.
+const FREEMAIL = /^(?:gmail|googlemail|gmx|web|t-online|outlook|hotmail|live|yahoo|icloud|me|mac|posteo|mailbox|freenet|arcor|aol|online|email|mail|protonmail|proton)$/i;
+function domainName(email, web) {
+  const host = email ? String(email).split('@')[1] : web ? String(web).replace(/^www\./i, '').split('/')[0] : null;
+  if (!host) return null;
+  const teile = host.toLowerCase().split('.');
+  const label = teile.length >= 2 ? teile[teile.length - 2] : teile[0];
+  return label && !FREEMAIL.test(label) && label.length >= 3 ? label : null;
+}
+const passtZurDomain = (name, domain) => {
+  if (!domain) return false;
+  const n = flach(name);
+  const d = domain.replace(/[^a-z0-9]/g, '');
+  const woerter = String(name).toLowerCase().replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss')
+    .split(/[^a-z0-9]+/).filter((w) => w.length >= 4 && !FORM.test(w));
+  return domain.split(/[-_]/).some((t) => t.length >= 4 && n.includes(t)) || woerter.some((w) => d.includes(w));
+};
+
 // Sender of a letter: name, address, contact, tax ids, register, bank – from the letterhead (first lines) and the
 // imprint in the foot of each page. eigene: own names and addresses (manager, objects, tenants), never the sender.
-function stellerErkennen(text, eigene = {}) {
+// layout: the lines of the first page with position and height (text recognition), if known.
+function stellerErkennen(text, eigene = {}, layout = null) {
   const seiten = String(text ?? '').split(/\f/).map(zeilenAus).filter((s) => s.length);
   if (!seiten.length) return null;
   const kopf = seiten[0].slice(0, 14);
@@ -191,12 +225,32 @@ function stellerErkennen(text, eigene = {}) {
   const ibanN = iban ? iban[1].replace(/\s/g, '').replace(/^DE(..)/, (_, p) => `DE${p.replace(/O/g, '0')}`) : null;
   if (ibanN && !(eigene.ibans ?? []).map((x) => String(x).replace(/\s/g, '')).includes(ibanN)) s.iban = ibanN;
 
-  // Name: a segment with a legal form, letterhead first, then the imprint; else the first line of the letterhead.
-  const kandidaten = [...kopf, ...fuss].flatMap((z, i) => segmente(z).map((x) => ({ x, i })));
-  const mitForm = kandidaten.find(({ x }) => RECHTSFORM.test(x) && !NICHT_NAME.test(x) && !istEigen(x) && x.length <= 80 && !PLZORT.test(x) && !STRASSE.test(x));
-  const ersteZeile = kopf.slice(0, 6).flatMap(segmente).find((x) => x.length > 2 && !NICHT_NAME.test(x) && !istEigen(x) && !PLZORT.test(x) && !STRASSE.test(x) && /[a-zäöü]{2}/i.test(x) && !/@|www\./.test(x));
-  const name = mitForm?.x ?? ersteZeile;
-  if (name) s.name = name.replace(/[,:]\s*$/, '').slice(0, 80);
+  // Name, in this order: the small sender line above the address window ("Firma · Straße 1 · 12345 Ort"), a letterhead
+  // part with a legal form, the largest writing at the top of the page, the imprint, the first letterhead line. Each is
+  // cut where the name ends. A candidate that matches the e-mail or web address wins; without such a match the name is
+  // marked uncertain (when an address is known), and so is a mere first line.
+  const domain = domainName(s.email, s.web);
+  const kandidaten = [];
+  const taugt = (n) => n.length > 2 && n.length <= 80 && !NICHT_NAME.test(n) && !istEigen(n) && !PLZORT.test(n) && !STRASSE.test(n) && !/@|www\./.test(n)
+    && (n.match(/[a-zäöüß]/gi) ?? []).length >= Math.max(3, n.replace(/\s/g, '').length * 0.6);
+  const dazu = (x, quelle) => { const n = nameSchneiden(x); if (taugt(n) && !kandidaten.some((k) => k.n === n)) kandidaten.push({ n, quelle }); };
+  for (const z of kopf) {
+    const teile = z.split(/\s*[|•·●▪◦,]\s*|\s+[–-]\s+|\s{3,}/).map((x) => x.trim()).filter(Boolean);
+    if (teile.length >= 2 && teile.slice(1).some((x) => PLZORT.test(x)) && !PLZORT.test(teile[0])) dazu(teile[0], 'absenderzeile');
+  }
+  for (const x of kopf.flatMap(segmente)) if (RECHTSFORM.test(x)) dazu(x, 'kopf');
+  if (layout?.length) {
+    const unten = Math.max(...layout.map((l) => l.y + l.hoehe));
+    for (const l of layout.filter((l) => l.y < unten * 0.33).sort((a, b) => b.hoehe - a.hoehe).slice(0, 3)) for (const x of segmente(l.text)) dazu(x, 'gross');
+  }
+  for (const x of fuss.flatMap(segmente)) if (RECHTSFORM.test(x)) dazu(x, 'fuss');
+  for (const x of kopf.slice(0, 6).flatMap(segmente)) dazu(x, 'erste');
+  const wahl = kandidaten.find((k) => passtZurDomain(k.n, domain)) ?? kandidaten[0];
+  const name = wahl?.n;
+  if (name) {
+    s.name = name;
+    if (domain ? !passtZurDomain(name, domain) : wahl.quelle === 'erste') s.name_unsicher = true;
+  }
 
   // Address: the nearest street and postcode to the name that is not one of our own.
   const quellen = [...kopf.map((z, i) => ({ z, i, teil: 'kopf' })), ...fuss.map((z, i) => ({ z, i, teil: 'fuss' }))];
@@ -212,7 +266,8 @@ function stellerErkennen(text, eigene = {}) {
       ?? segmente(quellen[quellen.indexOf(q) - 1]?.z ?? '').map((x) => STRASSE.exec(x)).find(Boolean);
     const adresse = `${str?.[1] ?? ''} ${pl[1]} ${pl[2]}`;
     if (istEigen(adresse) || (str && istEigen(str[1]))) continue;
-    if (str) s.strasse = str[1].trim();
+    // "Elektro Klein e.K. Hauptstraße 4": the name in front of the street is not part of it.
+    if (str) { let x = str[1]; const f = FORM.exec(x); if (f) x = x.slice(f.index + f[0].length); if (name && x.startsWith(name)) x = x.slice(name.length); s.strasse = x.replace(/^[\s,·|-]+/, '').trim(); }
     s.plz = pl[1];
     s.ort = pl[2].trim();
     break;
@@ -243,4 +298,4 @@ function kurztext(positionen) {
   return t.length ? `Leistung: ${t.slice(0, 4).join(', ')}${t.length > 4 ? ' …' : ''}` : null;
 }
 
-module.exports = { steuerErkennen, positionenErkennen, lohnBerechnen, stellerErkennen, ausERechnung, kurztext, artVon };
+module.exports = { steuerErkennen, positionenErkennen, lohnBerechnen, stellerErkennen, ausERechnung, kurztext, artVon, nameSchneiden, domainName, passtZurDomain };

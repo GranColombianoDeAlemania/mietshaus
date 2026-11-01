@@ -55,11 +55,13 @@ export function Rechnungssteller(props: { w: BelegWerte; set: (w: BelegWerte) =>
   const kurz = [st.name, [st.plz, st.ort].filter(Boolean).join(' '), st.ust_id && `USt-IdNr. ${st.ust_id}`].filter(Boolean).join(' · ');
   return (
     <details className="beleg-teil" open={props.offen}>
-      <summary><b>Rechnungssteller</b> <span className="klein hinweis">{kurz || 'nicht erkannt – bitte eintragen'}</span></summary>
+      <summary><b>Rechnungssteller</b> <span className="klein hinweis">{kurz || 'nicht erkannt – bitte eintragen'}</span>
+        {st.name_unsicher && <span className="klein fehlertext">Name unsicher – bitte prüfen</span>}</summary>
       <div className="maske zwei">
         {STELLER_FELDER.map(([k, l, breit]) => (
           <label key={k} className={breit ? 'breit' : ''}>{l}
-            <input value={st[k] ?? ''} onChange={(e) => props.set({ ...props.w, steller: { ...st, [k]: e.target.value } })} />
+            {/* A corrected name is no longer uncertain; the next invoice of this sender takes it over. */}
+            <input value={st[k] ?? ''} onChange={(e) => props.set({ ...props.w, steller: { ...st, [k]: e.target.value, ...(k === 'name' ? { name_unsicher: undefined } : {}) } })} />
           </label>
         ))}
       </div>

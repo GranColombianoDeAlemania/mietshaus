@@ -1116,6 +1116,23 @@ Stadtsparkasse München | IBAN DE02 7015 0000 0000 1234 56 | BIC SSKMDEMMXXX`;
       'info@mueller-haustechnik.de', 'www.mueller-haustechnik.de', 'DE02701500000000123456', 'SSKMDEMMXXX', 'Stadtsparkasse München']);
   gleich('Rechnungssteller: Adresse im Briefkopf ist nur die eigene → keine Anschrift',
     belege.stellerErkennen('Elektro Klein e.K.\nHausverwaltung Probe\nGartenweg 3\n81675 München\nRechnung', eigene)?.plz ?? null, null);
+  // Company name: cut where it ends, the sender line above the window, the largest writing, checked against the domain.
+  gleich('Name nach der Rechtsform abgeschnitten', ['Müller Haustechnik GmbH Sitz München Registergericht München HRB 123456', 'Bau Nord GmbH & Co. KG Hafenstraße 3',
+    'Elektro Klein e.K. Inhaber Peter Klein', 'Schmidt AG, Vorstand: A. Schmidt'].map(belege.nameSchneiden),
+    ['Müller Haustechnik GmbH', 'Bau Nord GmbH & Co. KG', 'Elektro Klein e.K.', 'Schmidt AG']);
+  const name = (t, layout) => { const x = belege.stellerErkennen(t, eigene, layout); return [x?.name ?? null, !!x?.name_unsicher]; };
+  gleich('Logo nicht lesbar: Firma aus der Fußzeile, ohne den Rest der Zeile',
+    name('[LOGO]\nHausverwaltung Probe\nGartenweg 3\n81675 München\nRechnung Nr. 55\nGesamt 100,00\nMüller Haustechnik GmbH Sitz München Registergericht München HRB 123456\nTel. 089 1234 info@mueller-haustechnik.de'),
+    ['Müller Haustechnik GmbH', false]);
+  gleich('Absenderzeile über dem Fenster (mit Kommas)', name('M Ü L L E R\nMüller Haustechnik GmbH, Industriestr. 12, 80939 München\nHausverwaltung Probe\nGartenweg 3\n81675 München\nRechnung'),
+    ['Müller Haustechnik GmbH', false]);
+  gleich('Straße ohne den Namen davor', belege.stellerErkennen('Hausverwaltung Probe\nGartenweg 3\n81675 München\nRechnung\nGesamt 50,00\nElektro Klein e.K. Hauptstraße 4 10115 Berlin', eigene).strasse, 'Hauptstraße 4');
+  gleich('Größte Schrift oben, passend zur Website', name('ACME\nBauservice Nord\nHausverwaltung Probe\nRechnung\nGesamt 10,00\nwww.bauservice-nord.de',
+    [{ text: 'ACME', y: 40, hoehe: 90 }, { text: 'Bauservice Nord', y: 150, hoehe: 60 }, { text: 'Hausverwaltung Probe', y: 300, hoehe: 25 }, { text: 'Rechnung', y: 450, hoehe: 30 }, { text: 'Gesamt 10,00', y: 1400, hoehe: 25 }]),
+    ['Bauservice Nord', false]);
+  gleich('Nur erste Zeile, keine Adresse zum Gegenprüfen: unsicher', name('Schwarz Gebäudereinigung\nHausverwaltung Probe\nGartenweg 3\n81675 München\nRechnung'), ['Schwarz Gebäudereinigung', true]);
+  gleich('Passt nicht zur E-Mail-Adresse: unsicher', name('Gesamt 10,00\nWeber Dach GmbH\nkontakt@gruen-garten.de'), ['Weber Dach GmbH', true]);
+  gleich('Freemail-Adresse prüft nichts', [belege.domainName('weber.dach@gmail.com'), belege.domainName(null, 'www.weber-dach.de/kontakt')], [null, 'weber-dach']);
   gleich('MwSt 19 % aus „Summe netto“ und „zzgl. MwSt“', belege.steuerErkennen(RECHNUNG, 25466), [{ satz: 19, netto_ct: 21400, ust_ct: 4066 }]);
   gleich('MwSt 7 % und 19 % nebeneinander', belege.steuerErkennen('Netto 100,00\nMwSt 7% 3,50\nMwSt 19% 9,50\nGesamt 113,00', 11300),
     [{ satz: 19, netto_ct: 5000, ust_ct: 950 }, { satz: 7, netto_ct: 5000, ust_ct: 350 }]);
@@ -1164,6 +1181,13 @@ Stadtsparkasse München | IBAN DE02 7015 0000 0000 1234 56 | BIC SSKMDEMMXXX`;
   const d2 = beleg(RECHNUNG.replace('2026-1187', '2026-1250'));
   gleich('Nächste Rechnung derselben Firma: Kontakt über die USt-IdNr. verknüpft', t.dokument(d2).person_id, kontakt);
   gleich('Kontakt wird nicht doppelt angelegt', t.kontaktAusSteller(d2), kontakt);
+  // Learnt: the contact's company name beats the guess; without a contact the name corrected on a filed document.
+  t.save('personen', { id: kontakt, firma: 'Müller Haustechnik' });
+  gleich('Name aus dem Kontakt (über die USt-IdNr.)', [t.dokument(beleg(RECHNUNG.replace('2026-1187', '2026-1301'))).steller.name, t.dokument(nr).absender], ['Müller Haustechnik', 'Müller Haustechnik']);
+  const KLEIN = 'Hausverwaltung Probe\nGartenweg 3\n81675 München\nRechnung\nGesamt 50,00\nEK Elektrotechnik Fußzeile Klein und Söhne\nUSt-IdNr. DE111222333';
+  const kl = beleg(KLEIN);
+  t.dokumentSpeichern({ id: kl, steller: { ...t.dokument(kl).steller, name: 'Elektro Klein e.K.' }, status: 'abgelegt' });
+  gleich('Name aus dem korrigierten, abgelegten Beleg derselben USt-IdNr.', [t.dokument(beleg(KLEIN.replace('50,00', '60,00'))).steller.name, t.dokument(nr).steller.name_unsicher ?? null], ['Elektro Klein e.K.', null]);
 
   const a1 = t.belegAufteilung(d1, { kosten_konto_id: instand });
   gleich('Aufteilung: volle Vorsteuer, Arbeitsanteil anteilig auf den Nettoaufwand', [a1.abziehbar_ct, a1.kosten_ct, a1.p35a_ct, a1.p35a_konto], [4066, 21400, 11200, 'handwerker']);

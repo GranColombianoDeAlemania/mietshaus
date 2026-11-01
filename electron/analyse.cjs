@@ -30,8 +30,15 @@ module.exports = function analyse({ db, dokumentOrdner, vorschauOrdner, onFertig
         workerPath: ausserhalbAsar(require.resolve('tesseract.js/src/worker-script/node/index.js')),
       });
     }
-    const { data } = await ocrWorker.recognize(bild);
-    return data.text ?? '';
+    const { data } = await ocrWorker.recognize(bild, {}, { text: true, blocks: true });
+    // Besides the text, every line with its position and height: the sender's name is usually the largest writing at
+    // the top (electron/belege.cjs: stellerErkennen).
+    const zeilen = [];
+    for (const b of data.blocks ?? []) for (const p of b.paragraphs ?? []) for (const l of p.lines ?? []) {
+      const t = (l.text ?? '').trim();
+      if (t) zeilen.push({ text: t, y: l.bbox.y0, hoehe: l.bbox.y1 - l.bbox.y0, links: l.bbox.x0 });
+    }
+    return { text: data.text ?? '', zeilen };
   }
 
   // Reads one stored document: returns its text, page count and whether OCR was needed.
@@ -41,6 +48,7 @@ module.exports = function analyse({ db, dokumentOrdner, vorschauOrdner, onFertig
     if (ext === '.pdf') {
       const r = await pdfLesen(fs.readFileSync(voll));
       let ocrNoetig = false;
+      let layout = null;
       const seiten = [];
       for (const s of r.seiten) {
         // Pages without a text layer are scans: their rendering is recognised and kept as a preview for Claude.
@@ -49,14 +57,16 @@ module.exports = function analyse({ db, dokumentOrdner, vorschauOrdner, onFertig
           const png = s.bild;
           fs.mkdirSync(vorschauOrdner(), { recursive: true });
           fs.writeFileSync(path.join(vorschauOrdner(), `${path.parse(datei).name}-${s.nr}.png`), png);
-          seiten.push(await ocr(png));
+          const o = await ocr(png);
+          if (!seiten.length) layout = o.zeilen;
+          seiten.push(o.text);
         } else seiten.push(s.text);
       }
       // An embedded e-invoice gives the exact invoice data.
       const e = r.xml ? erechnung.lesen(r.xml) : null;
-      return { text: seiten.join('\n\f\n') + (e ? `\n\f\n${erechnung.alsText(e)}` : ''), seiten: r.seiten.length, ocr: ocrNoetig, erechnung: e };
+      return { text: seiten.join('\n\f\n') + (e ? `\n\f\n${erechnung.alsText(e)}` : ''), seiten: r.seiten.length, ocr: ocrNoetig, erechnung: e, layout };
     }
-    if (BILDER.has(ext)) return { text: await ocr(fs.readFileSync(voll)), seiten: 1, ocr: true };
+    if (BILDER.has(ext)) { const o = await ocr(fs.readFileSync(voll)); return { text: o.text, seiten: 1, ocr: true, layout: o.zeilen }; }
     if (ext === '.xml') {
       const xml = fs.readFileSync(voll, 'utf8');
       const e = erechnung.lesen(xml);
@@ -77,7 +87,7 @@ module.exports = function analyse({ db, dokumentOrdner, vorschauOrdner, onFertig
         for (const d of offen) {
           try {
             const r = await lesen(d.datei);
-            db.analyseSpeichern(d.id, r.text, r.seiten, r.ocr, r.erechnung ?? null);
+            db.analyseSpeichern(d.id, r.text, r.seiten, r.ocr, r.erechnung ?? null, r.layout ?? null);
           } catch (e) {
             db.analyseFehler(d.id, String(e?.message ?? e));
           }
