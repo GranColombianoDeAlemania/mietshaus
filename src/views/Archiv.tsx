@@ -110,6 +110,8 @@ function DokumentFormular(props: { id: number; onFertig: () => void; postfach?: 
     }
   }
   const rechnung = RECHNUNGSARTEN.includes(f.typ) || !!d.steller;
+  // A copy of an invoice that is filed or booked already: it can only go to the recycle bin (db: duplikatSperre).
+  const kopie = d.duplikat && d.status !== 'abgelegt' && (d.duplikat.status === 'abgelegt' || d.duplikat.buchung_id) ? d.duplikat : null;
 
   const text = (k: string, l: string, typ = 'text') => (
     <label key={k}>{l}<input type={typ} value={f[k] ?? ''} onChange={(e) => set(k, e.target.value)} /></label>
@@ -122,6 +124,14 @@ function DokumentFormular(props: { id: number; onFertig: () => void; postfach?: 
         <button onClick={async () => { await window.hv.neuAnalysieren(d.id); ladeD(); }} title="Text erneut lesen">Neu lesen</button>
         <button onClick={() => window.hv.dokumentOeffnen(d.datei)}>Öffnen</button>
       </div>
+      {d.duplikat && (
+        <div className={kopie ? 'hinweisbox fehler klein' : 'hinweisbox klein'}>
+          <b>{kopie ? 'Duplikat – ' : 'Mögliches Duplikat – '}</b>gleiche Rechnungsnummer, gleicher Betrag, gleicher Absender wie{' '}
+          <L zu={{ dokument: d.duplikat.id }}>„{d.duplikat.titel}“</L>{d.duplikat.buchung_id ? ' (gebucht)' : d.duplikat.status === 'abgelegt' ? ' (abgelegt)' : ' (im Postfach)'}.
+          {kopie ? ' Es kann nicht abgelegt oder gebucht werden.' : ' Nur eines von beiden lässt sich ablegen.'}
+          {' '}<button className="link" onClick={async () => { if (await inPapierkorb([d])) props.onFertig(); }}>Dieses in den Papierkorb</button>
+        </div>
+      )}
       <div className="maske zwei">
         <label className="breit">Titel<input value={f.titel ?? ''} onChange={(e) => set('titel', e.target.value)} /></label>
         <label>Dokumenttyp
@@ -184,9 +194,10 @@ function DokumentFormular(props: { id: number; onFertig: () => void; postfach?: 
         }}>Per E-Mail…</button>
         <span className="spacer" />
         {['Rechnung', 'Gutschrift'].includes(f.typ) && !d.buchung_id && (
-          <button disabled={!f.objekt_id || !parseCent(f.betrag)} title={!f.objekt_id ? 'Bitte zuerst ein Objekt wählen' : ''} onClick={async () => { if (await speichern(undefined, false)) setBuchen(true); }}>Buchen…</button>
+          <button disabled={!f.objekt_id || !parseCent(f.betrag) || !!kopie} title={kopie ? 'Duplikat – wird nicht doppelt gebucht' : !f.objekt_id ? 'Bitte zuerst ein Objekt wählen' : ''} onClick={async () => { if (await speichern(undefined, false)) setBuchen(true); }}>Buchen…</button>
         )}
-        <button className="primary" onClick={() => speichern(props.postfach ? 'abgelegt' : undefined)}>{props.postfach ? 'Ablegen' : 'Speichern'}</button>
+        <button className="primary" disabled={!!kopie && props.postfach} title={kopie && props.postfach ? 'Duplikat – wird nicht doppelt abgelegt' : ''}
+          onClick={() => speichern(props.postfach ? 'abgelegt' : undefined)}>{props.postfach ? 'Ablegen' : 'Speichern'}</button>
       </div>
     </div>
   );
@@ -287,8 +298,8 @@ export function Postfach() {
                     <b>{x.titel}</b>
                     <span className="klein">{[x.typ, x.absender, x.betrag_ct != null ? euro(x.betrag_ct) : null, x.objekt].filter(Boolean).join(' · ') || x.name}</span>
                     <span className="klein hinweis">{analyseText(x.analyse) || datum(x.datum ?? x.erfasst)}</span>
-                    {x.duplikat_von && <span className="tag fehlertext">mögliches Duplikat{' '}
-                      <button className="link klein" onClick={(e) => { e.stopPropagation(); loeschen([x]); }}>Duplikat löschen</button></span>}
+                    {x.duplikat_von && <span className="klein"><span className="tag fehlertext">Duplikat</span>{' '}
+                      <button className="link klein" onClick={(e) => { e.stopPropagation(); loeschen([x]); }}>löschen</button></span>}
                   </div>
                   <button className="link loeschen" title="In den Papierkorb" aria-label="In den Papierkorb" onClick={(e) => { e.stopPropagation(); loeschen([x]); }}>🗑</button>
                 </li>

@@ -67,7 +67,7 @@ export function Rechnungssteller(props: { w: BelegWerte; set: (w: BelegWerte) =>
       </div>
       {props.onKontakt && !props.kontakt?.id && st.name && (
         <p className="klein"><button className="link" onClick={props.onKontakt}>Als Kontakt anlegen</button>
-          <span className="hinweis"> – dann wird die nächste Rechnung dieser Firma sicher zugeordnet.</span></p>
+          <span className="hinweis"> – geschieht beim Ablegen oder Buchen auch von selbst (ohne Doppelte).</span></p>
       )}
     </details>
   );

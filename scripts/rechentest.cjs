@@ -1230,6 +1230,35 @@ Stadtsparkasse München | IBAN DE02 7015 0000 0000 1234 56 | BIC SSKMDEMMXXX`;
   r.buchungStornieren(r.buchungen(ro, {}).find((b) => b.p35a_ct === 6000).id, '2025-05-11');
   gleich('Storno nimmt den Arbeitsanteil mit zurück', r.nkAbrechnung(ro, '2025-01-01', '2025-12-31').ergebnisse.find((e) => e.segment.vertrag).p35a.dienstleistung, 5000);
 
+  // Duplicates: a copy of a filed or booked invoice is neither filed nor booked; filing makes the sender a contact.
+  const NEU = 'Dachdecker Brandt GmbH\nRechnung Nr. RE-777\nRechnungsdatum: 03.09.2026\nGesamtbetrag 500,00 €\nUSt-IdNr. DE444555666';
+  const o1 = beleg(NEU, { objekt_id: ob });
+  const o2 = beleg(NEU + '\n(Foto)', { objekt_id: ob });
+  gleich('Zwei gleiche Rechnungen im Postfach: beide als mögliches Duplikat markiert', [t.dokument(o1).duplikat?.id, t.dokument(o2).duplikat?.id], [o2, o1]);
+  const vorKontakte = t.personen().length;
+  t.dokumentSpeichern({ id: o1, status: 'abgelegt' });
+  const brandt = t.dokument(o1).person_id;
+  gleich('Ablegen legt den Rechnungssteller als Kontakt an', [!!brandt, t.get('personen', brandt)?.firma, t.get('personen', brandt)?.ust_id, t.personen().length], [true, 'Dachdecker Brandt GmbH', 'DE444555666', vorKontakte + 1]);
+  let fehlerAblegen = null;
+  try { t.dokumentSpeichern({ id: o2, status: 'abgelegt' }); } catch (e) { fehlerAblegen = e.message; }
+  gleich('Kopie lässt sich nicht ablegen', [/gibt es schon/.test(fehlerAblegen ?? ''), t.dokument(o2).status], [true, 'postfach']);
+  let fehlerBuchen = null;
+  try { t.belegBuchen(o2, { kosten_konto_id: instand, geld_konto_id: bank }); } catch (e) { fehlerBuchen = e.message; }
+  gleich('Kopie lässt sich nicht buchen', [/nicht doppelt gebucht/.test(fehlerBuchen ?? ''), t.dokument(o2).buchung_id], [true, null]);
+  let fehlerStapel = null;
+  try { t.stapelAblegen([o2], { typ: 'Rechnung' }, true); } catch (e) { fehlerStapel = e.message; }
+  gleich('Auch nicht über die Mehrfachauswahl', [/Duplikat/.test(fehlerStapel ?? ''), t.dokument(o2).status], [true, 'postfach']);
+  t.dokumentSpeichern({ id: o2, rechnungsnr: 'RE-778' });
+  gleich('Andere Rechnungsnummer: kein Duplikat mehr, ablegen geht', [t.dokument(o2).duplikat, (t.dokumentSpeichern({ id: o2, status: 'abgelegt' }), t.dokument(o2).status)], [null, 'abgelegt']);
+  gleich('Zweite Rechnung derselben Firma: kein zweiter Kontakt', [t.dokument(o2).person_id, t.personen().length], [brandt, vorKontakte + 1]);
+  const o3 = beleg(NEU.replace('03.09.2026', '03.10.2026'), { objekt_id: ob });
+  gleich('Gleiche Nummer und Betrag, anderes Datum (z. B. Monatsrechnung): kein Duplikat', t.dokument(o3).duplikat, null);
+  const o4 = beleg(NEU.replace('Dachdecker Brandt GmbH', 'Brandt Dachdecker GmbH'), { objekt_id: ob });
+  gleich('Absender anders gelesen, aber gleiche USt-IdNr.: Duplikat', t.dokument(o4).duplikat?.id, o1);
+  t.dokumentLoeschen([o1]);
+  gleich('Original im Papierkorb: die Kopie zählt nicht mehr als Duplikat', t.dokument(o4).duplikat, null);
+  t.dokumentWiederherstellen([o1]);
+
   // Recycle bin.
   const k1 = beleg('Doppelt eingelegt\nGesamt 12,00');
   t.dokumentLoeschen([k1]);

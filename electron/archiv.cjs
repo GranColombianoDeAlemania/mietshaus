@@ -59,6 +59,15 @@ function felderErkennen(text) {
 }
 
 const json = (s) => { try { return s ? JSON.parse(s) : null; } catch { return null; } };
+const RECHNUNGSTYPEN = ['Rechnung', 'Gutschrift', 'Mahnung', 'Angebot'];
+// A company name without legal form and punctuation, for finding the same contact again ("Müller GmbH" = "Müller").
+const kern = (s) => norm(s).replace(/\b(?:gmbh(?:\s*&\s*co\.?\s*kg)?|ug|ag|kg|ohg|gbr|e\.?\s?k\.?|e\.?\s?kfm\.?|e\.?\s?v\.?|mbh|partg(?:mbb)?|ltd\.?|se|haftungsbeschraenkt)(?![a-z])/g, '').replace(/[^a-z0-9]/g, '');
+// SQL: document x is the same invoice as document d.
+const GLEICHE_RECHNUNG = (x, d) => `${x}.id <> ${d}.id AND ${x}.status <> 'papierkorb' AND ${x}.rechnungsnr IS NOT NULL AND ${d}.rechnungsnr IS NOT NULL
+  AND lower(replace(${x}.rechnungsnr, ' ', '')) = lower(replace(${d}.rechnungsnr, ' ', '')) AND coalesce(${x}.betrag_ct, -1) = coalesce(${d}.betrag_ct, -1)
+  AND (${x}.datum IS NULL OR ${d}.datum IS NULL OR ${x}.datum = ${d}.datum)
+  AND (coalesce(${x}.absender, '') = coalesce(${d}.absender, '') OR (${x}.person_id IS NOT NULL AND ${x}.person_id = ${d}.person_id)
+    OR (json_extract(${x}.steller, '$.ust_id') IS NOT NULL AND json_extract(${x}.steller, '$.ust_id') = json_extract(${d}.steller, '$.ust_id')))`;
 const PAPIERKORB_TAGE = 30;
 const mitJson = (d) => d && { ...d, steller: json(d.steller), steuer: json(d.steuer), positionen: json(d.positionen) };
 
@@ -109,8 +118,41 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME }) {
     const p = (st.ust_id && get(`SELECT id FROM personen WHERE upper(replace(ust_id, ' ', '')) = ?`, ohne(st.ust_id)))
       || (st.iban && get(`SELECT id FROM personen WHERE upper(replace(iban, ' ', '')) = ?`, ohne(st.iban)))
       || (st.email && get('SELECT id FROM personen WHERE lower(email) = ?', String(st.email).toLowerCase()))
-      || (st.name && all(`SELECT id, firma FROM personen WHERE firma IS NOT NULL AND firma <> ''`).find((x) => norm(x.firma).replace(/[^a-z0-9]/g, '') === norm(st.name).replace(/[^a-z0-9]/g, '')));
+      || (st.name && kern(st.name).length >= 4 && all(`SELECT id, firma FROM personen WHERE firma IS NOT NULL AND firma <> ''`).find((x) => kern(x.firma) === kern(st.name)));
     return p?.id ?? null;
+  }
+
+  // A contact for the sender, found or created (never twice: VAT id, IBAN, e-mail and name are checked first).
+  function kontaktAnlegen(dokId, st) {
+    const id = kontaktFinden(st) ?? Number(db.prepare(`INSERT INTO personen (firma, nachname, strasse, plz, ort, telefon, email, iban, bic, ust_id, steuernr, web, notiz)
+      VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(st.name, st.strasse ?? null, st.plz ?? null, st.ort ?? null, st.telefon ?? null, st.email ?? null,
+      st.iban ?? null, st.bic ?? null, st.ust_id ?? null, st.steuernr ?? null, st.web ?? null,
+      [st.register, st.inhaber && `Inhaber/Geschäftsführung: ${st.inhaber}`, st.bank && `Bank: ${st.bank}`].filter(Boolean).join('\n') || null).lastInsertRowid);
+    db.prepare('UPDATE dokumente SET person_id = ? WHERE id = ?').run(id, dokId);
+    indexieren(dokId);
+    return id;
+  }
+  // Filing or booking an invoice makes its sender a contact, unless the document already belongs to a person.
+  function kontaktSicherstellen(dokId) {
+    const d = get('SELECT typ, person_id, steller FROM dokumente WHERE id = ?', dokId);
+    const st = json(d?.steller);
+    if (!d || d.person_id || !RECHNUNGSTYPEN.includes(d.typ) || !st?.name) return null;
+    return kontaktAnlegen(dokId, st);
+  }
+
+  // The same invoice twice (a copy, photo and PDF, e-invoice and its PDF): same invoice number, amount and date (if
+  // known) from the same sender (name, contact or VAT id). With abgelegt only a copy already filed or booked counts.
+  function duplikat(id, { abgelegt = false } = {}) {
+    return get(`SELECT x.id, x.titel, x.datum, x.status, x.buchung_id, (SELECT b.datum FROM buchungen b WHERE b.id = x.buchung_id) AS gebucht_am
+      FROM dokumente d JOIN dokumente x ON ${GLEICHE_RECHNUNG('x', 'd')} WHERE d.id = ? ${abgelegt ? "AND (x.status = 'abgelegt' OR x.buchung_id IS NOT NULL)" : ''}
+      ORDER BY x.buchung_id IS NOT NULL DESC, x.status = 'abgelegt' DESC, x.id LIMIT 1`, id) ?? null;
+  }
+  const mitDuplikat = (d) => d && { ...d, duplikat: d.status === 'papierkorb' ? null : duplikat(d.id) };
+  function duplikatSperre(id) {
+    const x = duplikat(id, { abgelegt: true });
+    if (x) throw new Error(`Diese Rechnung gibt es schon: „${x.titel}“${x.datum ? ` vom ${x.datum.split('-').reverse().join('.')}` : ''}`
+      + `${x.buchung_id ? `, gebucht am ${String(x.gebucht_am ?? '').split('-').reverse().join('.')}` : ', abgelegt'} – gleiche Rechnungsnummer, gleicher Betrag, gleicher Absender. `
+      + 'Sie wird nicht doppelt abgelegt oder gebucht. Die Kopie bitte löschen; ist es keine Kopie, die Rechnungsnummer prüfen.');
   }
 
   function indexieren(id) {
@@ -196,15 +238,10 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME }) {
       const d = get('SELECT steller FROM dokumente WHERE id = ?', dokId);
       const st = json(d?.steller);
       if (!st?.name) throw new Error('Der Rechnungssteller hat noch keinen Namen.');
-      const vorhanden = kontaktFinden(st);
-      const id = vorhanden ?? Number(db.prepare(`INSERT INTO personen (firma, nachname, strasse, plz, ort, telefon, email, iban, bic, ust_id, steuernr, web, notiz)
-        VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(st.name, st.strasse ?? null, st.plz ?? null, st.ort ?? null, st.telefon ?? null, st.email ?? null,
-        st.iban ?? null, st.bic ?? null, st.ust_id ?? null, st.steuernr ?? null, st.web ?? null,
-        [st.register, st.inhaber && `Inhaber/Geschäftsführung: ${st.inhaber}`, st.bank && `Bank: ${st.bank}`].filter(Boolean).join('\n') || null).lastInsertRowid);
-      db.prepare('UPDATE dokumente SET person_id = ? WHERE id = ?').run(id, dokId);
-      indexieren(dokId);
-      return id;
+      return kontaktAnlegen(dokId, st);
     }),
+    kontaktSicherstellen,
+    dokumentDuplikat: (id, opt) => duplikat(id, opt),
     dokumentTypen: () => TYPEN,
 
     // Stores recognised text and fills empty fields from the rule-based extraction.
@@ -287,9 +324,17 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME }) {
         r.netto_ct = t ? t.reduce((x, y) => x + (Number(y.netto_ct) || 0), 0) : null;
         r.ust_ct = t ? t.reduce((x, y) => x + (Number(y.ust_ct) || 0), 0) : null;
       }
-      const keys = cols.filter((c) => c in r);
+      // Filing: the other fields are stored first (a corrected invoice number counts), then a copy of a filed or booked
+      // invoice is refused and the sender becomes a contact.
+      const ablegen = r.status === 'abgelegt' && get('SELECT status FROM dokumente WHERE id = ?', row.id)?.status !== 'abgelegt';
+      const keys = cols.filter((c) => c in r && !(ablegen && c === 'status'));
       if (keys.length) db.prepare(`UPDATE dokumente SET ${keys.map((k) => `${k} = ?`).join(', ')} WHERE id = ?`)
         .run(...keys.map((k) => (r[k] === '' || r[k] === undefined ? null : r[k])), row.id);
+      if (ablegen) {
+        duplikatSperre(row.id);
+        db.prepare(`UPDATE dokumente SET status = 'abgelegt' WHERE id = ?`).run(row.id);
+        kontaktSicherstellen(row.id);
+      }
       indexieren(row.id);
       return row.id;
     },
@@ -299,22 +344,23 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME }) {
       const erlaubt = ['objekt_id', 'einheit_id', 'person_id', 'buchung_id', 'projekt_id', 'vorgang_id'];
       const werte = Object.fromEntries(Object.entries(ziel).filter(([k, v]) => erlaubt.includes(k) && v != null));
       const keys = Object.keys(werte);
+      if (get('SELECT status FROM dokumente WHERE id = ?', id)?.status !== 'abgelegt') duplikatSperre(id);
       if (keys.length) db.prepare(`UPDATE dokumente SET ${keys.map((k) => `${k} = ?`).join(', ')}, status = 'abgelegt' WHERE id = ?`).run(...keys.map((k) => werte[k]), id);
+      kontaktSicherstellen(id);
       indexieren(id);
     },
 
-    dokument: (id) => mitJson(get(`SELECT d.*, o.bezeichnung AS objekt, e.bezeichnung AS einheit, ${PERSON_NAME} AS person,
+    dokument: (id) => mitDuplikat(mitJson(get(`SELECT d.*, o.bezeichnung AS objekt, e.bezeichnung AS einheit, ${PERSON_NAME} AS person,
         (SELECT b.soll_id FROM buchungen b WHERE b.id = d.buchung_id) AS buchung_konto_id, (SELECT b.datum FROM buchungen b WHERE b.id = d.buchung_id) AS buchung_datum
       FROM dokumente d LEFT JOIN objekte o ON o.id = d.objekt_id LEFT JOIN einheiten e ON e.id = d.einheit_id
-      LEFT JOIN personen p ON p.id = d.person_id WHERE d.id = ?`, id)),
+      LEFT JOIN personen p ON p.id = d.person_id WHERE d.id = ?`, id))),
 
     // Archive listing with optional full-text search; matches come with a highlighted snippet.
     dokumentListe: ({ q = '', status = null, objekt_id = null, projekt_id = null, typ = null, jahr = null, limit = 300 } = {}) => {
       const fts = ftsAbfrage(q);
       const sql = `SELECT d.id, d.titel, d.typ, d.kategorie, d.datum, d.erfasst, d.status, d.analyse, d.name, d.datei, d.groesse, d.betrag_ct,
           d.absender, d.objekt_id, d.einheit_id, d.person_id, d.buchung_id, d.ocr, d.seiten, o.bezeichnung AS objekt, e.bezeichnung AS einheit, ${PERSON_NAME} AS person,
-          (SELECT min(x.id) FROM dokumente x WHERE x.id <> d.id AND x.status <> 'papierkorb' AND x.rechnungsnr IS NOT NULL AND x.rechnungsnr = d.rechnungsnr
-          AND coalesce(x.betrag_ct, -1) = coalesce(d.betrag_ct, -1) AND coalesce(x.absender, '') = coalesce(d.absender, '')) AS duplikat_von
+          (SELECT min(x.id) FROM dokumente x WHERE ${GLEICHE_RECHNUNG('x', 'd')}) AS duplikat_von
           ${fts ? ", snippet(dokumente_fts, 1, '[', ']', ' … ', 12) AS treffer" : ''}
         FROM dokumente d ${fts ? 'JOIN dokumente_fts f ON f.rowid = d.id' : ''}
         LEFT JOIN objekte o ON o.id = d.objekt_id LEFT JOIN einheiten e ON e.id = d.einheit_id LEFT JOIN personen p ON p.id = d.person_id
@@ -328,10 +374,17 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME }) {
     stapelAblegen: (ids, felder, ablegen) => tx(() => {
       const erlaubt = ['objekt_id', 'einheit_id', 'projekt_id', 'person_id', 'typ', 'kategorie'];
       const keys = erlaubt.filter((k) => k in felder);
+      // Copies of filed invoices – or the same invoice twice in the selection – are not filed: nothing changes then.
+      if (ablegen) {
+        const doppelt = ids.filter((id, i) => get(`SELECT status FROM dokumente WHERE id = ?`, id)?.status !== 'abgelegt'
+          && (duplikat(id, { abgelegt: true }) || ids.slice(0, i).some((j) => duplikat(id)?.id === j)));
+        if (doppelt.length) throw new Error(`${doppelt.length === 1 ? `„${get('SELECT titel FROM dokumente WHERE id = ?', doppelt[0]).titel}“ ist` : `${doppelt.length} Dokumente sind`} `
+          + 'Duplikat(e) einer Rechnung, die es schon gibt (gleiche Nummer, gleicher Betrag, gleicher Absender). Bitte abwählen oder löschen.');
+      }
       for (const id of ids) {
         if (keys.length) db.prepare(`UPDATE dokumente SET ${keys.map((k) => `${k} = ?`).join(', ')} WHERE id = ?`)
           .run(...keys.map((k) => (felder[k] === '' ? null : felder[k])), id);
-        if (ablegen) db.prepare(`UPDATE dokumente SET status = 'abgelegt' WHERE id = ?`).run(id);
+        if (ablegen) { db.prepare(`UPDATE dokumente SET status = 'abgelegt' WHERE id = ?`).run(id); kontaktSicherstellen(id); }
         indexieren(id);
       }
       return ids.length;
@@ -352,8 +405,7 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME }) {
     // Invoices with their booking and payment state.
     rechnungen: ({ objekt_id = null, jahr = null } = {}) => all(`SELECT d.id, d.titel, d.datum, d.faellig, d.betrag_ct, d.absender, d.rechnungsnr,
         d.iban, d.buchung_id, d.datei, d.status, d.objekt_id, o.bezeichnung AS objekt, b.datum AS gebucht_am, k.id AS konto_id, k.bezeichnung AS konto, g.klasse AS gegen_klasse,
-        (SELECT min(x.id) FROM dokumente x WHERE x.id <> d.id AND x.status <> 'papierkorb' AND x.rechnungsnr IS NOT NULL AND x.rechnungsnr = d.rechnungsnr
-          AND coalesce(x.betrag_ct, -1) = coalesce(d.betrag_ct, -1) AND coalesce(x.absender, '') = coalesce(d.absender, '')) AS duplikat_von
+        (SELECT min(x.id) FROM dokumente x WHERE ${GLEICHE_RECHNUNG('x', 'd')}) AS duplikat_von
       FROM dokumente d LEFT JOIN objekte o ON o.id = d.objekt_id LEFT JOIN buchungen b ON b.id = d.buchung_id
       LEFT JOIN konten k ON k.id = b.soll_id LEFT JOIN konten g ON g.id = b.haben_id
       WHERE d.typ IN ('Rechnung', 'Gutschrift', 'Mahnung') AND d.status <> 'papierkorb' AND (?1 IS NULL OR d.objekt_id = ?1)

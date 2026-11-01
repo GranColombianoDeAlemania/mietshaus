@@ -205,6 +205,7 @@ From the pick of 28.10.2026 („Paket 1 – ich will nichts bezahlen; Paket 2 so
 | Papierkorb | Deleting puts documents in a recycle bin (status `papierkorb`, 30 days, then removed with file and previews); delete icon per inbox row, batch delete, „Duplikat löschen“; the same file uploaded again comes back; Claude tool `dokument_loeschen` (not for booked documents) | done |
 | Claude | `dokument_ablegen` takes sender, VAT, items and labour share; instructions ask to complete them from the page image | done |
 | 0.16.1 Firmenname | Name cut after the legal form and at imprint words (Sitz, Registergericht, Tel. …); order: sender line above the window, letterhead with legal form, largest writing at the top (OCR line heights), imprint, first line; checked against the e-mail/web domain, else marked „unsicher“; learnt from the matching contact or the newest filed document with the same VAT id/IBAN/e-mail | done |
+| 0.16.2 Kontakte & Duplikate | Filing or booking an invoice makes its sender a contact (found first by VAT id, IBAN, e-mail or name without legal form – never twice); the same invoice twice (same number, amount, date if known, sender by name/contact/VAT id) is marked in the inbox and refused when filing, batch filing, drag & drop and booking (app and Claude) once a copy is filed or booked | done |
 
 ## Development
 

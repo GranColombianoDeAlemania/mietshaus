@@ -1442,6 +1442,9 @@ function api(db) {
       if (!d.objekt_id) throw new Error('Bitte zuerst ein Objekt zuordnen.');
       if (d.buchung_id) throw new Error('Dieses Dokument ist bereits gebucht.');
       if (!kosten_konto_id || !geld_konto_id) throw new Error('Bitte Kostenart und Geldkonto wählen.');
+      // A copy of an invoice that is filed or booked already is never booked a second time.
+      const doppelt = ar.dokumentDuplikat(dokId, { abgelegt: true });
+      if (doppelt) throw new Error(`Diese Rechnung ist schon ${doppelt.buchung_id ? 'gebucht' : 'abgelegt'} („${doppelt.titel}“) – gleiche Rechnungsnummer, gleicher Betrag, gleicher Absender. Sie wird nicht doppelt gebucht.`);
       const a = alles.belegAufteilung(dokId, { kosten_konto_id, betrag_ct, vorsteuer });
       const gutschrift = d.typ === 'Gutschrift';
       const pos = [{ konto: kosten_konto_id, ct: a.kosten_ct, p35a_ct: a.p35a_ct }, ...a.vorsteuer.map((t) => ({ konto: t.konto_id, ct: t.ct }))];
@@ -1450,6 +1453,7 @@ function api(db) {
         positionen: pos.map((p) => (gutschrift ? { soll_id: geld_konto_id, haben_id: p.konto, betrag_ct: p.ct, p35a_ct: p.p35a_ct }
           : { soll_id: p.konto, haben_id: geld_konto_id, betrag_ct: p.ct, p35a_ct: p.p35a_ct })) });
       db.prepare(`UPDATE dokumente SET buchung_id = ?, status = 'abgelegt' WHERE id = ?`).run(id, dokId);
+      ar.kontaktSicherstellen(dokId);
       return id;
     }),
     // Bank lines paid to a loan account are booked as instalments (interest + repayment).
