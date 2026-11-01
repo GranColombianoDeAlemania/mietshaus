@@ -166,6 +166,27 @@ function client(url) {
     pruefe('Beleg-Foto gelesen', d.analyse === 'fertig' && d.betrag_ct === 4890 && d.ocr === 1, `${d.analyse} ${d.betrag_ct} ${d.ocr}`);
   }
 
+  // ---------- 4a''. invoice photo: sender with imprint, VAT, line items, labour share; then into the recycle bin ----------
+  {
+    const foto = await (await anna.anfrage('/api/hochladen?name=rechnung.png&opt=%7B%7D', { methode: 'POST', roh: fs.readFileSync(path.join(__dirname, 'testdaten', 'rechnung.png')) })).json();
+    let d;
+    for (let i = 0; i < 240 && (d = await anna.call('dokument', foto[0].id))?.analyse !== 'fertig'; i++) await warte(250);
+    pruefe('Rechnung: Absender und Impressum', d.absender === 'Müller Haustechnik GmbH' && d.steller?.ust_id === 'DE123456789' && d.steller?.plz === '80939'
+      && /HRB 123456/.test(d.steller?.register ?? ''), JSON.stringify(d.steller));
+    pruefe('Rechnung: Betrag und MwSt', d.betrag_ct === 25466 && d.ust_ct === 4066 && d.netto_ct === 21400, `${d.betrag_ct} ${d.netto_ct} ${d.ust_ct}`);
+    pruefe('Rechnung: Positionen mit Arbeitszeit', d.positionen?.length === 4 && d.positionen.some((p) => p.art === 'arbeit' && p.betrag_ct === 8700), JSON.stringify(d.positionen));
+    pruefe('Rechnung: Arbeits- und Fahrtkosten brutto', d.lohn_ct === 13328, String(d.lohn_ct));
+    pruefe('Rechnung: Positionen in der Suche', (await anna.call('suche', 'Dichtungssatz')).dokumente.some((x) => x.id === d.id));
+    const datei = path.join(ordner, 'dokumente', d.datei);
+    await anna.anfrage('/api/dokument-loeschen', { methode: 'POST', json: { id: d.id } });
+    pruefe('Papierkorb: aus dem Postfach, Datei bleibt', !(await anna.call('dokumentListe', { status: 'postfach' })).some((x) => x.id === d.id) && fs.existsSync(datei)
+      && (await anna.call('papierkorb')).some((x) => x.id === d.id));
+    await anna.call('dokumentWiederherstellen', [d.id]);
+    pruefe('Papierkorb: wiederhergestellt', (await anna.call('dokument', d.id)).status === 'postfach');
+    await anna.anfrage('/api/dokument-loeschen', { methode: 'POST', json: { id: [d.id] } });
+    pruefe('Papierkorb: endgültig gelöscht samt Datei', await anna.call('dokumentEndgueltig', [d.id]) === 1 && !fs.existsSync(datei) && !(await anna.call('dokument', d.id)));
+  }
+
   // ---------- 4a'. meter photo: digits proposed, photo kept with the reading ----------
   {
     const oid = await anna.call('save', 'objekte', { bezeichnung: 'Zählerhaus', art: 'miete' });

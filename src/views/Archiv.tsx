@@ -2,12 +2,26 @@
 import { useEffect, useState } from 'react';
 import { betrag, call, datum, diesesJahr, euro, fehler, heute, parseCent, personName, zahl, type Row } from '../api';
 import { useLoad } from '../useLoad';
-import { KontoSelect, Leer } from '../ui';
+import { Dialog, KontoSelect, Leer } from '../ui';
 import { L } from '../navi';
 import { painUeberweisung } from '../bankformate';
 import { bestaetigen, hinweis } from '../frage';
 import { emailSchreiben } from '../Mail';
 import { BelegFoto } from '../Foto';
+import { belegDaten, belegWerte, BetraegeUndPositionen, Rechnungssteller, type BelegWerte } from './Beleg';
+
+const RECHNUNGSARTEN = ['Rechnung', 'Gutschrift', 'Mahnung', 'Angebot'];
+
+// Into the recycle bin (30 days); a document behind a posting is asked about first (records are kept for 10 years).
+export async function inPapierkorb(docs: Row[]) {
+  const gebucht = docs.filter((x) => x.buchung_id);
+  if (gebucht.length && !await bestaetigen(`${gebucht.length === 1 ? 'Dieser Beleg gehört' : `${gebucht.length} Belege gehören`} zu einer Buchung. `
+    + 'Belege sind 10 Jahre aufzubewahren; die Buchung selbst bleibt. Trotzdem in den Papierkorb legen?', { ja: 'In den Papierkorb' })) return false;
+  await window.hv.dokumentLoeschen(docs.map((x) => x.id));
+  // Counters elsewhere (inbox badge in the sidebar) follow.
+  window.dispatchEvent(new Event('hv-daten'));
+  return true;
+}
 
 const istBild = (datei: string) => /\.(png|jpe?g|gif|webp|bmp|tiff?)$/i.test(datei);
 export const dokUrl = (datei: string) => `/dateien/dokument/${encodeURIComponent(datei)}`;
@@ -67,29 +81,35 @@ function DokumentFormular(props: { id: number; onFertig: () => void; postfach?: 
   const [personen] = useLoad<Row[]>(() => call('personen'), []);
   const [projekte] = useLoad<Row[]>(() => call('projektListe'), []);
   const [f, setF] = useState<Row | null>(null);
+  const [w, setW] = useState<BelegWerte | null>(null);
   const [buchen, setBuchen] = useState(false);
 
   useEffect(() => {
     if (d) setF({ ...d, betrag: d.betrag_ct != null ? (d.betrag_ct / 100).toFixed(2).replace('.', ',') : '' });
-  }, [d?.id, d?.analyse]);
+    if (d) setW(belegWerte(d));
+  }, [d?.id, d?.analyse, d?.person_id]);
   const [einheiten] = useLoad<Row[]>(async () => (f?.objekt_id ? call('einheiten', f.objekt_id) : []), [f?.objekt_id]);
-  if (!d || !f) return null;
+  if (!d || !f || !w) return null;
 
   const objektListe = [...new Map((objekte ?? []).map((o) => [o.id, o])).values()];
   const set = (k: string, v: unknown) => setF({ ...f, [k]: v });
 
-  async function speichern(status?: string) {
+  // schliessen false: only stores (before booking or creating a contact), the form stays open.
+  async function speichern(status?: string, schliessen = true) {
     try {
       await call('dokumentSpeichern', {
         id: d!.id, titel: f!.titel, typ: f!.typ, objekt_id: f!.objekt_id || null, projekt_id: f!.projekt_id || null, einheit_id: f!.einheit_id || null, person_id: f!.person_id || null,
-        datum: f!.datum, faellig: f!.faellig, betrag_ct: f!.betrag ? parseCent(f!.betrag) : null, absender: f!.absender, rechnungsnr: f!.rechnungsnr,
-        iban: f!.iban, notiz: f!.notiz, zusammenfassung: f!.zusammenfassung, ...(status ? { status } : {}),
+        datum: f!.datum, faellig: f!.faellig, betrag_ct: f!.betrag ? parseCent(f!.betrag) : null, absender: f!.absender || w!.steller.name || null, rechnungsnr: f!.rechnungsnr,
+        iban: f!.iban, notiz: f!.notiz, zusammenfassung: f!.zusammenfassung, ...belegDaten(w!), ...(status ? { status } : {}),
       });
-      props.onFertig();
+      if (schliessen) props.onFertig();
+      return true;
     } catch (e) {
       fehler(e);
+      return false;
     }
   }
+  const rechnung = RECHNUNGSARTEN.includes(f.typ) || !!d.steller;
 
   const text = (k: string, l: string, typ = 'text') => (
     <label key={k}>{l}<input type={typ} value={f[k] ?? ''} onChange={(e) => set(k, e.target.value)} /></label>
@@ -97,6 +117,11 @@ function DokumentFormular(props: { id: number; onFertig: () => void; postfach?: 
 
   return (
     <div className="dokformular">
+      <div className="buttons dok-oben">
+        <button className="danger" onClick={async () => { if (await inPapierkorb([d])) props.onFertig(); }} title="In den Papierkorb (30 Tage wiederherstellbar)">Löschen</button>
+        <button onClick={async () => { await window.hv.neuAnalysieren(d.id); ladeD(); }} title="Text erneut lesen">Neu lesen</button>
+        <button onClick={() => window.hv.dokumentOeffnen(d.datei)}>Öffnen</button>
+      </div>
       <div className="maske zwei">
         <label className="breit">Titel<input value={f.titel ?? ''} onChange={(e) => set('titel', e.target.value)} /></label>
         <label>Dokumenttyp
@@ -132,6 +157,11 @@ function DokumentFormular(props: { id: number; onFertig: () => void; postfach?: 
         <label className="breit">IBAN<input value={f.iban ?? ''} onChange={(e) => set('iban', e.target.value)} /></label>
         <label className="breit">Zusammenfassung / Notiz<textarea rows={2} value={f.zusammenfassung ?? f.notiz ?? ''} onChange={(e) => set('zusammenfassung', e.target.value)} /></label>
       </div>
+      {rechnung && <>
+        <Rechnungssteller w={w} set={setW} offen={!!props.postfach} kontakt={{ id: d.person_id }}
+          onKontakt={async () => { if (await speichern(undefined, false)) { try { await call('kontaktAusSteller', d.id); ladeD(); } catch (e) { fehler(e); } } }} />
+        <BetraegeUndPositionen w={w} set={setW} brutto={f.betrag ? parseCent(f.betrag) : null} offen={!!props.postfach} />
+      </>}
       {d.erechnung && <p className="hinweisbox klein">E-Rechnung erkannt: Betrag, Netto/Umsatzsteuer, Rechnungsnummer, Fälligkeit und IBAN wurden exakt aus den Rechnungsdaten übernommen.</p>}
       <p className="klein hinweis">
         {d.analyse !== 'fertig' ? analyseText(d.analyse) : `${d.seiten ?? '?'} Seite(n)${d.ocr ? ', Text per Texterkennung gelesen' : ''} · ${d.name}`}
@@ -146,18 +176,15 @@ function DokumentFormular(props: { id: number; onFertig: () => void; postfach?: 
           {d.buchung_id && d.buchung_konto_id && <span className="chip"><L zu={{ konto: d.buchung_konto_id }}>Buchung vom {datum(d.buchung_datum)}</L></span>}
         </p>
       )}
-      {buchen && f.objekt_id && <Belegbuchung dok={{ ...d, ...f, betrag_ct: parseCent(f.betrag) }} onFertig={async (bid) => { await call('dokumentSpeichern', { id: d.id, buchung_id: bid }); setBuchen(false); await speichern('abgelegt'); ladeD(); }} onAbbruch={() => setBuchen(false)} />}
+      {buchen && f.objekt_id && <Belegbuchung dok={{ ...d, ...f, betrag_ct: parseCent(f.betrag) }} onFertig={() => { setBuchen(false); ladeD(); props.onFertig(); }} onAbbruch={() => setBuchen(false)} />}
       <div className="buttons">
-        <button className="danger" onClick={async () => { if (await bestaetigen('Dokument und Datei löschen?')) { await window.hv.dokumentLoeschen(d.id); props.onFertig(); } }}>Löschen</button>
-        <button onClick={async () => { await window.hv.neuAnalysieren(d.id); ladeD(); }} title="Text erneut lesen">Neu lesen</button>
-        <button onClick={() => window.hv.dokumentOeffnen(d.datei)}>Öffnen</button>
         <button onClick={async () => {
           const p = d.person_id ? await call<Row>('get', 'personen', d.person_id) : null;
           emailSchreiben({ an: p?.email ?? '', betreff: d.titel ?? '', dokumente: [{ id: d.id, titel: d.titel ?? d.name }], ablage: { objekt_id: d.objekt_id, person_id: d.person_id, einheit_id: d.einheit_id } });
         }}>Per E-Mail…</button>
         <span className="spacer" />
         {['Rechnung', 'Gutschrift'].includes(f.typ) && !d.buchung_id && (
-          <button disabled={!f.objekt_id || !parseCent(f.betrag)} title={!f.objekt_id ? 'Bitte zuerst ein Objekt wählen' : ''} onClick={() => setBuchen(true)}>Buchen…</button>
+          <button disabled={!f.objekt_id || !parseCent(f.betrag)} title={!f.objekt_id ? 'Bitte zuerst ein Objekt wählen' : ''} onClick={async () => { if (await speichern(undefined, false)) setBuchen(true); }}>Buchen…</button>
         )}
         <button className="primary" onClick={() => speichern(props.postfach ? 'abgelegt' : undefined)}>{props.postfach ? 'Ablegen' : 'Speichern'}</button>
       </div>
@@ -165,7 +192,8 @@ function DokumentFormular(props: { id: number; onFertig: () => void; postfach?: 
   );
 }
 
-// Books an invoice: expense account against the bank (paid) – the document is linked to the posting.
+// Books an invoice: expense account against the bank (paid) – the document is linked to the posting (db: belegBuchen).
+// Input tax per VAT rate only in houses with VAT-able letting and only with a known VAT; the labour share goes along for § 35a.
 function Belegbuchung(props: { dok: Row; onFertig: (buchungId: number) => void; onAbbruch: () => void }) {
   const d = props.dok;
   const [konten] = useLoad<Row[]>(() => call('konten', d.objekt_id), [d.objekt_id]);
@@ -173,23 +201,22 @@ function Belegbuchung(props: { dok: Row; onFertig: (buchungId: number) => void; 
   const [kosten, setKosten] = useState<number | ''>('');
   const [geld, setGeld] = useState<number | ''>('');
   const [datumB, setDatumB] = useState(d.datum ?? heute());
+  const [mitVst, setMitVst] = useState(true);
   useEffect(() => { if (vorschlag) setKosten(vorschlag); }, [vorschlag]);
   useEffect(() => { if (konten && !geld) setGeld(konten.find((k) => k.klasse === 'geld')?.id ?? ''); }, [konten]);
+  const [t] = useLoad<Row>(() => call('belegAufteilung', d.id, { kosten_konto_id: kosten || null, vorsteuer: mitVst }), [d.id, kosten, mitVst]);
   const gutschrift = d.typ === 'Gutschrift';
-  const [objekt] = useLoad<Row>(() => call('get', 'objekte', d.objekt_id), [d.objekt_id]);
-  // With a VAT-able letting in the house the input tax goes to its own account (exact from an e-invoice, else 19 % assumed off).
-  const vst = konten?.find((k) => k.klasse === 'steuer' && k.kategorie === 'vorsteuer19');
-  const [mitVst, setMitVst] = useState(!!d.ust_ct);
-  const quote = objekt?.vorsteuer_quote ?? 100;
-  const ustBetrag = d.ust_ct ?? Math.round(d.betrag_ct * 19 / 119);
-  const abziehbar = vst && mitVst ? Math.round(ustBetrag * quote / 100) : 0;
   return (
     <div className="panel">
       <h3>{gutschrift ? 'Gutschrift' : 'Rechnung'} buchen: {euro(d.betrag_ct)}</h3>
-      {vst && (
-        <label className="check"><input type="checkbox" checked={mitVst} onChange={(e) => setMitVst(e.target.checked)} />
-          Vorsteuer abziehen: {euro(abziehbar)}{quote < 100 ? ` (${quote} % von ${euro(ustBetrag)})` : ''}{d.ust_ct ? ' – aus der E-Rechnung' : ' – 19 % angenommen'}</label>
-      )}
+      {t?.vorsteuer_moeglich && (t.ust_bekannt
+        ? <label className="check"><input type="checkbox" checked={mitVst} onChange={(e) => setMitVst(e.target.checked)} />
+          Vorsteuer abziehen: {euro(t.abziehbar_ct)}{t.quote < 100 ? ` (${t.quote} % abziehbar)` : ''}
+          {t.vorsteuer.length > 1 ? ` – ${t.vorsteuer.map((v: Row) => `${zahl(v.satz)} %: ${euro(v.ct)}`).join(', ')}` : ''}</label>
+        : <p className="fehlertext klein">MwSt unbekannt – es wird keine Vorsteuer abgezogen. Bitte oben unter „Beträge & Positionen“ eintragen.</p>)}
+      {t?.p35a_konto && <p className="klein hinweis">{t.p35a_ct != null
+        ? `Davon Arbeits- und Fahrtkosten für § 35a: ${euro(t.p35a_ct)}.`
+        : 'Arbeitsanteil unbekannt – die Rechnung zählt in der Abrechnung voll für § 35a. Oben eintragen, wenn Material dabei ist.'}</p>}
       <div className="maske">
         <label className="breit">Kostenart<KontoSelect konten={konten ?? []} klassen={['kosten', 'ruecklage', 'einnahme']} value={kosten} onChange={setKosten} /></label>
         <label>{gutschrift ? 'Eingang auf' : 'Bezahlt von'}<KontoSelect konten={konten ?? []} klassen={['geld']} value={geld} onChange={setGeld} /></label>
@@ -200,10 +227,7 @@ function Belegbuchung(props: { dok: Row; onFertig: (buchungId: number) => void; 
         <button onClick={props.onAbbruch}>Abbrechen</button>
         <button className="primary" disabled={!kosten || !geld} onClick={async () => {
           try {
-            const pos = [{ konto: kosten, ct: d.betrag_ct - abziehbar }, ...(abziehbar ? [{ konto: vst!.id, ct: abziehbar }] : [])];
-            const id = await call('buchen', { objekt_id: d.objekt_id, datum: datumB, beleg: d.rechnungsnr, text: [d.absender, d.titel].filter(Boolean).join(' – ').slice(0, 120),
-              positionen: pos.map((p) => (gutschrift ? { soll_id: geld, haben_id: p.konto, betrag_ct: p.ct } : { soll_id: p.konto, haben_id: geld, betrag_ct: p.ct })) });
-            props.onFertig(id);
+            props.onFertig(await call('belegBuchen', d.id, { kosten_konto_id: kosten, geld_konto_id: geld, datum: datumB, vorsteuer: mitVst }));
           } catch (e) { fehler(e); }
         }}>Buchen</button>
       </div>
@@ -221,12 +245,16 @@ export function Postfach() {
   }, [liste]);
   const d = liste?.find((x) => x.id === aktiv);
   const gewaehlt = (liste ?? []).filter((x) => auswahl[x.id]);
+  const [korb, ladeKorb] = useLoad<number>(() => call('papierkorbAnzahl'), [liste]);
+  const [korbOffen, setKorbOffen] = useState(false);
+  const loeschen = async (docs: Row[]) => { if (await inPapierkorb(docs)) { setAuswahl({}); reload(); } };
   return (
     <section className="postfach">
       <div className="toolbar">
         <h1>Postfach</h1>
         <span className="hinweis">{liste?.length ?? 0} Dokumente warten</span>
         <span className="spacer" />
+        <button className="link" onClick={() => setKorbOffen(true)} title="Gelöschte Dokumente, 30 Tage wiederherstellbar">Papierkorb{korb ? ` (${korb})` : ''}</button>
         <BelegFoto onFertig={reload} />
         <button className="primary" onClick={() => window.hv.dateienImportieren({}).then(reload)}>Dateien hinzufügen…</button>
       </div>
@@ -242,7 +270,7 @@ export function Postfach() {
         </div>
       ) : (
         <>
-          {gewaehlt.length > 0 && <Stapel dokumente={gewaehlt} onFertig={() => { setAuswahl({}); reload(); }} />}
+          {gewaehlt.length > 0 && <Stapel dokumente={gewaehlt} onFertig={() => { setAuswahl({}); reload(); }} onLoeschen={() => loeschen(gewaehlt)} />}
           <div className="postfach-raster">
             <ul className="dokliste">
               <li className="kopf">
@@ -259,8 +287,10 @@ export function Postfach() {
                     <b>{x.titel}</b>
                     <span className="klein">{[x.typ, x.absender, x.betrag_ct != null ? euro(x.betrag_ct) : null, x.objekt].filter(Boolean).join(' · ') || x.name}</span>
                     <span className="klein hinweis">{analyseText(x.analyse) || datum(x.datum ?? x.erfasst)}</span>
-                    {x.duplikat_von && <span className="tag fehlertext">mögliches Duplikat</span>}
+                    {x.duplikat_von && <span className="tag fehlertext">mögliches Duplikat{' '}
+                      <button className="link klein" onClick={(e) => { e.stopPropagation(); loeschen([x]); }}>Duplikat löschen</button></span>}
                   </div>
+                  <button className="link loeschen" title="In den Papierkorb" aria-label="In den Papierkorb" onClick={(e) => { e.stopPropagation(); loeschen([x]); }}>🗑</button>
                 </li>
               ))}
             </ul>
@@ -269,12 +299,46 @@ export function Postfach() {
           </div>
         </>
       )}
+      {korbOffen && <Papierkorb onClose={() => { setKorbOffen(false); reload(); ladeKorb(); }} />}
     </section>
   );
 }
 
+// Deleted documents: back to where they were, or removed for good; after 30 days they go by themselves.
+function Papierkorb(props: { onClose: () => void }) {
+  const [liste, reload] = useLoad<Row[]>(() => call('papierkorb'), []);
+  const zurueck = async (ids: number[]) => { await call('dokumentWiederherstellen', ids); reload(); window.dispatchEvent(new Event('hv-daten')); };
+  const weg = async (ids: number[]) => {
+    if (!await bestaetigen(ids.length === 1 ? 'Dieses Dokument endgültig löschen? Die Datei ist dann weg.' : `${ids.length} Dokumente endgültig löschen? Die Dateien sind dann weg.`,
+      { ja: 'Endgültig löschen' })) return;
+    await call('dokumentEndgueltig', ids);
+    reload();
+  };
+  return (
+    <Dialog titel="Papierkorb" onClose={props.onClose} breit aktionen={liste?.length ? <button className="danger" onClick={() => weg(liste.map((x) => x.id))}>Papierkorb leeren</button> : null}>
+      <p className="klein hinweis">Gelöschte Dokumente bleiben 30 Tage hier und lassen sich wiederherstellen; danach werden sie samt Datei entfernt.
+        Lädt man dieselbe Datei erneut hoch, kommt sie von hier zurück.</p>
+      {liste && !liste.length ? <Leer text="Der Papierkorb ist leer." /> : (
+        <table className="liste">
+          <thead><tr><th>Dokument</th><th>Gelöscht</th><th>Entfernt am</th><th /></tr></thead>
+          <tbody>
+            {liste?.map((x) => (
+              <tr key={x.id}>
+                <td><b>{x.titel}</b><div className="klein hinweis">{[x.typ, x.absender, x.betrag_ct != null ? euro(x.betrag_ct) : null, x.objekt, x.buchung_id ? 'gebucht' : null, x.geloescht_aus === 'postfach' ? 'aus dem Postfach' : 'aus dem Archiv'].filter(Boolean).join(' · ')}</div></td>
+                <td>{datum(x.geloescht?.slice(0, 10))}</td>
+                <td>{datum(x.endgueltig_am?.slice(0, 10))}</td>
+                <td className="buttons"><button onClick={() => zurueck([x.id])}>Wiederherstellen</button><button className="link danger" onClick={() => weg([x.id])}>Endgültig löschen</button></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </Dialog>
+  );
+}
+
 // Batch filing: assign object, unit, project or type to all selected documents at once.
-function Stapel(props: { dokumente: Row[]; onFertig: () => void }) {
+function Stapel(props: { dokumente: Row[]; onFertig: () => void; onLoeschen: () => void }) {
   const [typen] = useLoad<string[]>(() => call('dokumentTypen'), []);
   const [objekte] = useLoad<Row[]>(async () => [...new Map([...await call('objekte', 'miete'), ...await call('objekte', 'weg')].map((o: Row) => [o.id, o])).values()], []);
   const [projekte] = useLoad<Row[]>(() => call('projektListe'), []);
@@ -300,6 +364,7 @@ function Stapel(props: { dokumente: Row[]; onFertig: () => void }) {
         {sel('projekt_id', (projekte ?? []).map((p) => [p.id, p.titel]), 'Projekt unverändert')}
         {sel('typ', (typen ?? []).map((t) => [t, t]), 'Typ unverändert')}
         <span className="spacer" />
+        <button className="danger" onClick={props.onLoeschen} title="In den Papierkorb (30 Tage wiederherstellbar)">Löschen</button>
         <button onClick={() => go(false)}>Nur zuordnen</button>
         <button className="primary" onClick={() => go(true)}>Zuordnen & ablegen</button>
       </div>

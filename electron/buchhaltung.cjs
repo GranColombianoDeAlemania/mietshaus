@@ -99,7 +99,7 @@ const selbstSql = (e, d) => `EXISTS (SELECT 1 FROM selbstnutzung sn WHERE sn.ein
   AND (sn.ende IS NULL OR sn.ende = '' OR sn.ende >= ${d}))`;
 // SQL expression: the unit a posting `b` concerns – set on the posting, or taken from its receipt or its project.
 const einheitVonSql = (b) => `coalesce(${b}.einheit_id,
-  (SELECT d.einheit_id FROM dokumente d WHERE d.buchung_id IN (${b}.id, coalesce(${b}.gruppe, -1)) AND d.einheit_id IS NOT NULL ORDER BY d.id LIMIT 1),
+  (SELECT d.einheit_id FROM dokumente d WHERE d.buchung_id IN (${b}.id, coalesce(${b}.gruppe, -1)) AND d.einheit_id IS NOT NULL AND d.status <> 'papierkorb' ORDER BY d.id LIMIT 1),
   (SELECT pj.einheit_id FROM projektposten pp JOIN projekte pj ON pj.id = pp.projekt_id WHERE pp.buchung_id IN (${b}.id, coalesce(${b}.gruppe, -1))
     AND pj.einheit_id IS NOT NULL LIMIT 1))`;
 
@@ -202,7 +202,7 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
   }
 
   // ohneTx: for callers that already run inside a transaction.
-  // einheit_id: the unit the costs concern (also per position).
+  // einheit_id: the unit the costs concern (also per position); p35a_ct: the labour share of a position (§ 35a).
   function buchen({ objekt_id, datum, beleg, text, art = 'manuell', monat = null, import_ref = null, einheit_id = null, positionen }, ohneTx = false) {
     if (!datum) throw new Error('Bitte ein Buchungsdatum angeben.');
     const pos = positionen.filter((p) => p.betrag_ct);
@@ -214,12 +214,13 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
       if (p.betrag_ct < 0) [p.soll_id, p.haben_id, p.betrag_ct] = [p.haben_id, p.soll_id, -p.betrag_ct];
     }
     return (ohneTx ? (f) => f() : tx)(() => {
-      const st = db.prepare(`INSERT INTO buchungen (objekt_id, datum, beleg, text, betrag_ct, soll_id, haben_id, art, monat, gruppe, import_ref, einheit_id)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`);
+      const st = db.prepare(`INSERT INTO buchungen (objekt_id, datum, beleg, text, betrag_ct, soll_id, haben_id, art, monat, gruppe, import_ref, einheit_id, p35a_ct)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`);
       let gruppe = null;
       const ids = pos.map((p, i) => {
         const id = Number(st.run(objekt_id, datum, beleg || null, p.text || text || null, p.betrag_ct, p.soll_id, p.haben_id,
-          art, p.monat ?? monat, gruppe, i === 0 ? import_ref : null, p.einheit_id || einheit_id || null).lastInsertRowid);
+          art, p.monat ?? monat, gruppe, i === 0 ? import_ref : null, p.einheit_id || einheit_id || null,
+          p.p35a_ct != null ? Math.max(0, Math.min(p.betrag_ct, Math.round(p.p35a_ct))) : null).lastInsertRowid);
         if (i === 0 && pos.length > 1) {
           gruppe = id;
           db.prepare('UPDATE buchungen SET gruppe = ? WHERE id = ?').run(id, id);
@@ -232,8 +233,8 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
 
   const BUCHUNG_SQL = `SELECT b.*, s.nr AS soll_nr, s.bezeichnung AS soll_bez, h.nr AS haben_nr, h.bezeichnung AS haben_bez,
       s.klasse AS soll_klasse, h.klasse AS haben_klasse, s.vertrag_typ AS soll_vtyp, s.vertrag_id AS soll_vid, h.vertrag_typ AS haben_vtyp, h.vertrag_id AS haben_vid,
-      (SELECT d.id FROM dokumente d WHERE d.buchung_id IN (b.id, coalesce(b.gruppe, -1)) ORDER BY d.id LIMIT 1) AS dok_id,
-      (SELECT d.datei FROM dokumente d WHERE d.buchung_id IN (b.id, coalesce(b.gruppe, -1)) ORDER BY d.id LIMIT 1) AS dok_datei,
+      (SELECT d.id FROM dokumente d WHERE d.buchung_id IN (b.id, coalesce(b.gruppe, -1)) AND d.status <> 'papierkorb' ORDER BY d.id LIMIT 1) AS dok_id,
+      (SELECT d.datei FROM dokumente d WHERE d.buchung_id IN (b.id, coalesce(b.gruppe, -1)) AND d.status <> 'papierkorb' ORDER BY d.id LIMIT 1) AS dok_datei,
       EXISTS (SELECT 1 FROM buchungen x WHERE x.storno_von = b.id) AS storniert,
       ${einheitVonSql('b')} AS einheit_eff, (SELECT x.bezeichnung FROM einheiten x WHERE x.id = ${einheitVonSql('b')}) AS einheit_bez,
       b.datum <= coalesce((SELECT wert FROM einstellungen WHERE schluessel = 'festgeschrieben_bis'), '0000-00-00') AS festgeschrieben
@@ -657,9 +658,9 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
       const gruppe = b.gruppe ? all('SELECT * FROM buchungen WHERE gruppe = ? ORDER BY id', b.gruppe) : [b];
       let neueGruppe = null;
       for (const [i, x] of gruppe.entries()) {
-        const nid = Number(db.prepare(`INSERT INTO buchungen (objekt_id, datum, beleg, text, betrag_ct, soll_id, haben_id, art, monat, gruppe, storno_von)
-          VALUES (?, ?, ?, ?, ?, ?, ?, 'storno', ?, ?, ?)`).run(x.objekt_id, datum, x.beleg, `Storno: ${x.text ?? ''}`.slice(0, 300), x.betrag_ct,
-          x.haben_id, x.soll_id, x.monat, neueGruppe, x.id).lastInsertRowid);
+        const nid = Number(db.prepare(`INSERT INTO buchungen (objekt_id, datum, beleg, text, betrag_ct, soll_id, haben_id, art, monat, gruppe, storno_von, p35a_ct)
+          VALUES (?, ?, ?, ?, ?, ?, ?, 'storno', ?, ?, ?, ?)`).run(x.objekt_id, datum, x.beleg, `Storno: ${x.text ?? ''}`.slice(0, 300), x.betrag_ct,
+          x.haben_id, x.soll_id, x.monat, neueGruppe, x.id, x.p35a_ct ?? null).lastInsertRowid);
         if (i === 0 && gruppe.length > 1) { neueGruppe = nid; db.prepare('UPDATE buchungen SET gruppe = ? WHERE id = ?').run(nid, nid); }
       }
       return gruppe.length;
@@ -809,7 +810,7 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
         JOIN personen p ON p.id = v.person_id WHERE k.objekt_id = ? ORDER BY (v.ende IS NULL OR v.ende = '') DESC`, objektId);
       // Open invoices of this object (documents) and of projects linked to it.
       const rechnungen = all(`SELECT id, titel, absender, betrag_ct, iban, rechnungsnr FROM dokumente
-        WHERE objekt_id = ? AND typ = 'Rechnung' AND buchung_id IS NULL AND betrag_ct > 0`, objektId);
+        WHERE objekt_id = ? AND typ = 'Rechnung' AND buchung_id IS NULL AND betrag_ct > 0 AND status <> 'papierkorb'`, objektId);
       const projektRechnungen = all(`SELECT pp.id, pp.titel, pp.firma, pp.betrag_ct, p.kosten_konto_id, p.titel AS projekt FROM projektposten pp
         JOIN projekte p ON p.id = pp.projekt_id WHERE p.objekt_id = ? AND pp.art = 'rechnung' AND pp.buchung_id IS NULL AND pp.status <> 'bezahlt'`, objektId);
       const norm = (s) => (s ?? '').replace(/\s/g, '').toUpperCase();

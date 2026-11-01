@@ -13,6 +13,11 @@ Typischer Auftrag: „Arbeite das Postfach ab“. Vorgehen:
 2. Je Dokument dokument_lesen; der erkannte Text ist dabei, bei Scans und Fotos zusätzlich die Seitenbilder.
 3. Mit objekte_liste / objekt_details / suchen die passenden Stammdaten finden (Objekt, Einheit, Person, Vertrag).
 4. dokument_ablegen mit korrekt bestimmtem Typ, Titel, Datum, Betrag, Absender, Objekt usw. und einer kurzen Zusammenfassung.
+   Bei Rechnungen zusätzlich aus dem Seitenbild prüfen und vervollständigen: rechnungssteller (Briefkopf und Impressum: Firma, Anschrift,
+   USt-IdNr., Steuernummer, Handelsregister, Kontakt, Bank), mwst (je Satz Netto und Steuer; Kleinunternehmer/§ 19 UStG = Satz 0),
+   positionen (jede Zeile mit Bezeichnung, Menge, Einheit, Betrag und Art arbeit/anfahrt/material) und arbeitskosten_eur (Arbeits- und
+   Fahrtkosten brutto, § 35a EStG). Die automatisch erkannten Werte stehen in dokument_lesen und können falsch oder unvollständig sein.
+   Doppelt eingelegte oder versehentlich abgelegte Dateien mit dokument_loeschen in den Papierkorb legen (30 Tage wiederherstellbar).
 5. Je nach Inhalt die Daten ins Programm übernehmen, z. B.:
    - bezahlte Rechnung: rechnung_buchen (Kostenkonto aus konten_liste wählen; Betriebskosten auf das passende umlagefähige Konto nach BetrKV),
    - unbezahlte Rechnung: nur ablegen mit Fälligkeit (sie erscheint dann unter „Rechnungen“ als offen),
@@ -52,7 +57,8 @@ function mcpServer(db, { dokumente }) {
       if (!d) throw new Error('Dokument nicht gefunden');
       const { text: inhalt, erechnung, ...felder } = d;
       // E-invoices (ZUGFeRD / XRechnung) carry exact data: sender, number, net, VAT, IBAN, line items.
-      const out = [{ type: 'text', text: JSON.stringify({ ...felder, betrag_eur: eur(d.betrag_ct), erechnung: erechnung ? JSON.parse(erechnung) : null, text: (inhalt ?? '').slice(0, 60000) }, null, 1) }];
+      const out = [{ type: 'text', text: JSON.stringify({ ...felder, betrag_eur: eur(d.betrag_ct), arbeitskosten_eur: eur(d.lohn_ct),
+        erechnung: erechnung ? JSON.parse(erechnung) : null, text: (inhalt ?? '').slice(0, 60000) }, null, 1) }];
       if (bilder ?? !!d.ocr) {
         const ext = path.extname(d.datei).toLowerCase();
         const dateien = MIME[ext] ? [path.join(dokumente, d.datei)]
@@ -134,17 +140,42 @@ function mcpServer(db, { dokumente }) {
     objekt_id: z.number().int().nullable().optional(), einheit_id: z.number().int().nullable().optional(), person_id: z.number().int().nullable().optional(),
     projekt_id: z.number().int().nullable().optional(), datum: z.string().optional(), faellig: z.string().optional(), betrag_eur: z.number().nullable().optional(), absender: z.string().optional(),
     rechnungsnr: z.string().optional(), iban: z.string().optional(), zusammenfassung: z.string().optional(),
+    rechnungssteller: z.object({
+      name: z.string().optional(), strasse: z.string().optional(), plz: z.string().optional(), ort: z.string().optional(), telefon: z.string().optional(),
+      email: z.string().optional(), web: z.string().optional(), ust_id: z.string().optional(), steuernr: z.string().optional(),
+      register: z.string().optional().describe('z. B. „HRB 12345, Amtsgericht München“'), inhaber: z.string().optional(), bank: z.string().optional(),
+      iban: z.string().optional(), bic: z.string().optional(),
+    }).optional().describe('Wer die Rechnung gestellt hat (Briefkopf, Impressum im Fuß)'),
+    mwst: z.array(z.object({ satz: z.number(), netto_eur: z.number(), steuer_eur: z.number() })).optional().describe('Je Steuersatz; ohne Umsatzsteuer: [{satz: 0, netto_eur: Betrag, steuer_eur: 0}]'),
+    positionen: z.array(z.object({ text: z.string(), menge: z.number().nullable().optional(), einheit: z.string().nullable().optional(), betrag_eur: z.number(),
+      art: z.enum(['arbeit', 'anfahrt', 'material']).nullable().optional() })).optional().describe('Rechnungspositionen wie gedruckt (netto oder brutto)'),
+    arbeitskosten_eur: z.number().nullable().optional().describe('Arbeits- und Fahrtkosten brutto (§ 35a EStG), ohne Material'),
     im_postfach_lassen: z.boolean().optional().describe('true, wenn noch etwas unklar ist'),
   }, (a) => {
-    const { betrag_eur, im_postfach_lassen, ...rest } = a;
-    db.dokumentSpeichern({ ...rest, ...(betrag_eur !== undefined ? { betrag_ct: cent(betrag_eur) } : {}), status: im_postfach_lassen ? 'postfach' : 'abgelegt' });
+    const { betrag_eur, im_postfach_lassen, rechnungssteller, mwst, positionen, arbeitskosten_eur, ...rest } = a;
+    db.dokumentSpeichern({ ...rest, ...(betrag_eur !== undefined ? { betrag_ct: cent(betrag_eur) } : {}),
+      ...(rechnungssteller ? { steller: rechnungssteller, ...(rest.absender === undefined && rechnungssteller.name ? { absender: rechnungssteller.name } : {}) } : {}),
+      ...(mwst ? { steuer: mwst.map((t) => ({ satz: t.satz, netto_ct: cent(t.netto_eur), ust_ct: cent(t.steuer_eur) })) } : {}),
+      ...(positionen ? { positionen: positionen.map((p) => ({ text: p.text, menge: p.menge ?? null, einheit: p.einheit ?? null, betrag_ct: cent(p.betrag_eur), satz: null, art: p.art ?? null })) } : {}),
+      ...(arbeitskosten_eur !== undefined ? { lohn_ct: cent(arbeitskosten_eur) } : {}),
+      ...(rest.person_id === undefined && rechnungssteller && db.kontaktFinden(rechnungssteller) ? { person_id: db.kontaktFinden(rechnungssteller) } : {}),
+      status: im_postfach_lassen ? 'postfach' : 'abgelegt' });
     return text(`Dokument ${a.id} ${im_postfach_lassen ? 'aktualisiert (bleibt im Postfach)' : 'abgelegt'}.`);
+  });
+
+  werkzeug('dokument_loeschen', 'Legt Dokumente in den Papierkorb, z. B. doppelt eingelegte oder falsche Dateien. Sie bleiben 30 Tage wiederherstellbar.', {
+    ids: z.array(z.number().int()).min(1),
+  }, ({ ids }) => {
+    const gebucht = ids.filter((id) => db.dokument(id)?.buchung_id);
+    if (gebucht.length) throw new Error(`Dokument ${gebucht.join(', ')} gehört zu einer Buchung und wird nicht gelöscht; das entscheidet der Nutzer in Mietshaus.`);
+    db.dokumentLoeschen(ids);
+    return text(`${ids.length} Dokument(e) im Papierkorb (in Mietshaus unter Postfach → Papierkorb wiederherstellbar).`);
   });
 
   werkzeug('rechnung_buchen', 'Bucht eine bezahlte Rechnung (Kostenkonto an Geldkonto) bzw. Gutschrift und verknüpft den Beleg mit der Buchung.', {
     dokument_id: z.number().int(), kosten_konto_id: z.number().int(), geld_konto_id: z.number().int().optional(),
     datum: z.string().optional().describe('Zahlungsdatum, Standard: Rechnungsdatum'), betrag_eur: z.number().optional(), text: z.string().optional(),
-    vorsteuer_abziehen: z.boolean().optional().describe('Bei Objekten mit umsatzsteuerpflichtiger Vermietung: Umsatzsteuer der E-Rechnung als Vorsteuer buchen (Standard: ja, wenn bekannt)'),
+    vorsteuer_abziehen: z.boolean().optional().describe('Bei Objekten mit umsatzsteuerpflichtiger Vermietung: die MwSt des Belegs (je Satz) als Vorsteuer buchen (Standard: ja, wenn bekannt; unbekannte MwSt wird nie geschätzt)'),
     einheit_id: z.number().int().optional().describe('Wenn die Kosten nur eine Einheit betreffen (z. B. Renovierung einer Wohnung); Standard: Einheit des Dokuments'),
   }, mitFreigabe('rechnung_buchen'));
 

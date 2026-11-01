@@ -123,6 +123,16 @@ async function starten(o) {
   ein.mailPlanen();
   if (dbSystem.einstellungen().mail_aktiv === '1') setTimeout(() => ein.mailAbrufen().catch(() => {}), 20_000).unref();
   const automatik = () => { try { if (dbSystem.automatikLauf().erzeugt) senden('aktualisiert'); } catch (e) { console.error('Automatik', e); } };
+  // Files of documents removed for good (recycle bin), with their page previews.
+  const dateienEntfernen = (dateien) => {
+    for (const d of dateien ?? []) {
+      fs.rmSync(path.join(dokumentOrdner(), path.basename(d)), { force: true });
+      const stamm = path.parse(path.basename(d)).name;
+      try { for (const v of fs.readdirSync(vorschauOrdner())) if (v.startsWith(`${stamm}-`)) fs.rmSync(path.join(vorschauOrdner(), v), { force: true }); } catch {}
+    }
+  };
+  // Documents in the recycle bin for more than 30 days go for good.
+  const papierkorbLeeren = () => { try { const d = dbSystem.papierkorbLeeren(); dateienEntfernen(d); if (d.length) senden('aktualisiert'); } catch (e) { console.error('Papierkorb', e); } };
   const autoSicherung = () => {
     try {
       if (dbSystem.einstellungen().auto_sicherung === '0') return;
@@ -205,8 +215,9 @@ async function starten(o) {
     return warnungen;
   };
   automatik();
+  papierkorbLeeren();
   const t1 = setTimeout(() => { autoSicherung(); updatePruefen(); morgenUebersicht(); serverWarnungen().catch((e) => console.error('Serverwarnungen', e)); }, 60_000);
-  const t2 = setInterval(() => { automatik(); autoSicherung(); morgenUebersicht(); serverWarnungen().catch((e) => console.error('Serverwarnungen', e)); }, 3600_000);
+  const t2 = setInterval(() => { automatik(); papierkorbLeeren(); autoSicherung(); morgenUebersicht(); serverWarnungen().catch((e) => console.error('Serverwarnungen', e)); }, 3600_000);
   const t3 = setInterval(updatePruefen, 24 * 3600_000);
 
   // ---------- helpers ----------
@@ -419,6 +430,8 @@ async function starten(o) {
       const zuweisung = fn === 'save' && args[0] === 'vorgaenge' && args[1]?.zustaendig && Number(args[1].zustaendig) !== w.benutzer?.id
         ? { neu: Number(args[1].zustaendig), alt: args[1].id ? raw.prepare('SELECT zustaendig FROM vorgaenge WHERE id = ?').get(args[1].id)?.zustaendig : null } : null;
       let wert = await fachlich(() => roh[fn](...args));
+      // Removed for good: the records are gone, their files go too.
+      if (fn === 'dokumentEndgueltig' || fn === 'papierkorbLeeren') { dateienEntfernen(wert); wert = wert.length; }
       if (zuweisung && zuweisung.neu !== zuweisung.alt) {
         const v = raw.prepare('SELECT v.titel, v.faellig, o.bezeichnung AS objekt FROM vorgaenge v LEFT JOIN objekte o ON o.id = v.objekt_id WHERE v.id = ?').get(args[1].id ?? wert);
         if (v) benachrichtigen({ art: 'aufgaben', benutzer: zuweisung.neu, titel: `${w.benutzer?.name ?? 'Jemand'} hat dir einen Vorgang zugewiesen`,
@@ -533,8 +546,9 @@ async function starten(o) {
     if (post && p === '/api/dokument-loeschen') {
       const { id } = await jsonLesen(req);
       kontext(req, w);
-      const d = roh.dokumentLoeschen(id);
-      if (d) fs.rmSync(path.join(dokumentOrdner(), path.basename(d)), { force: true });
+      // Into the recycle bin: the file stays for 30 days (Postfach → Papierkorb).
+      roh.dokumentLoeschen(id);
+      senden('aktualisiert', null, req.headers['x-client'] ?? null);
       return json(res, 200, { ok: true });
     }
     // Moving a Mac's data to the server: stored files under their archive names, never overwriting one.

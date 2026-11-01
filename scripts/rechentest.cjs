@@ -1087,6 +1087,145 @@ const wa = db.wegAbrechnung(w, '2025-01-01', '2025-12-31');
   gleich('Sonderumlage am 20.06.: schuldet der Eigentümer an diesem Tag (Neu, obwohl Hausgeld erst ab Juli)', su.map((x) => [x.name, x.betrag_ct]), [['Neu', 50000], ['Zwei', 50000]]);
 }
 
+// ---------- invoices: sender, VAT, line items, labour share (§ 35a), booking with input tax, recycle bin ----------
+{
+  const belege = require('../electron/belege.cjs');
+  const RECHNUNG = `Müller Haustechnik GmbH
+Müller Haustechnik GmbH · Industriestr. 12 · 80939 München
+Hausverwaltung Probe
+Gartenweg 3
+81675 München
+Rechnung Nr. 2026-1187
+Rechnungsdatum: 14.10.2026
+Pos. Bezeichnung Menge Einzelpreis Gesamt
+1 Heizungsventil 1 Stk 89,00 89,00
+2 Arbeitszeit Geselle 1,5 Std 58,00 87,00
+3 Dichtungssatz 2 Stk 6,50 13,00
+4 Anfahrt pauschal 25,00
+Summe netto 214,00
+zzgl. 19 % MwSt 40,66
+Gesamtbetrag 254,66 €
+Müller Haustechnik GmbH | Geschäftsführer: Hans Müller | Amtsgericht München HRB 123456
+USt-IdNr. DE123456789 | Tel. 089 123456-0 | info@mueller-haustechnik.de | www.mueller-haustechnik.de
+Stadtsparkasse München | IBAN DE02 7015 0000 0000 1234 56 | BIC SSKMDEMMXXX`;
+  const eigene = { namen: ['Hausverwaltung Probe'], adressen: ['Gartenweg 3 81675 München'] };
+  const st = belege.stellerErkennen(RECHNUNG, eigene);
+  gleich('Rechnungssteller: Name, Anschrift (nicht die eigene), Steuer- und Registerdaten',
+    [st.name, st.strasse, st.plz, st.ort, st.ust_id, st.register, st.inhaber, st.telefon, st.email, st.web, st.iban, st.bic, st.bank],
+    ['Müller Haustechnik GmbH', 'Industriestr. 12', '80939', 'München', 'DE123456789', 'HRB 123456, Amtsgericht München', 'Hans Müller', '089 123456-0',
+      'info@mueller-haustechnik.de', 'www.mueller-haustechnik.de', 'DE02701500000000123456', 'SSKMDEMMXXX', 'Stadtsparkasse München']);
+  gleich('Rechnungssteller: Adresse im Briefkopf ist nur die eigene → keine Anschrift',
+    belege.stellerErkennen('Elektro Klein e.K.\nHausverwaltung Probe\nGartenweg 3\n81675 München\nRechnung', eigene)?.plz ?? null, null);
+  gleich('MwSt 19 % aus „Summe netto“ und „zzgl. MwSt“', belege.steuerErkennen(RECHNUNG, 25466), [{ satz: 19, netto_ct: 21400, ust_ct: 4066 }]);
+  gleich('MwSt 7 % und 19 % nebeneinander', belege.steuerErkennen('Netto 100,00\nMwSt 7% 3,50\nMwSt 19% 9,50\nGesamt 113,00', 11300),
+    [{ satz: 19, netto_ct: 5000, ust_ct: 950 }, { satz: 7, netto_ct: 5000, ust_ct: 350 }]);
+  gleich('MwSt-Tabelle ohne Stichwort in der Zeile', belege.steuerErkennen('MwSt-Satz Netto MwSt\n19 % 41,10 7,81\nGesamt 48,91', 4891), [{ satz: 19, netto_ct: 4110, ust_ct: 781 }]);
+  gleich('„enthaltene MwSt 7 %“ (Kassenbon)', belege.steuerErkennen('Summe 10,70\nenthaltene MwSt 7 % 0,70', 1070), [{ satz: 7, netto_ct: 1000, ust_ct: 70 }]);
+  gleich('„inkl. 19 % MwSt.“ ohne Betrag: berechnet und markiert', belege.steuerErkennen('Gesamt 119,00 inkl. 19% MwSt.', 11900), [{ satz: 19, netto_ct: 10000, ust_ct: 1900, berechnet: true }]);
+  gleich('Kleinunternehmer (§ 19 UStG): 0 %', belege.steuerErkennen('Betrag 120,00\nGemäß § 19 UStG wird keine Umsatzsteuer berechnet.', 12000), [{ satz: 0, netto_ct: 12000, ust_ct: 0 }]);
+  gleich('Unstimmige MwSt bleibt leer (nicht raten)', belege.steuerErkennen('Gesamt 254,66\nMwSt 19% 99,99', 25466), null);
+  gleich('Ohne jede MwSt-Angabe: leer', belege.steuerErkennen('Rechnung\nGesamt 80,00', 8000), null);
+  const pos = belege.positionenErkennen(RECHNUNG);
+  gleich('Positionen mit Menge, Einheit, Betrag und Art', pos.map((p) => [p.text, p.menge, p.einheit, p.betrag_ct, p.art]),
+    [['Heizungsventil', 1, 'Stk', 8900, 'material'], ['Arbeitszeit Geselle', 1.5, 'Std', 8700, 'arbeit'], ['Dichtungssatz', 2, 'Stk', 1300, 'material'], ['Anfahrt pauschal', null, null, 2500, 'anfahrt']]);
+  gleich('Arbeits- und Fahrtkosten brutto aus Nettopositionen (112,00 € netto × 1,19)', belege.lohnBerechnen(pos, { brutto: 25466, netto: 21400 }), 13328);
+  gleich('Positionen passen nicht zur Rechnung → kein Arbeitsanteil', belege.lohnBerechnen(pos.slice(1), { brutto: 25466, netto: 21400 }), null);
+  gleich('Kurztext aus den Positionen', belege.kurztext(pos), 'Leistung: Heizungsventil, Arbeitszeit Geselle, Dichtungssatz, Anfahrt pauschal');
+
+  // In the database: a house with a commercial unit let with VAT (input tax accounts), half of the input tax deductible.
+  const raw = open(':memory:');
+  const t = api(raw);
+  t.setzeEinstellungen({ bundesland: 'BE', auto_soll: '0', verwalter_name: 'Hausverwaltung Probe', verwalter_strasse: 'Gartenweg 3', verwalter_plz: '81675', verwalter_ort: 'München' });
+  const ob = t.neuesObjekt({ bezeichnung: 'Belegehaus', art: 'miete', strasse: 'Belegweg 1', plz: '10115', ort: 'Berlin' });
+  const eh = t.save('einheiten', { objekt_id: ob, nr: 1, bezeichnung: 'Laden', art: 'Gewerbe', wohnflaeche: 100 });
+  t.save('mietverhaeltnisse', { einheit_id: eh, person_id: t.save('personen', { firma: 'Bäckerei Korn' }), beginn: '2025-01-01', kaltmiete_ct: 100000, bk_vz_ct: 10000, hk_vz_ct: 0, ust_satz: 19, personen_anzahl: 0 });
+  const konten = t.konten(ob);
+  const bank = konten.find((k) => k.nr === 1200).id;
+  const instand = konten.find((k) => k.kategorie === 'instandhaltung' && !k.aus_ruecklage).id;
+  const garten = konten.find((k) => k.bezeichnung === 'Gartenpflege').id;
+  const vst19 = konten.find((k) => k.kategorie === 'vorsteuer19')?.id;
+  const vst7 = konten.find((k) => k.kategorie === 'vorsteuer7')?.id;
+  gleich('Vorsteuerkonten bei Vermietung mit USt', [!!vst19, !!vst7], [true, true]);
+  let nr = 0;
+  const beleg = (text, x = {}) => {
+    const { id } = t.dokumentNeu({ titel: `Beleg ${++nr}`, datei: `beleg-${nr}.pdf`, name: `beleg-${nr}.pdf`, groesse: 1, sha256: `sha-${nr}` });
+    t.analyseSpeichern(id, text, 1, false);
+    if (Object.keys(x).length) t.dokumentSpeichern({ id, ...x });
+    return id;
+  };
+  const d1 = beleg(RECHNUNG, { objekt_id: ob });
+  const g1 = t.dokument(d1);
+  gleich('Analyse: Absender = Firma, MwSt, Positionen, Arbeitsanteil, Kurztext',
+    [g1.absender, g1.betrag_ct, g1.netto_ct, g1.ust_ct, g1.steuer, g1.positionen.length, g1.lohn_ct, g1.zusammenfassung, g1.steller.ust_id],
+    ['Müller Haustechnik GmbH', 25466, 21400, 4066, [{ satz: 19, netto_ct: 21400, ust_ct: 4066 }], 4, 13328, 'Leistung: Heizungsventil, Arbeitszeit Geselle, Dichtungssatz, Anfahrt pauschal', 'DE123456789']);
+  const kontakt = t.kontaktAusSteller(d1);
+  const pk = t.get('personen', kontakt);
+  gleich('Kontakt aus dem Rechnungssteller', [pk.firma, pk.ust_id, pk.ort, pk.iban, t.dokument(d1).person_id], ['Müller Haustechnik GmbH', 'DE123456789', 'München', 'DE02701500000000123456', kontakt]);
+  const d2 = beleg(RECHNUNG.replace('2026-1187', '2026-1250'));
+  gleich('Nächste Rechnung derselben Firma: Kontakt über die USt-IdNr. verknüpft', t.dokument(d2).person_id, kontakt);
+  gleich('Kontakt wird nicht doppelt angelegt', t.kontaktAusSteller(d2), kontakt);
+
+  const a1 = t.belegAufteilung(d1, { kosten_konto_id: instand });
+  gleich('Aufteilung: volle Vorsteuer, Arbeitsanteil anteilig auf den Nettoaufwand', [a1.abziehbar_ct, a1.kosten_ct, a1.p35a_ct, a1.p35a_konto], [4066, 21400, 11200, 'handwerker']);
+  t.save('objekte', { id: ob, vorsteuer_quote: 50 });
+  const a2 = t.belegAufteilung(d1, { kosten_konto_id: instand });
+  gleich('Vorsteuerquote 50 %: halbe Vorsteuer', [a2.abziehbar_ct, a2.kosten_ct], [2033, 23433]);
+  gleich('Ohne Vorsteuer-Haken: alles auf das Kostenkonto', t.belegAufteilung(d1, { kosten_konto_id: instand, vorsteuer: false }).abziehbar_ct, 0);
+  t.save('objekte', { id: ob, vorsteuer_quote: 100 });
+  const b1 = t.belegBuchen(d1, { kosten_konto_id: instand, geld_konto_id: bank, datum: '2025-10-20' });
+  const gebucht = t.buchungen(ob, {}).filter((b) => b.id === b1 || b.gruppe === b1).sort((x, y) => x.id - y.id).map((b) => [b.soll_id === instand ? 'kosten' : b.soll_id === vst19 ? 'vst19' : b.soll_id, b.betrag_ct, b.p35a_ct ?? null]);
+  gleich('Gebucht: Aufwand mit Arbeitsanteil, Vorsteuer 19 % getrennt', gebucht, [['kosten', 21400, 11200], ['vst19', 4066, null]]);
+  gleich('Beleg verknüpft und abgelegt', [t.dokument(d1).buchung_id, t.dokument(d1).status], [b1, 'abgelegt']);
+  let doppelt = null;
+  try { t.belegBuchen(d1, { kosten_konto_id: instand, geld_konto_id: bank }); } catch (e) { doppelt = e.message; }
+  gleich('Zweimal buchen geht nicht', /bereits gebucht/.test(doppelt ?? ''), true);
+
+  const d3 = beleg('Gärtnerei Grün GmbH\nRechnung\nGartenpflege Juni\nGesamt 80,00', { objekt_id: ob });
+  const a3 = t.belegAufteilung(d3, { kosten_konto_id: garten });
+  gleich('MwSt unbekannt: keine Vorsteuer geschätzt, Arbeitsanteil unbekannt', [a3.ust_bekannt, a3.abziehbar_ct, a3.p35a_ct], [false, 0, null]);
+  const d4 = beleg('Bau & Garten KG\nRechnung\nNetto 100,00\nMwSt 7% 3,50\nMwSt 19% 9,50\nGesamt 113,00', { objekt_id: ob });
+  const a4 = t.belegAufteilung(d4, { kosten_konto_id: instand });
+  gleich('Zwei Steuersätze → zwei Vorsteuerkonten', a4.vorsteuer.map((v) => [v.konto_id === vst19 ? 19 : v.konto_id === vst7 ? 7 : 0, v.ct]), [[19, 950], [7, 350]]);
+
+  // § 35a in the statement: only the labour share of an invoice that has one, the full amount of postings without.
+  const R = open(':memory:');
+  const r = api(R);
+  r.setzeEinstellungen({ bundesland: 'BE', auto_soll: '0' });
+  const ro = r.neuesObjekt({ bezeichnung: 'Gartenhaus', art: 'miete', strasse: 'Gartenweg 9', plz: '10115', ort: 'Berlin' });
+  const re = r.save('einheiten', { objekt_id: ro, nr: 1, bezeichnung: 'WE1', art: 'Wohnung', wohnflaeche: 80 });
+  r.save('mietverhaeltnisse', { einheit_id: re, person_id: r.save('personen', { nachname: 'Linde' }), beginn: '2024-01-01', kaltmiete_ct: 70000, bk_vz_ct: 10000, hk_vz_ct: 0, personen_anzahl: 1 });
+  const rk = r.konten(ro);
+  const rGarten = rk.find((k) => k.bezeichnung === 'Gartenpflege').id;
+  const rBank = rk.find((k) => k.nr === 1200).id;
+  r.buchen({ objekt_id: ro, datum: '2025-05-10', text: 'Gartenpflege mit Pflanzen', positionen: [{ soll_id: rGarten, haben_id: rBank, betrag_ct: 10000, p35a_ct: 6000 }] });
+  r.buchen({ objekt_id: ro, datum: '2025-08-10', text: 'Gartenpflege', positionen: [{ soll_id: rGarten, haben_id: rBank, betrag_ct: 5000 }] });
+  const nkG = r.nkAbrechnung(ro, '2025-01-01', '2025-12-31');
+  const linde = nkG.ergebnisse.find((e) => e.segment.vertrag);
+  gleich('§ 35a: Arbeitsanteil 60,00 € + Rechnung ohne Angabe voll 50,00 €', [linde.kosten_ct, linde.p35a.dienstleistung], [15000, 11000]);
+  gleich('Prüfung nennt die Buchung ohne Arbeitsanteil', r.nkPruefung(ro, '2025-01-01', '2025-12-31').punkte.some((x) => /^1 Buchung\(en\).*keinen Arbeitsanteil/.test(x.text)), true);
+  r.buchungStornieren(r.buchungen(ro, {}).find((b) => b.p35a_ct === 6000).id, '2025-05-11');
+  gleich('Storno nimmt den Arbeitsanteil mit zurück', r.nkAbrechnung(ro, '2025-01-01', '2025-12-31').ergebnisse.find((e) => e.segment.vertrag).p35a.dienstleistung, 5000);
+
+  // Recycle bin.
+  const k1 = beleg('Doppelt eingelegt\nGesamt 12,00');
+  t.dokumentLoeschen([k1]);
+  gleich('Papierkorb: nicht im Postfach, nicht im Archiv, im Papierkorb', [t.dokumentListe({ status: 'postfach' }).some((x) => x.id === k1), t.dokumentListe({}).some((x) => x.id === k1),
+    t.papierkorb().map((x) => [x.id, x.geloescht_aus]), t.papierkorbAnzahl()], [false, false, [[k1, 'postfach']], 1]);
+  gleich('Papierkorb: nicht in der Volltextsuche', t.suche('eingelegt').dokumente.length, 0);
+  t.dokumentWiederherstellen([k1]);
+  gleich('Wiederhergestellt: zurück im Postfach und in der Suche', [t.dokument(k1).status, t.suche('eingelegt').dokumente.length], ['postfach', 1]);
+  t.dokumentLoeschen(k1);
+  gleich('Erneut hochgeladene Datei kommt aus dem Papierkorb zurück', [t.dokumentNeu({ titel: 'x', datei: 'neu.pdf', name: 'neu.pdf', groesse: 1, sha256: `sha-${nr}` }), t.dokument(k1).status],
+    [{ id: k1, doppelt: false, wiederhergestellt: true, titel: `Beleg ${nr}` }, 'postfach']);
+  t.dokumentLoeschen(k1);
+  gleich('Nach 29 Tagen bleibt es', t.papierkorbLeeren(30, Date.now() + 29 * 864e5), []);
+  gleich('Nach 31 Tagen: endgültig entfernt, Datei zum Löschen', [t.papierkorbLeeren(30, Date.now() + 31 * 864e5), t.dokument(k1) ?? null], [[`beleg-${nr}.pdf`], null]);
+  const k2 = beleg('Falsche Datei');
+  gleich('Endgültig löschen nur aus dem Papierkorb', t.dokumentEndgueltig([k2]), []);
+  t.dokumentLoeschen(k2);
+  gleich('Endgültig löschen aus dem Papierkorb', [t.dokumentEndgueltig([k2]), t.papierkorbAnzahl()], [[`beleg-${nr}.pdf`], 0]);
+}
+
 console.log(`\nRechentest: ${ok} Prüfungen richtig, ${falsch} falsch.`);
 if (falsch) process.exitCode = 1;
 // The click test reuses the sample data.

@@ -802,6 +802,19 @@ const MIGRATIONS = [
    ALTER TABLE zaehlerstaende ADD COLUMN dokument_id INTEGER REFERENCES dokumente(id) ON DELETE SET NULL;`,
   // Notifications about the server itself: whoever gets the backup problems gets these too.
   `UPDATE push_abos SET arten = arten || ',server' WHERE (',' || arten || ',') LIKE '%,sicherung,%';`,
+  // Invoices in detail: who sent it (letterhead and imprint), VAT per rate, the line items and the labour share (§ 35a);
+  // the labour share of a posting; tax ids of contacts; a recycle bin for documents (status 'papierkorb', 30 days).
+  `ALTER TABLE dokumente ADD COLUMN steller TEXT;
+   ALTER TABLE dokumente ADD COLUMN steuer TEXT;
+   ALTER TABLE dokumente ADD COLUMN positionen TEXT;
+   ALTER TABLE dokumente ADD COLUMN lohn_ct INTEGER;
+   ALTER TABLE dokumente ADD COLUMN geloescht TEXT;
+   ALTER TABLE dokumente ADD COLUMN geloescht_aus TEXT;
+   ALTER TABLE buchungen ADD COLUMN p35a_ct INTEGER;
+   ALTER TABLE personen ADD COLUMN ust_id TEXT;
+   ALTER TABLE personen ADD COLUMN steuernr TEXT;
+   ALTER TABLE personen ADD COLUMN web TEXT;
+   UPDATE dokumente SET analyse = 'offen' WHERE status = 'postfach' OR erechnung IS NOT NULL;`,
 ];
 
 // Tables without change time: the log itself, settings of this installation and page state.
@@ -867,7 +880,7 @@ const TABLES = {
   einheiten: ['objekt_id', 'nr', 'bezeichnung', 'art', 'lage', 'wohnflaeche', 'zimmer', 'mea', 'notiz', 'vergleichsmiete_ct', 'mietspiegel_von_ct', 'mietspiegel_bis_ct'],
   selbstnutzung: ['einheit_id', 'beginn', 'ende', 'personen', 'notiz'],
   personen: ['anrede', 'titel', 'vorname', 'nachname', 'firma', 'strasse', 'plz', 'ort', 'land', 'telefon',
-    'mobil', 'email', 'iban', 'bic', 'kontoinhaber', 'geburtsdatum', 'notiz'],
+    'mobil', 'email', 'iban', 'bic', 'kontoinhaber', 'geburtsdatum', 'notiz', 'ust_id', 'steuernr', 'web'],
   mietverhaeltnisse: ['einheit_id', 'person_id', 'person2_id', 'beginn', 'ende', 'kaltmiete_ct', 'bk_vz_ct',
     'hk_vz_ct', 'sonstiges_ct', 'kaution_ct', 'personen_anzahl', 'faelligkeitstag', 'lastschrift', 'sepa_mandat', 'notiz',
     'teilmonat_beginn', 'teilmonat_ende', 'ust_satz', 'mietmonat_ab', 'bk_abrechnung', 'bk_art', 'teilbetrag_beginn_ct'],
@@ -894,7 +907,8 @@ const TABLES = {
   rollen: ['objekt_id', 'person_id', 'rolle', 'von', 'bis', 'notiz'],
   vorlagen: ['titel', 'kategorie', 'betreff', 'text'],
   dokumente: ['objekt_id', 'person_id', 'einheit_id', 'titel', 'kategorie', 'datum', 'datei', 'name', 'groesse', 'notiz',
-    'status', 'typ', 'betrag_ct', 'absender', 'rechnungsnr', 'iban', 'faellig', 'zusammenfassung', 'buchung_id', 'quelle', 'netto_ct', 'ust_ct'],
+    'status', 'typ', 'betrag_ct', 'absender', 'rechnungsnr', 'iban', 'faellig', 'zusammenfassung', 'buchung_id', 'quelle', 'netto_ct', 'ust_ct',
+    'steller', 'steuer', 'positionen', 'lohn_ct'],
   erhaltungsverteilung: ['objekt_id', 'jahr', 'betrag_ct', 'jahre', 'text'],
   vorgaenge: ['objekt_id', 'person_id', 'einheit_id', 'titel', 'kategorie', 'status', 'prioritaet', 'faellig', 'beschreibung', 'projekt_id', 'zustaendig'],
   vorgangseintraege: ['vorgang_id', 'datum', 'art', 'text'],
@@ -1398,6 +1412,46 @@ function api(db) {
       for (const a of liste) sollNachziehen({ typ, id: a.vertrag_id });
       return n;
     },
+    // How an invoice would be booked: input tax per VAT rate (only in houses with VAT-able letting, times the object's
+    // deductible share; never guessed when the VAT is unknown) and the labour share for § 35a on the expense account.
+    belegAufteilung: (dokId, { kosten_konto_id = null, betrag_ct = null, vorsteuer = true } = {}) => {
+      const d = ar.dokument(dokId);
+      if (!d) throw new Error('Dokument nicht gefunden');
+      const betrag = betrag_ct ?? d.betrag_ct;
+      if (!betrag) throw new Error('Kein Betrag bekannt.');
+      const anteil = d.betrag_ct ? betrag / d.betrag_ct : 1;
+      const vst = (satz) => get(`SELECT id FROM konten WHERE objekt_id = ? AND klasse = 'steuer' AND kategorie = ?`, d.objekt_id, satz === 7 ? 'vorsteuer7' : 'vorsteuer19')
+        ?? get(`SELECT id FROM konten WHERE objekt_id = ? AND klasse = 'steuer' AND kategorie = 'vorsteuer19'`, d.objekt_id);
+      const vorsteuerMoeglich = !!vst(19);
+      const quote = get('SELECT vorsteuer_quote AS q FROM objekte WHERE id = ?', d.objekt_id)?.q ?? 100;
+      const steuer = d.steuer ?? (d.ust_ct != null ? [{ satz: 19, netto_ct: (d.netto_ct ?? 0), ust_ct: d.ust_ct }] : null);
+      const posten = vorsteuerMoeglich && vorsteuer && steuer ? steuer.filter((t) => t.satz > 0 && t.ust_ct > 0)
+        .map((t) => ({ konto_id: vst(t.satz).id, satz: t.satz, ct: Math.round(t.ust_ct * anteil * quote / 100) })).filter((t) => t.ct > 0) : [];
+      const abziehbar = posten.reduce((x, t) => x + t.ct, 0);
+      const kosten = kosten_konto_id ? get('SELECT p35a FROM konten WHERE id = ?', kosten_konto_id) : null;
+      const kostenCt = betrag - abziehbar;
+      const p35a = kosten?.p35a && d.lohn_ct != null ? Math.min(kostenCt, Math.round(d.lohn_ct * anteil * kostenCt / betrag)) : null;
+      return { betrag_ct: betrag, kosten_ct: kostenCt, vorsteuer: posten, abziehbar_ct: abziehbar, quote, vorsteuer_moeglich: vorsteuerMoeglich,
+        ust_bekannt: !!steuer, steuer, p35a_ct: p35a, p35a_konto: kosten?.p35a ?? null, lohn_ct: d.lohn_ct ?? null };
+    },
+    // Books an invoice (expense against the money account, a credit note the other way) with the split above and links
+    // the document to the posting. Used by the app and by Claude's action rechnung_buchen.
+    belegBuchen: (dokId, { kosten_konto_id, geld_konto_id, datum = null, betrag_ct = null, vorsteuer = true, text = null, einheit_id = null }) => tx(() => {
+      const d = ar.dokument(dokId);
+      if (!d) throw new Error('Dokument nicht gefunden');
+      if (!d.objekt_id) throw new Error('Bitte zuerst ein Objekt zuordnen.');
+      if (d.buchung_id) throw new Error('Dieses Dokument ist bereits gebucht.');
+      if (!kosten_konto_id || !geld_konto_id) throw new Error('Bitte Kostenart und Geldkonto wählen.');
+      const a = alles.belegAufteilung(dokId, { kosten_konto_id, betrag_ct, vorsteuer });
+      const gutschrift = d.typ === 'Gutschrift';
+      const pos = [{ konto: kosten_konto_id, ct: a.kosten_ct, p35a_ct: a.p35a_ct }, ...a.vorsteuer.map((t) => ({ konto: t.konto_id, ct: t.ct }))];
+      const id = bh.buchenIntern({ objekt_id: d.objekt_id, datum: datum ?? d.datum ?? ortszeit.heute(), beleg: d.rechnungsnr,
+        text: (text ?? [d.absender, d.titel].filter(Boolean).join(' – ')).slice(0, 120), einheit_id: einheit_id ?? d.einheit_id ?? null,
+        positionen: pos.map((p) => (gutschrift ? { soll_id: geld_konto_id, haben_id: p.konto, betrag_ct: p.ct, p35a_ct: p.p35a_ct }
+          : { soll_id: p.konto, haben_id: geld_konto_id, betrag_ct: p.ct, p35a_ct: p.p35a_ct })) });
+      db.prepare(`UPDATE dokumente SET buchung_id = ?, status = 'abgelegt' WHERE id = ?`).run(id, dokId);
+      return id;
+    }),
     // Bank lines paid to a loan account are booked as instalments (interest + repayment).
     bankBuchen: (objektId, geldKontoId, zeilen, lernen) => {
       const istDarlehen = (z) => z.konto_id && z.betrag_ct < 0 && dl.darlehenZuKonto(z.konto_id);
@@ -1408,13 +1462,6 @@ function api(db) {
         n++;
       }
       return n + bh.bankBuchen(objektId, geldKontoId, zeilen.filter((z) => !istDarlehen(z)), lernen);
-    },
-    // Removes the record and its index entry; the caller deletes the file.
-    dokumentLoeschen: (id) => {
-      const d = get('SELECT datei FROM dokumente WHERE id = ?', id);
-      db.prepare('DELETE FROM dokumente_fts WHERE rowid = ?').run(id);
-      db.prepare('DELETE FROM dokumente WHERE id = ?').run(id);
-      return d?.datei ?? null;
     },
     // Changes made elsewhere (e.g. by Claude through the MCP connection) bump this number.
     datenVersion: () => db.prepare('PRAGMA data_version').get().data_version,

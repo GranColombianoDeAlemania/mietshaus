@@ -306,7 +306,7 @@ module.exports = function auswertung({ db, all, get, tx, bh, ab }) {
       for (const [g, ct] of gruppen) {
         const vst = get(`SELECT coalesce(sum(b.betrag_ct), 0) AS s FROM buchungen b JOIN konten k ON k.id = b.soll_id
           WHERE coalesce(b.gruppe, b.id) = ? AND k.klasse = 'steuer' AND k.kategorie IN ('vorsteuer19', 'vorsteuer7')`, g).s;
-        const dok = get('SELECT netto_ct, betrag_ct FROM dokumente WHERE buchung_id = ? AND netto_ct IS NOT NULL ORDER BY id LIMIT 1', g);
+        const dok = get(`SELECT netto_ct, betrag_ct FROM dokumente WHERE buchung_id = ? AND netto_ct IS NOT NULL AND status <> 'papierkorb' ORDER BY id LIMIT 1`, g);
         const summe = ct + (ct > 0 ? vst : -vst);
         const nettoG = dok && Math.abs(dok.betrag_ct - Math.abs(summe)) <= 1 ? Math.sign(summe) * dok.netto_ct : Math.round(summe / 1.19);
         // Self-use: costs of the own flat do not count, those of the whole house with the rented share.
@@ -346,7 +346,7 @@ module.exports = function auswertung({ db, all, get, tx, bh, ab }) {
     const kontenblaetter = csv(['Konto', 'Bezeichnung', 'Datum', 'Text', 'Gegenkonto', 'Soll', 'Haben', 'Saldo'], blaetter);
     // Receipts: documents linked to a posting of the year, and invoices, notices and statements dated in the year.
     const ids = new Set(buchungen.flatMap((b) => [b.id, b.gruppe]).filter(Boolean));
-    const doks = all(`SELECT id, datei, titel, typ, absender, datum, erfasst, betrag_ct, buchung_id FROM dokumente WHERE objekt_id = ? AND status <> 'postfach'`, objektId)
+    const doks = all(`SELECT id, datei, titel, typ, absender, datum, erfasst, betrag_ct, buchung_id FROM dokumente WHERE objekt_id = ? AND status = 'abgelegt'`, objektId)
       .filter((d) => (d.buchung_id && ids.has(d.buchung_id)) || (['Rechnung', 'Gutschrift', 'Bescheid', 'Abrechnung', 'Kontoauszug'].includes(d.typ) && (d.datum ?? d.erfasst ?? '').startsWith(String(jahr))));
     const sauber = (x) => String(x ?? '').replace(/[\/\\:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80);
     const belege = doks.map((d) => ({ datei: d.datei, name: `Belege/${d.datum ?? d.erfasst ?? ''} ${sauber(d.absender || d.titel)}${d.betrag_ct ? ` ${betrag(d.betrag_ct)} EUR` : ''}${d.datei.slice(d.datei.lastIndexOf('.'))}` }));

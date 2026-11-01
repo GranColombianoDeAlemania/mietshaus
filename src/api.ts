@@ -21,7 +21,7 @@ declare global {
       sicherungsOrdnerOeffnen: () => Promise<string>;
       dokumentAblegen: () => Promise<{ name: string; datei: string; groesse: number }[]>;
       dokumentOeffnen: (datei: string) => Promise<string>;
-      dokumentLoeschen: (id: number) => Promise<void>;
+      dokumentLoeschen: (id: number | number[]) => Promise<void>;
       importieren: (files: FileList | File[], opt?: Row) => Promise<{ id: number; doppelt: boolean; name: string }[]>;
       dateienImportieren: (opt?: Row) => Promise<{ id: number; doppelt: boolean; name: string }[]>;
       // On a phone the camera opens at once; on a computer it is a picker for images.

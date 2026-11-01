@@ -9,7 +9,7 @@ module.exports = function akten({ db, all, get, PERSON_NAME, bh }) {
 
   // Title photo: the chosen one, otherwise the newest photo of the house itself (not of a unit).
   const titelbild = (o) => (o.titelbild_id ? get('SELECT datei FROM dokumente WHERE id = ?', o.titelbild_id)?.datei : null) ??
-    get(`SELECT d.datei FROM dokumente d WHERE d.objekt_id = ? AND d.einheit_id IS NULL AND d.status <> 'postfach' AND ${BILD}
+    get(`SELECT d.datei FROM dokumente d WHERE d.objekt_id = ? AND d.einheit_id IS NULL AND d.status = 'abgelegt' AND ${BILD}
       ORDER BY (d.typ = 'Foto') DESC, d.id DESC LIMIT 1`, o.id)?.datei ?? null;
 
   // Arrears: what was not paid by its due date (charges due today are not late yet), less any credit.
@@ -48,7 +48,7 @@ module.exports = function akten({ db, all, get, PERSON_NAME, bh }) {
       UNION ALL SELECT m.ende, 'Auszug ' || ${PERSON_NAME}, 'vertrag' FROM mietverhaeltnisse m JOIN personen p ON p.id = m.person_id WHERE m.einheit_id = ?1 AND m.ende IS NOT NULL AND m.ende <> ''
       UNION ALL SELECT g.beginn, 'Eigentümer ' || ${PERSON_NAME}, 'vertrag' FROM eigentum g JOIN personen p ON p.id = g.person_id WHERE g.einheit_id = ?1
       UNION ALL SELECT u.datum, CASE u.art WHEN 'einzug' THEN 'Übergabe beim Einzug' ELSE 'Übergabe beim Auszug' END, 'uebergabe' FROM uebergaben u WHERE u.einheit_id = ?1
-      UNION ALL SELECT coalesce(d.datum, d.erfasst), coalesce(d.typ, 'Dokument') || ': ' || d.titel, 'dokument' FROM dokumente d WHERE d.einheit_id = ?1 AND d.status <> 'postfach'
+      UNION ALL SELECT coalesce(d.datum, d.erfasst), coalesce(d.typ, 'Dokument') || ': ' || d.titel, 'dokument' FROM dokumente d WHERE d.einheit_id = ?1 AND d.status = 'abgelegt'
       UNION ALL SELECT v.erstellt, 'Vorgang: ' || v.titel || CASE WHEN v.status = 'erledigt' THEN ' (erledigt)' ELSE '' END, 'vorgang' FROM vorgaenge v WHERE v.einheit_id = ?1
       UNION ALL SELECT a.gueltig_ab, 'Mietanpassung', 'vertrag' FROM anpassungen a JOIN mietverhaeltnisse m ON a.vertrag_typ = 'miete' AND m.id = a.vertrag_id
         WHERE m.einheit_id = ?1 AND a.kaltmiete_ct IS NOT NULL
@@ -65,7 +65,7 @@ module.exports = function akten({ db, all, get, PERSON_NAME, bh }) {
         JOIN einheiten e ON e.id = m.einheit_id JOIN personen p ON p.id = m.person_id WHERE e.objekt_id = ?1 AND m.ende IS NOT NULL AND m.ende <> ''
       UNION ALL SELECT g.beginn, 'Eigentümer ' || ${PERSON_NAME} || ' (' || e.bezeichnung || ')', 'vertrag' FROM eigentum g
         JOIN einheiten e ON e.id = g.einheit_id JOIN personen p ON p.id = g.person_id WHERE e.objekt_id = ?1
-      UNION ALL SELECT coalesce(d.datum, d.erfasst), coalesce(d.typ, 'Dokument') || ': ' || d.titel, 'dokument' FROM dokumente d WHERE d.objekt_id = ?1 AND d.status <> 'postfach'
+      UNION ALL SELECT coalesce(d.datum, d.erfasst), coalesce(d.typ, 'Dokument') || ': ' || d.titel, 'dokument' FROM dokumente d WHERE d.objekt_id = ?1 AND d.status = 'abgelegt'
       UNION ALL SELECT v.erstellt, 'Vorgang: ' || v.titel || CASE WHEN v.status = 'erledigt' THEN ' (erledigt)' ELSE '' END, 'vorgang' FROM vorgaenge v WHERE v.objekt_id = ?1
       UNION ALL SELECT x.datum, 'Eigentümerversammlung', 'termin' FROM versammlungen x WHERE x.objekt_id = ?1
       UNION ALL SELECT substr(a.erstellt, 1, 10), a.titel || ' erstellt', 'abrechnung' FROM abrechnungen a WHERE a.objekt_id = ?1
@@ -83,7 +83,7 @@ module.exports = function akten({ db, all, get, PERSON_NAME, bh }) {
         WHERE ?1 IN (m.person_id, m.person2_id) AND m.ende IS NOT NULL AND m.ende <> ''
       UNION ALL SELECT g.beginn, 'Eigentum ' || e.bezeichnung || ', ' || o.bezeichnung, 'vertrag' FROM eigentum g JOIN einheiten e ON e.id = g.einheit_id
         JOIN objekte o ON o.id = e.objekt_id WHERE ?1 IN (g.person_id, g.person2_id)
-      UNION ALL SELECT coalesce(d.datum, d.erfasst), coalesce(d.typ, 'Dokument') || ': ' || d.titel, 'dokument' FROM dokumente d WHERE d.person_id = ?1
+      UNION ALL SELECT coalesce(d.datum, d.erfasst), coalesce(d.typ, 'Dokument') || ': ' || d.titel, 'dokument' FROM dokumente d WHERE d.person_id = ?1 AND d.status = 'abgelegt'
       UNION ALL SELECT v.erstellt, 'Vorgang: ' || v.titel, 'vorgang' FROM vorgaenge v WHERE v.person_id = ?1
       UNION ALL SELECT t.datum, 'Termin: ' || t.titel, 'termin' FROM termine t WHERE t.person_id = ?1
       UNION ALL SELECT mh.datum, 'Mahnung Stufe ' || mh.stufe, 'mahnung' FROM mahnungen mh JOIN konten k ON k.id = mh.konto_id
@@ -141,7 +141,7 @@ module.exports = function akten({ db, all, get, PERSON_NAME, bh }) {
         darlehen: all(`SELECT * FROM darlehen WHERE objekt_id = ?`, objektId).length ? all(`SELECT id, bank, betrag_ct, zinssatz, zinsbindung_bis FROM darlehen WHERE objekt_id = ?`, objektId) : [],
         vorgaenge: all(`SELECT id, titel, faellig, status FROM vorgaenge WHERE objekt_id = ? AND status <> 'erledigt' ORDER BY coalesce(faellig, '9999') LIMIT 8`, objektId),
         projekte: all(`SELECT id, titel, status FROM projekte WHERE objekt_id = ? AND status <> 'abgeschlossen'`, objektId),
-        dokumente: all(`SELECT id, titel, typ, datum, erfasst, datei FROM dokumente WHERE objekt_id = ? AND status <> 'postfach'
+        dokumente: all(`SELECT id, titel, typ, datum, erfasst, datei FROM dokumente WHERE objekt_id = ? AND status = 'abgelegt'
           ORDER BY coalesce(datum, erfasst) DESC, id DESC LIMIT 8`, objektId),
         zeitleiste: zeitleisteObjekt(objektId),
       };
@@ -180,7 +180,7 @@ module.exports = function akten({ db, all, get, PERSON_NAME, bh }) {
         schluessel: personIds.length ? all(`SELECT s.bezeichnung, s.nummer, a.anzahl, a.ausgabe, a.rueckgabe, a.person_id, ${PERSON_NAME} AS name
           FROM schluesselausgaben a JOIN schluessel s ON s.id = a.schluessel_id JOIN personen p ON p.id = a.person_id
           WHERE s.objekt_id = ? AND a.person_id IN (${personIds.join(',')}) ORDER BY (a.rueckgabe IS NOT NULL AND a.rueckgabe <> ''), a.ausgabe DESC`, e.objekt_id) : [],
-        dokumente: all(`SELECT id, titel, typ, datum, erfasst, datei, person_id FROM dokumente WHERE einheit_id = ? AND status <> 'postfach'
+        dokumente: all(`SELECT id, titel, typ, datum, erfasst, datei, person_id FROM dokumente WHERE einheit_id = ? AND status = 'abgelegt'
           ORDER BY coalesce(datum, erfasst) DESC, id DESC LIMIT 40`, einheitId),
         vorgaenge: all(`SELECT id, titel, status, faellig, kategorie, erstellt, objekt_id FROM vorgaenge WHERE einheit_id = ?
           ORDER BY status = 'erledigt', coalesce(faellig, '9999'), id DESC LIMIT 20`, einheitId),
@@ -226,7 +226,7 @@ module.exports = function akten({ db, all, get, PERSON_NAME, bh }) {
         mahnungen: k ? all('SELECT * FROM mahnungen WHERE konto_id = ? ORDER BY datum DESC', k) : [],
         ratenplaene: k ? all('SELECT * FROM ratenplaene WHERE konto_id = ? ORDER BY datum DESC', k) : [],
         kuendigung: typ === 'miete' ? get('SELECT * FROM mieterwechsel WHERE vertrag_id = ?', vertragId) ?? null : null,
-        dokumente: all(`SELECT id, titel, typ, datum, erfasst, datei FROM dokumente WHERE status <> 'postfach' AND person_id IN (?, ?)
+        dokumente: all(`SELECT id, titel, typ, datum, erfasst, datei FROM dokumente WHERE status = 'abgelegt' AND person_id IN (?, ?)
           AND (einheit_id = ? OR einheit_id IS NULL) ORDER BY coalesce(datum, erfasst) DESC, id DESC LIMIT 30`, v.person_id, v.person2_id ?? -1, v.einheit_id),
         uebergaben: typ === 'miete' ? all('SELECT id, art, datum, abgeschlossen, dokument_id FROM uebergaben WHERE vertrag_id = ? ORDER BY datum', vertragId) : [],
         abrechnungen: all(`SELECT id, titel, von, bis, erstellt, daten FROM abrechnungen WHERE objekt_id = ? AND typ = ? ORDER BY von DESC`, e.objekt_id, typ === 'weg' ? 'weg' : 'nk')
@@ -293,7 +293,7 @@ module.exports = function akten({ db, all, get, PERSON_NAME, bh }) {
         return k ? { art, konto_id: k.id, objekt_id: k.objekt_id, name: `${k.nr} ${k.bezeichnung}`, vertrag: k.vertrag_id ? { typ: k.vertrag_typ, id: k.vertrag_id } : null } : null;
       }
       if (art === 'buchung') {
-        const x = get(`SELECT b.*, (SELECT d.id FROM dokumente d WHERE d.buchung_id IN (b.id, coalesce(b.gruppe, -1)) LIMIT 1) AS dok_id,
+        const x = get(`SELECT b.*, (SELECT d.id FROM dokumente d WHERE d.buchung_id IN (b.id, coalesce(b.gruppe, -1)) AND d.status <> 'papierkorb' LIMIT 1) AS dok_id,
           EXISTS (SELECT 1 FROM buchungen s WHERE s.storno_von = b.id) AS storniert FROM buchungen b WHERE b.id = ?`, Number(a));
         return x ? { art, buchung_id: x.id, objekt_id: x.objekt_id, name: x.text ?? 'Buchung', soll_id: x.soll_id, haben_id: x.haben_id, dok_id: x.dok_id, storniert: !!x.storniert, art_buchung: x.art } : null;
       }
@@ -328,7 +328,7 @@ module.exports = function akten({ db, all, get, PERSON_NAME, bh }) {
         WHERE b.soll_id IN (${kontoIds.join(',')}) OR b.haben_id IN (${kontoIds.join(',')}) ORDER BY b.datum DESC LIMIT 24`) : [];
       return {
         person: p, vertraege, zahlungen,
-        dokumente: all(`SELECT id, titel, typ, datum, erfasst, datei, einheit_id, objekt_id FROM dokumente WHERE person_id = ? AND status <> 'postfach'
+        dokumente: all(`SELECT id, titel, typ, datum, erfasst, datei, einheit_id, objekt_id FROM dokumente WHERE person_id = ? AND status = 'abgelegt'
           ORDER BY coalesce(datum, erfasst) DESC LIMIT 40`, personId),
         vorgaenge: all(`SELECT v.id, v.titel, v.status, v.faellig, v.objekt_id, o.bezeichnung AS objekt FROM vorgaenge v LEFT JOIN objekte o ON o.id = v.objekt_id
           WHERE v.person_id = ? ORDER BY v.status = 'erledigt', v.id DESC LIMIT 20`, personId),

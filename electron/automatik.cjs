@@ -71,7 +71,7 @@ module.exports = function automatik({ db, all, get, tx, PERSON_NAME, bh, ab, vw,
       text: `${vorschlaege} ${vorschlaege === 1 ? 'Vorschlag' : 'Vorschläge'} von Claude ${vorschlaege === 1 ? 'wartet' : 'warten'} auf deine Freigabe (Buchungen, Verträge oder Bankdaten).` });
     const postfach = get(`SELECT count(*) AS n FROM dokumente WHERE status = 'postfach'`).n;
     if (postfach) add({ schluessel: 'dok:postfach', stufe: 'orange', kategorie: 'Dokumente', text: `${postfach} Dokument(e) im Postfach warten auf Ablage.`, ziel: 'postfach', dauerhaft: true });
-    const fehler = get(`SELECT count(*) AS n FROM dokumente WHERE analyse LIKE 'fehler%'`).n;
+    const fehler = get(`SELECT count(*) AS n FROM dokumente WHERE analyse LIKE 'fehler%' AND status <> 'papierkorb'`).n;
     if (fehler) add({ schluessel: 'dok:fehler', stufe: 'gelb', kategorie: 'Dokumente', text: `${fehler} Dokument(e) konnten nicht gelesen werden.`, ziel: 'archiv' });
 
     // Once after version 0.8: months that had been charged by day are now full months.
@@ -87,9 +87,9 @@ module.exports = function automatik({ db, all, get, tx, PERSON_NAME, bh, ab, vw,
     } catch { /* no conversion recorded */ }
 
     for (const r of all(`SELECT d.id, d.titel, d.absender, d.betrag_ct, d.faellig, d.objekt_id, o.bezeichnung AS objekt FROM dokumente d
-        LEFT JOIN objekte o ON o.id = d.objekt_id WHERE d.typ = 'Rechnung' AND d.buchung_id IS NULL AND d.faellig IS NOT NULL AND d.faellig <= ?
+        LEFT JOIN objekte o ON o.id = d.objekt_id WHERE d.typ = 'Rechnung' AND d.buchung_id IS NULL AND d.faellig IS NOT NULL AND d.faellig <= ? AND d.status <> 'papierkorb'
         -- The same invoice stored twice (e.g. PDF and photo) is reported once.
-        AND NOT EXISTS (SELECT 1 FROM dokumente x WHERE x.id < d.id AND x.rechnungsnr = d.rechnungsnr AND coalesce(x.betrag_ct, -1) = coalesce(d.betrag_ct, -1)
+        AND NOT EXISTS (SELECT 1 FROM dokumente x WHERE x.id < d.id AND x.status <> 'papierkorb' AND x.rechnungsnr = d.rechnungsnr AND coalesce(x.betrag_ct, -1) = coalesce(d.betrag_ct, -1)
           AND coalesce(x.absender, '') = coalesce(d.absender, ''))`, plusTage(t, 7))) {
       add({ schluessel: `re:${r.id}`, stufe: r.faellig < t ? 'rot' : 'orange', kategorie: 'Rechnungen', objekt_id: r.objekt_id, objekt: r.objekt,
         text: `Rechnung ${r.absender ?? r.titel} über ${euro(r.betrag_ct)} ${r.faellig < t ? 'überfällig seit' : 'fällig am'} ${datumDe(r.faellig)}.`, ziel: 'rechnungen',
@@ -319,7 +319,7 @@ module.exports = function automatik({ db, all, get, tx, PERSON_NAME, bh, ab, vw,
     const punkte = [
       { punkt: 'kontoauszuege', text: `Alle Kontoauszüge bis 31.12.${jahr} importiert und gebucht`, auto: bankBis, ziel: { seite: 'bank' } },
       { punkt: 'postfach', text: 'Postfach abgearbeitet', auto: !n(`SELECT count(*) AS n FROM dokumente WHERE status = 'postfach'`), ziel: { seite: 'postfach' } },
-      { punkt: 'rechnungen', text: `Alle Rechnungen aus ${jahr} gebucht`, auto: !n(`SELECT count(*) AS n FROM dokumente WHERE typ = 'Rechnung' AND buchung_id IS NULL AND substr(coalesce(datum, erfasst), 1, 4) = ?`, String(jahr)), ziel: { seite: 'rechnungen' } },
+      { punkt: 'rechnungen', text: `Alle Rechnungen aus ${jahr} gebucht`, auto: !n(`SELECT count(*) AS n FROM dokumente WHERE typ = 'Rechnung' AND buchung_id IS NULL AND status <> 'papierkorb' AND substr(coalesce(datum, erfasst), 1, 4) = ?`, String(jahr)), ziel: { seite: 'rechnungen' } },
       { punkt: 'zaehler', text: `Zählerstände zum 31.12.${jahr} abgelesen`, auto: zaehlerOffen === 0, hinweis: zaehlerOffen ? `${zaehlerOffen} Zähler ohne Stand` : null, ziel: { seite: 'zaehler' } },
       { punkt: 'rueckstaende', text: 'Offene Posten geprüft, Mahnungen verschickt', auto: false, ziel: { seite: 'op' } },
       ...(mietObjekte.length ? [{ punkt: 'nk', text: `Betriebskostenabrechnung ${jahr - 1} bis 31.12.${jahr} beim Mieter (Frist!)`,

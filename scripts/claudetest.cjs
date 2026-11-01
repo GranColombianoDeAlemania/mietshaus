@@ -59,6 +59,27 @@ const wirft = (name, fn, muster) => {
   db.setzeEinstellungen({ claude_freigabe: '1' });
   const claudeEintrag = raw.prepare(`SELECT * FROM protokoll WHERE quelle = 'claude' AND tabelle = 'personen' AND aktion = 'geändert' ORDER BY id DESC LIMIT 1`).get();
   pruefe('Claude-Änderung im Protokoll mit Gerät', claudeEintrag?.geraet === (JSON.parse(fs.readFileSync(path.join(ordner, 'geraet.json'), 'utf8')).id));
+
+  // Invoice details from the page image: sender, VAT, items, labour share; booking takes the labour share along.
+  const dok = db.dokumentNeu({ titel: 'Scan', datei: 'scan.pdf', name: 'scan.pdf', groesse: 1, sha256: 'scan-1' }).id;
+  const t7 = await rufe('dokument_ablegen', { id: dok, typ: 'Rechnung', objekt_id: o, betrag_eur: 238, datum: '2026-10-05',
+    rechnungssteller: { name: 'Maler Weiß e.K.', plz: '10115', ort: 'Berlin', ust_id: 'DE987654321' },
+    mwst: [{ satz: 19, netto_eur: 200, steuer_eur: 38 }],
+    positionen: [{ text: 'Malerarbeiten Treppenhaus', menge: 4, einheit: 'Std', betrag_eur: 160, art: 'arbeit' }, { text: 'Farbe', betrag_eur: 40, art: 'material' }],
+    arbeitskosten_eur: 190.4 });
+  const gd = db.dokument(dok);
+  pruefe('dokument_ablegen: Rechnungssteller, MwSt, Positionen, Arbeitsanteil', /abgelegt/.test(t7) && gd.absender === 'Maler Weiß e.K.' && gd.steller.ust_id === 'DE987654321'
+    && gd.ust_ct === 3800 && gd.netto_ct === 20000 && gd.positionen.length === 2 && gd.lohn_ct === 19040, JSON.stringify(gd).slice(0, 300));
+  await rufe('rechnung_buchen', { dokument_id: dok, kosten_konto_id: kt[45100] });
+  const vRechnung = db.vorschlaege('offen').find((x) => x.werkzeug === 'rechnung_buchen');
+  const ergR = db.vorschlagUebernehmen(vRechnung.id);
+  const bR = raw.prepare('SELECT betrag_ct, p35a_ct FROM buchungen WHERE id = ?').get(db.dokument(dok).buchung_id);
+  pruefe('rechnung_buchen: Arbeitsanteil an der Buchung', bR.betrag_ct === 23800 && bR.p35a_ct === 19040 && /Arbeitskosten/.test(ergR), `${JSON.stringify(bR)} ${ergR}`);
+  const dok2 = db.dokumentNeu({ titel: 'Doppelt', datei: 'doppelt.pdf', name: 'doppelt.pdf', groesse: 1, sha256: 'scan-2' }).id;
+  const t8 = await rufe('dokument_loeschen', { ids: [dok2] });
+  pruefe('dokument_loeschen: in den Papierkorb', /Papierkorb/.test(t8) && db.dokument(dok2).status === 'papierkorb', t8);
+  const t9 = await client.callTool({ name: 'dokument_loeschen', arguments: { ids: [dok] } });
+  pruefe('dokument_loeschen: gebuchter Beleg bleibt', t9.isError && db.dokument(dok).status === 'abgelegt', JSON.stringify(t9.content));
   await client.close();
 
   // ---------- 2. undo ----------

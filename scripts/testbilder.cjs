@@ -44,3 +44,29 @@ bild('zaehler.png', 900, 420, (g) => {
   g.font = '24px sans-serif';
   g.fillText('Nr. 19-445566  Qn 2,5', 90, 340);
 });
+
+// A craftsman's invoice: letterhead, recipient, items with quantities, net, VAT and the imprint in the foot.
+bild('rechnung.png', 1240, 1600, (g) => {
+  const zeile = (t, x, y, f = '26px sans-serif') => { g.font = f; g.fillText(t, x, y); };
+  const rechts = (t, x, y, f = '26px sans-serif') => { g.font = f; g.fillText(t, x - g.measureText(t).width, y); };
+  g.fillStyle = '#111';
+  zeile('Müller Haustechnik GmbH', 80, 110, 'bold 46px sans-serif');
+  zeile('Müller Haustechnik GmbH · Industriestr. 12 · 80939 München', 80, 230, '20px sans-serif');
+  zeile('Hausverwaltung Probe', 80, 280);
+  zeile('Gartenweg 3', 80, 318);
+  zeile('81675 München', 80, 356);
+  zeile('Rechnung Nr. 2026-1187', 80, 470, 'bold 32px sans-serif');
+  zeile('Rechnungsdatum: 14.10.2026', 80, 520);
+  zeile('Pos.  Bezeichnung', 80, 620, 'bold 26px sans-serif');
+  zeile('Menge', 640, 620, 'bold 26px sans-serif');
+  rechts('Gesamt', 1160, 620, 'bold 26px sans-serif');
+  const posten = [['1', 'Heizungsventil', '1 Stk', '89,00'], ['2', 'Arbeitszeit Geselle', '1,5 Std', '87,00'], ['3', 'Dichtungssatz', '2 Stk', '13,00'], ['4', 'Anfahrt pauschal', '', '25,00']];
+  posten.forEach(([n, t, m, b], i) => { zeile(`${n}     ${t}`, 80, 680 + i * 50); zeile(m, 640, 680 + i * 50); rechts(b, 1160, 680 + i * 50); });
+  zeile('Summe netto', 640, 940); rechts('214,00', 1160, 940);
+  zeile('zzgl. 19 % MwSt', 640, 990); rechts('40,66', 1160, 990);
+  zeile('Gesamtbetrag', 640, 1050, 'bold 30px sans-serif'); rechts('254,66 €', 1160, 1050, 'bold 30px sans-serif');
+  zeile('Zahlbar bis 28.10.2026 ohne Abzug.', 80, 1160);
+  zeile('Müller Haustechnik GmbH | Geschäftsführer: Hans Müller | Amtsgericht München HRB 123456', 80, 1440, '19px sans-serif');
+  zeile('USt-IdNr. DE123456789 | Tel. 089 123456-0 | info@mueller-haustechnik.de', 80, 1475, '19px sans-serif');
+  zeile('Stadtsparkasse München | IBAN DE02 7015 0000 0000 1234 56 | BIC SSKMDEMMXXX', 80, 1510, '19px sans-serif');
+});

@@ -255,7 +255,7 @@ module.exports = function pruefung({ all, get, PERSON_NAME, bh, aw, einstellunge
 
     // ---------- documents ----------
     pruefe(() => {
-      for (const d of all(`SELECT d.id, d.titel, d.absender, d.betrag_ct, d.datum, d.erfasst FROM dokumente d WHERE d.typ = 'Rechnung' AND d.buchung_id IS NULL AND d.status <> 'postfach'
+      for (const d of all(`SELECT d.id, d.titel, d.absender, d.betrag_ct, d.datum, d.erfasst FROM dokumente d WHERE d.typ = 'Rechnung' AND d.buchung_id IS NULL AND d.status = 'abgelegt'
           AND coalesce(d.datum, d.erfasst) < ?`, plusTage(t, -30))) {
         add('Dokumente', `rechnung:${d.id}`, 'warnung', `Rechnung ${d.absender ?? d.titel}${d.betrag_ct ? ` über ${euro(d.betrag_ct)}` : ''} vom ${datumDe(d.datum ?? d.erfasst)} ist noch nicht gebucht.`,
           { links: [{ text: `Rechnung ${d.absender ?? d.titel}`, ziel: { dokument: d.id } }] });
@@ -266,13 +266,13 @@ module.exports = function pruefung({ all, get, PERSON_NAME, bh, aw, einstellunge
       if (n) add('Dokumente', `postfach:${t.slice(0, 7)}`, 'info', `${n} Dokument(e) liegen seit mehr als zwei Wochen im Postfach.`, { ziel: { seite: 'postfach' } });
     });
     pruefe(() => {
-      for (const d of all(`SELECT d.id, d.titel FROM dokumente d WHERE d.typ = 'Rechnung' AND d.rechnungsnr IS NOT NULL AND EXISTS (SELECT 1 FROM dokumente x WHERE x.id < d.id
-          AND x.rechnungsnr = d.rechnungsnr AND coalesce(x.betrag_ct, -1) = coalesce(d.betrag_ct, -1) AND coalesce(x.absender, '') = coalesce(d.absender, ''))`)) {
+      for (const d of all(`SELECT d.id, d.titel FROM dokumente d WHERE d.typ = 'Rechnung' AND d.rechnungsnr IS NOT NULL AND d.status <> 'papierkorb' AND EXISTS (SELECT 1 FROM dokumente x WHERE x.id < d.id
+          AND x.status <> 'papierkorb' AND x.rechnungsnr = d.rechnungsnr AND coalesce(x.betrag_ct, -1) = coalesce(d.betrag_ct, -1) AND coalesce(x.absender, '') = coalesce(d.absender, ''))`)) {
         add('Dokumente', `duplikat:${d.id}`, 'warnung', `„${d.titel}“ ist vermutlich doppelt abgelegt (gleiche Rechnungsnummer, gleicher Betrag).`, { links: [{ text: `„${d.titel}“`, ziel: { dokument: d.id } }] });
       }
     });
     pruefe(() => {
-      const n = get(`SELECT count(*) AS n FROM dokumente WHERE analyse LIKE 'fehler%'`).n;
+      const n = get(`SELECT count(*) AS n FROM dokumente WHERE analyse LIKE 'fehler%' AND status <> 'papierkorb'`).n;
       if (n) add('Dokumente', `lesefehler:${n}`, 'info', `${n} Dokument(e) konnten nicht gelesen werden – Text und Felder bitte von Hand prüfen.`, { ziel: { seite: 'archiv' } });
     });
     pruefe(() => {

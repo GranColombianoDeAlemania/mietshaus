@@ -23,6 +23,9 @@ export const PERSON_FELDER: Field[] = [
   { key: 'kontoinhaber', label: 'Kontoinhaber', wide: true, section: 'Bankverbindung' },
   { key: 'iban', label: 'IBAN' },
   { key: 'bic', label: 'BIC' },
+  { key: 'ust_id', label: 'USt-IdNr.', section: 'Firma (Rechnungen)' },
+  { key: 'steuernr', label: 'Steuernummer' },
+  { key: 'web', label: 'Website', wide: true },
   { key: 'notiz', label: 'Notiz', type: 'textarea', section: 'Sonstiges' },
 ];
 

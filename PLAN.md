@@ -193,6 +193,18 @@ From the pick of 28.10.2026 („Paket 1 – ich will nichts bezahlen; Paket 2 so
 | Registrierung | Product number from the DK (free, `ANLEITUNG-FINTS.md`) in the bank dialog or `MIETSHAUS_FINTS_PRODUKT`; until then „Registrierung ausstehend“ | waiting for the number |
 | Test | `scripts/fintstest.cjs` against a played bank (TAN method choice, pushTAN pending then approved, wrong PIN, account choice, duplicates) | done |
 
+## Version 0.16 – invoices in detail, recycle bin
+
+| Area | Contents | Status |
+|------|----------|--------|
+| Rechnungssteller | `electron/belege.cjs: stellerErkennen` reads letterhead and imprint (name with legal form, address, phone, e-mail, web, VAT id, tax number, register, managing director, bank, IBAN, BIC); own addresses (manager, objects, tenants) excluded; e-invoices exact; contact found by VAT id/IBAN/e-mail/name or created from the sender (`kontaktAusSteller`); contacts carry `ust_id`, `steuernr`, `web` | done |
+| MwSt | `steuerErkennen`: rates with net and VAT from „zzgl./inkl./enthaltene MwSt“, VAT tables and several rates; 0 % for § 19 UStG and tax-free; only kept when it adds up to the gross amount, else empty | done |
+| Positionen | `positionenErkennen`: items between table head and sums with quantity, unit, amount and kind (labour, travel, material); labour share gross for § 35a (`lohnBerechnen`, only when the items add up); editable in the document form; in the full-text search | done |
+| Buchen | `belegAufteilung` / `belegBuchen` (app and Claude): input tax per rate and deductible share, never guessed without known VAT; labour share on the posting (`buchungen.p35a_ct`, carried into reversals) | done |
+| § 35a | Statements count the labour share of postings that have one, the full amount of the others (as before), with a check hint | done |
+| Papierkorb | Deleting puts documents in a recycle bin (status `papierkorb`, 30 days, then removed with file and previews); delete icon per inbox row, batch delete, „Duplikat löschen“; the same file uploaded again comes back; Claude tool `dokument_loeschen` (not for booked documents) | done |
+| Claude | `dokument_ablegen` takes sender, VAT, items and labour share; instructions ask to complete them from the page image | done |
+
 ## Development
 
 ```

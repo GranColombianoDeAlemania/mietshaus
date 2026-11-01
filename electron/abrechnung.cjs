@@ -124,11 +124,17 @@ module.exports = function abrechnung({ db, all, get, tx, PERSON_NAME, bh }) {
     };
   }
 
+  // p35a_quote: the share of an account's costs that counts for § 35a – the labour share of postings that have one
+  // (invoice booked with its items), the full amount of postings without.
   const kostenImZeitraum = (objektId, von, bis, filter) => all(`SELECT k.*,
       coalesce((SELECT sum(betrag_ct) FROM buchungen WHERE soll_id = k.id AND datum BETWEEN ?2 AND ?3), 0) -
-      coalesce((SELECT sum(betrag_ct) FROM buchungen WHERE haben_id = k.id AND datum BETWEEN ?2 AND ?3), 0) AS betrag_ct
+      coalesce((SELECT sum(betrag_ct) FROM buchungen WHERE haben_id = k.id AND datum BETWEEN ?2 AND ?3), 0) AS betrag_ct,
+      coalesce((SELECT sum(coalesce(p35a_ct, betrag_ct)) FROM buchungen WHERE soll_id = k.id AND datum BETWEEN ?2 AND ?3), 0) -
+      coalesce((SELECT sum(coalesce(p35a_ct, betrag_ct)) FROM buchungen WHERE haben_id = k.id AND datum BETWEEN ?2 AND ?3), 0) AS p35a_basis_ct
     FROM konten k WHERE k.objekt_id = ?1 AND k.klasse = 'kosten' ${filter} ORDER BY k.nr`, objektId, von, bis)
-    .filter((k) => k.betrag_ct !== 0);
+    .filter((k) => k.betrag_ct !== 0)
+    .map((k) => ({ ...k, p35a_quote: k.p35a ? Math.max(0, Math.min(1, k.p35a_basis_ct / k.betrag_ct)) : 0 }));
+  const p35aTeil = (posten, ct) => Math.round(ct * (posten.konto?.p35a_quote ?? 1));
 
   // Charged advance payments of a contract in the period, by income category.
   const vorauszahlungen = (kontoId, kategorien, von, bis) => kategorien.map((kat) => get(`SELECT coalesce(sum(b.betrag_ct), 0) AS s
@@ -217,7 +223,7 @@ module.exports = function abrechnung({ db, all, get, tx, PERSON_NAME, bh }) {
       const pauschal = !!s.vertrag && bkArt !== 'vorauszahlung';
       const umgelegt = pauschal ? heiz : kosten;
       const p35a = { dienstleistung: 0, handwerker: 0 };
-      a.forEach((x, p) => { if (posten[p].p35a && (!pauschal || posten[p].heizung)) p35a[posten[p].p35a] += x.ct; });
+      a.forEach((x, p) => { if (posten[p].p35a && (!pauschal || posten[p].heizung)) p35a[posten[p].p35a] += p35aTeil(posten[p], x.ct); });
       // Suggested new monthly advance payments: this year's costs spread over 12 months, rounded up to whole euros.
       const monate = 12 * s.tage / tage(von, bis);
       // Commercial lettings with VAT: the result is net, VAT is added on top.
@@ -326,6 +332,11 @@ module.exports = function abrechnung({ db, all, get, tx, PERSON_NAME, bh }) {
     if (a.eigenanteil_ct) add('info', `Auf die selbst genutzte Wohnung entfallen ${euro(a.eigenanteil_ct)} (Eigenanteil). Sie nimmt an allen Schlüsseln teil, nach Personen mit deiner Haushaltsgröße; den Anteil trägst du, kein Mieter zahlt dafür.`);
     const p35 = a.ergebnisse.reduce((s, e) => s + (e.p35a?.dienstleistung ?? 0) + (e.p35a?.handwerker ?? 0), 0);
     if (p35) add('info', `Die Anteile für haushaltsnahe Dienstleistungen und Handwerkerleistungen (${euro(p35)}) werden je Mieter ausgewiesen.`, '§ 35a EStG – Mieter können sie in der Steuererklärung geltend machen.');
+    // Only labour and travel count for § 35a: invoices booked without their labour share count in full.
+    const ohneLohn = get(`SELECT count(*) AS n FROM buchungen b JOIN konten k ON k.id = b.soll_id WHERE k.objekt_id = ? AND k.klasse = 'kosten' AND k.p35a IS NOT NULL
+      AND b.p35a_ct IS NULL AND b.art <> 'storno' AND b.datum BETWEEN ? AND ?`, objektId, von, bis).n;
+    if (p35 && ohneLohn) add('info', `${ohneLohn} Buchung(en) auf Dienstleistungs- oder Handwerkerkonten haben keinen Arbeitsanteil und zählen für § 35a voll.`,
+      'Begünstigt sind nur Arbeits- und Fahrtkosten, kein Material. Beim Buchen einer Rechnung mit Positionen wird der Arbeitsanteil übernommen; sonst im Beleg „davon Arbeits-/Fahrtkosten“ eintragen und neu buchen.');
     // Parking spaces, garages and cellars bear only what their lease assigns to them; a per-unit key counts them like flats.
     for (const e of a.ergebnisse.filter((e) => e.segment.vertrag && e.kosten_ct > 0 && !['Wohnung', 'Gewerbe'].includes(e.segment.einheit.art ?? 'Wohnung'))) {
       add('warnung', `${e.segment.einheit.bezeichnung} (${e.segment.einheit.art}) trägt ${euro(e.kosten_ct)} Betriebskosten.`,
@@ -404,7 +415,7 @@ module.exports = function abrechnung({ db, all, get, tx, PERSON_NAME, bh }) {
       const kosten = anteile.reduce((sum, a) => sum + a.ct, 0);
       const umlagefaehig = anteile.reduce((sum, a, i) => sum + (posten[i].umlagefaehig ? a.ct : 0), 0);
       const p35a = { dienstleistung: 0, handwerker: 0 };
-      anteile.forEach((a, i) => { if (posten[i].p35a) p35a[posten[i].p35a] += a.ct; });
+      anteile.forEach((a, i) => { if (posten[i].p35a) p35a[posten[i].p35a] += p35aTeil(posten[i], a.ct); });
       return {
         segment: { von: s.von, bis: s.bis, tage: s.tage, einheit: s.einheit, vertrag: s.vertrag, konto_id: konto?.id ?? null },
         anteile, kosten_ct: kosten, umlagefaehig_ct: umlagefaehig, hausgeld_soll_ct: hgSoll, ruecklage_soll_ct: rlSoll,

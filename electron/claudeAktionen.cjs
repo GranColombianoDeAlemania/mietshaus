@@ -30,17 +30,12 @@ const AKTIONEN = {
     },
     ausfuehren: (db, a) => {
       const { d, geld, betrag } = rechnungVorbereiten(db, a);
-      const gutschrift = d.typ === 'Gutschrift';
-      // Input tax: only with an exact VAT amount (e-invoice) and a VAT-able letting in the house; mixed houses deduct their share.
-      const vst = db.konten(d.objekt_id).find((k) => k.klasse === 'steuer' && k.kategorie === 'vorsteuer19');
-      const quote = db.get('objekte', d.objekt_id)?.vorsteuer_quote ?? 100;
-      const abziehbar = vst && d.ust_ct && (a.vorsteuer_abziehen ?? true) && betrag === d.betrag_ct ? Math.round(d.ust_ct * quote / 100) : 0;
-      const pos = [{ konto: a.kosten_konto_id, ct: betrag - abziehbar }, ...(abziehbar ? [{ konto: vst.id, ct: abziehbar }] : [])];
-      const id = db.buchen({ objekt_id: d.objekt_id, datum: a.datum ?? d.datum, beleg: d.rechnungsnr, text: (a.text ?? [d.absender, d.titel].filter(Boolean).join(' – ')).slice(0, 120),
-        einheit_id: a.einheit_id ?? d.einheit_id ?? null,
-        positionen: pos.map((p) => (gutschrift ? { soll_id: geld, haben_id: p.konto, betrag_ct: p.ct } : { soll_id: p.konto, haben_id: geld, betrag_ct: p.ct })) });
-      db.dokumentSpeichern({ id: d.id, buchung_id: id, status: 'abgelegt' });
-      return `Gebucht (Buchung ${id})${abziehbar ? `, davon ${(abziehbar / 100).toFixed(2)} € Vorsteuer` : ''}, Beleg verknüpft.`;
+      // Input tax per VAT rate and the labour share (§ 35a) as in the app (db.belegBuchen).
+      const opt = { kosten_konto_id: a.kosten_konto_id, betrag_ct: betrag, vorsteuer: a.vorsteuer_abziehen ?? true };
+      const t = db.belegAufteilung(d.id, opt);
+      const id = db.belegBuchen(d.id, { ...opt, geld_konto_id: geld, datum: a.datum ?? d.datum, text: a.text ?? null, einheit_id: a.einheit_id ?? null });
+      return `Gebucht (Buchung ${id})${t.abziehbar_ct ? `, davon ${(t.abziehbar_ct / 100).toFixed(2)} € Vorsteuer` : ''}`
+        + `${t.p35a_ct ? `, ${(t.p35a_ct / 100).toFixed(2)} € Arbeitskosten (§ 35a)` : ''}, Beleg verknüpft.`;
     },
   },
 

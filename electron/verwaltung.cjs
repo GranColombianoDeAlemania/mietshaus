@@ -204,7 +204,7 @@ module.exports = function verwaltung({ db, all, get, tx, PERSON_NAME, bh }) {
     // ---------- documents, cases, appointments ----------
     dokumenteListe: (objektId) => all(`SELECT d.*, ${PERSON_NAME} AS person, e.bezeichnung AS einheit FROM dokumente d
       LEFT JOIN personen p ON p.id = d.person_id LEFT JOIN einheiten e ON e.id = d.einheit_id
-      WHERE (?1 IS NULL OR d.objekt_id = ?1) ORDER BY coalesce(d.datum, '') DESC, d.id DESC`, objektId ?? null),
+      WHERE (?1 IS NULL OR d.objekt_id = ?1) AND d.status <> 'papierkorb' ORDER BY coalesce(d.datum, '') DESC, d.id DESC`, objektId ?? null),
 
     vorgaengeListe: (objektId, nurOffen) => all(`SELECT v.*, ${PERSON_NAME} AS person, e.bezeichnung AS einheit, o.bezeichnung AS objekt,
         (SELECT count(*) FROM vorgangseintraege x WHERE x.vorgang_id = v.id) AS eintraege,
