@@ -85,13 +85,17 @@ async function starten(o) {
       letzte: letzte ? { zeit: letzte.zeit, wer: letzte.quelle === 'claude' ? `Claude${letzte.name ? ` für ${letzte.name}` : ''}` : letzte.name } : null };
   };
   const pulsSenden = () => { if (hoerer.size) senden('puls', puls()); };
-  setInterval(pulsSenden, 15_000).unref();
+  // The database is closed for a moment while a backup is restored, and for good when the server stops: the timers
+  // then skip a beat instead of bringing the process down.
+  const tPuls = setInterval(() => { try { pulsSenden(); } catch {} }, 15_000).unref();
   // Changes written by another process (Claude's MCP server in local mode) reach every window.
   let version = null;
-  setInterval(() => {
-    const v = raw.prepare('PRAGMA data_version').get().data_version;
-    if (version != null && v !== version) senden('aktualisiert');
-    version = v;
+  const tVersion = setInterval(() => {
+    try {
+      const v = raw.prepare('PRAGMA data_version').get().data_version;
+      if (version != null && v !== version) senden('aktualisiert');
+      version = v;
+    } catch {}
   }, 2000).unref();
   const aenderungen = () => raw.prepare('SELECT total_changes() AS n').get().n;
 
@@ -705,7 +709,7 @@ async function starten(o) {
     importieren: (pfade, opt) => { const r = ana.importieren(pfade, opt); senden('aktualisiert'); return r; },
     eingangsordnerSetzen: (pfad) => { dbSystem.setzeEinstellungen({ eingangsordner: pfad || null }); ein.ordnerSetzen(pfad || null); },
     beenden: async () => {
-      clearTimeout(t1); clearInterval(t2); clearInterval(t3);
+      clearTimeout(t1); clearInterval(t2); clearInterval(t3); clearInterval(tPuls); clearInterval(tVersion);
       ein.ordnerSetzen(null);
       for (const h of hoerer) h.res.end();
       await new Promise((ok) => server.close(ok));
