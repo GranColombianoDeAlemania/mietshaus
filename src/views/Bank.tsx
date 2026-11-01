@@ -3,6 +3,7 @@ import { betrag, call, datum, euro, fehler, fehlerText, heute, inTagen, personNa
 import { useLoad } from '../useLoad';
 import { KontoSelect, Tabs } from '../ui';
 import { ibanGueltig, leseKontoauszug, painLastschrift, type Umsatz } from '../bankformate';
+import { BankAbruf } from './Bankzugang';
 
 type Zeile = Umsatz & { konto_id: number | '' | null; doppelt: boolean; an: boolean; lernen: boolean };
 
@@ -31,16 +32,19 @@ function Import(props: { objekt: Row }) {
   const [meldung, setMeldung] = useState('');
   const giro = geldId || geld[0]?.id || '';
 
+  // Transactions from a file or from the bank (FinTS) go the same way: proposals, already booked ones marked.
+  async function vorschlagen(umsaetze: Umsatz[], quelle: string) {
+    const v: Row[] = await call('bankVorschlaege', props.objekt.id, umsaetze);
+    setZeilen(v.map((u) => ({ ...(u as Zeile), an: !u.doppelt && !!u.konto_id, lernen: true })));
+    setDatei(quelle);
+    setMeldung(`${umsaetze.length} Umsätze gelesen, ${v.filter((u) => u.doppelt).length} davon bereits gebucht.`);
+  }
+
   async function laden() {
     const f = await window.hv.oeffnen({ name: 'Kontoauszug (CAMT, MT940, CSV)', extensions: ['xml', 'sta', 'mt940', 'txt', 'csv', 'zip'] });
     if (!f) return;
     try {
-      const bytes = Uint8Array.from(atob(f.base64), (c) => c.charCodeAt(0));
-      const umsaetze = leseKontoauszug(bytes);
-      const v: Row[] = await call('bankVorschlaege', props.objekt.id, umsaetze);
-      setZeilen(v.map((u) => ({ ...(u as Zeile), an: !u.doppelt && !!u.konto_id, lernen: true })));
-      setDatei(f.name);
-      setMeldung(`${umsaetze.length} Umsätze gelesen, ${v.filter((u) => u.doppelt).length} davon bereits gebucht.`);
+      await vorschlagen(leseKontoauszug(Uint8Array.from(atob(f.base64), (c) => c.charCodeAt(0))), f.name);
     } catch (e) {
       fehler(e);
     }
@@ -71,6 +75,7 @@ function Import(props: { objekt: Row }) {
       <div className="toolbar">
         <label>Bankkonto <KontoSelect konten={geld} klassen={['geld']} value={giro} onChange={setGeldId} /></label>
         <button className="primary" onClick={laden}>Datei wählen…</button>
+        <BankAbruf objekt={props.objekt} onUmsaetze={(u) => vorschlagen(u, 'Abruf bei der Bank').catch(fehler)} />
         {datei && <span className="hinweis">{datei}</span>}
         <span className="spacer" />
         {meldung && <span className="meldung">{meldung}</span>}

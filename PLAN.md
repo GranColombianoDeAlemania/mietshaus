@@ -184,6 +184,15 @@ From the pick of 28.10.2026 („Paket 1 – ich will nichts bezahlen; Paket 2 so
 | Serverwarnungen | Push kind `server`: little space, no backup for two days, new version installed (once a day each) | done |
 | Fix | Context writes were counted as changes: every read sent „aktualisiert“, so open windows made each other reload | done |
 
+## Version 0.15 – fetching transactions from the bank (FinTS)
+
+| Area | Contents | Status |
+|------|----------|--------|
+| FinTS | `electron/fints.cjs` with lib-fints 1.5.2 (LGPL, unchanged dependency): set up per object account (bank code, FinTS address, user id encrypted, TAN method, account by the object's IBAN), fetch statements with pushTAN or TAN; PIN never stored, held at most 10 minutes for the running process | done |
+| Import | Transactions go through the same proposals as CAMT/MT940 files (`bankVorschlaege`), stable references so a second fetch recognises what is booked | done |
+| Registrierung | Product number from the DK (free, `ANLEITUNG-FINTS.md`) in the bank dialog or `MIETSHAUS_FINTS_PRODUKT`; until then „Registrierung ausstehend“ | waiting for the number |
+| Test | `scripts/fintstest.cjs` against a played bank (TAN method choice, pushTAN pending then approved, wrong PIN, account choice, duplicates) | done |
+
 ## Development
 
 ```

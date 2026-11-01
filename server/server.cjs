@@ -15,6 +15,7 @@ const { zip } = require('../electron/zip.cjs');
 const ortszeit = require('../electron/zeit.cjs');
 const { ics } = require('./ics.cjs');
 const { kandidaten: zaehlerKandidaten } = require('../electron/zaehlerfoto.cjs');
+const fintsModul = require('../electron/fints.cjs');
 const authModul = require('./auth.cjs');
 const geheim = require('./geheim.cjs');
 const versandModul = require('./versand.cjs');
@@ -68,6 +69,7 @@ async function starten(o) {
   const auth = authModul(() => raw);
   const passkeys = passkeyModul(() => raw);
   const passwort = o.passwort ?? geheim(daten, () => dbSystem);
+  const bank = fintsModul({ db: () => dbSystem, geheim: passwort });
 
   // ---------- events (Server-Sent Events) ----------
   const hoerer = new Set();
@@ -493,6 +495,19 @@ async function starten(o) {
         pulsSenden();
         return json(res, 200, r);
       } finally { t.weg(); }
+    }
+    // Bank access (FinTS): set up, fetch transactions, continue with TAN or approval. The PIN only passes through.
+    if (post && p === '/api/fints') {
+      const a = await jsonLesen(req);
+      kontext(req, w);
+      const objektId = Number(a.objektId);
+      if (a.aktion === 'status') return json(res, 200, bank.status(objektId));
+      if (a.aktion === 'einrichten') return json(res, 200, await fachlich(() => bank.einrichten({ ...a, objektId, objektIban: roh.get('objekte', objektId)?.iban })));
+      if (a.aktion === 'abrufen') return json(res, 200, await fachlich(() => bank.abrufen({ ...a, objektId })));
+      if (a.aktion === 'weiter') return json(res, 200, await fachlich(() => bank.weiter(a)));
+      if (a.aktion === 'abbrechen') { bank.abbrechen(a.vorgang); return json(res, 200, { ok: true }); }
+      if (a.aktion === 'entfernen') { bank.entfernen(objektId); return json(res, 200, { ok: true }); }
+      throw new Fehler(400, 'Unbekannte Aktion.');
     }
     // Meter photo: filed with the meter's house and unit, then its digits are read; the reading dialog proposes them.
     if (post && p === '/api/zaehlerfoto') {

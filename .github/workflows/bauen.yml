@@ -31,6 +31,7 @@ jobs:
       - run: node scripts/sicherungstest.cjs
       - run: node scripts/claudetest.cjs
       - run: node scripts/servertest.cjs
+      - run: node scripts/fintstest.cjs
       # A tag must carry the version of package.json, so app, server and release agree.
       - if: startsWith(github.ref, 'refs/tags/v')
         run: test "v$(node -p "require('./package.json').version")" = "${GITHUB_REF_NAME}"
