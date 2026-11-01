@@ -14,6 +14,7 @@ const sicherung = require('../electron/sicherung.cjs');
 const { zip } = require('../electron/zip.cjs');
 const ortszeit = require('../electron/zeit.cjs');
 const { ics } = require('./ics.cjs');
+const { kandidaten: zaehlerKandidaten } = require('../electron/zaehlerfoto.cjs');
 const authModul = require('./auth.cjs');
 const geheim = require('./geheim.cjs');
 const versandModul = require('./versand.cjs');
@@ -172,9 +173,34 @@ async function starten(o) {
       if (teile.length) await benachrichtigen({ art: 'morgen', benutzer: b.id, titel: 'Guten Morgen – Mietshaus', text: `${teile.join(', ')}.` });
     }
   };
+  // Warnings about the server itself, at most once a day each: little space left, no backup for two days, and after a
+  // start with a new version that it was installed. Returns the warnings sent (for the test).
+  const serverWarnungen = async (platz = null) => {
+    if (o.modus !== 'server') return [];
+    const e = dbSystem.einstellungen();
+    const heute = ortszeit.heute();
+    const gesendet = JSON.parse(e.server_warnungen ?? '{}');
+    const warnungen = [];
+    const warnen = (art, titel, text) => { if (gesendet[art] !== heute) { gesendet[art] = heute; warnungen.push({ art, titel, text }); } };
+    try {
+      const p = platz ?? (() => { const s = fs.statfsSync(daten); return { frei: s.bavail * s.bsize, gesamt: s.blocks * s.bsize }; })();
+      if (p.frei < 2 * 1024 ** 3 || p.frei < p.gesamt * 0.1)
+        warnen('platz', 'Speicher auf der Synology wird knapp', `Noch ${(p.frei / 1024 ** 3).toLocaleString('de-DE', { maximumFractionDigits: 1 })} GB frei (${Math.round(p.frei / p.gesamt * 100)} %). Sicherungen und Dokumente brauchen Platz.`);
+    } catch {}
+    const letzte = e.letzte_auto_sicherung ? Date.parse(e.letzte_auto_sicherung) : null;
+    if (e.auto_sicherung !== '0' && letzte && Date.now() - letzte > 2 * 864e5)
+      warnen('sicherung', 'Keine Sicherung seit zwei Tagen', `Die letzte automatische Sicherung war am ${new Date(letzte).toLocaleString('de-DE')}. Bitte unter Einstellungen → Status nachsehen.`);
+    if (e.letzte_version !== VERSION) {
+      if (e.letzte_version) warnungen.push({ art: 'version', titel: `Mietshaus ${VERSION} wurde installiert`, text: `Vorher lief ${e.letzte_version}. Was neu ist, steht auf GitHub unter Releases.` });
+      dbSystem.setzeEinstellungen({ letzte_version: VERSION });
+    }
+    dbSystem.setzeEinstellungen({ server_warnungen: JSON.stringify(gesendet) });
+    for (const w of warnungen) await benachrichtigen({ art: 'server', titel: w.titel, text: w.text });
+    return warnungen;
+  };
   automatik();
-  const t1 = setTimeout(() => { autoSicherung(); updatePruefen(); morgenUebersicht(); }, 60_000);
-  const t2 = setInterval(() => { automatik(); autoSicherung(); morgenUebersicht(); }, 3600_000);
+  const t1 = setTimeout(() => { autoSicherung(); updatePruefen(); morgenUebersicht(); serverWarnungen().catch((e) => console.error('Serverwarnungen', e)); }, 60_000);
+  const t2 = setInterval(() => { automatik(); autoSicherung(); morgenUebersicht(); serverWarnungen().catch((e) => console.error('Serverwarnungen', e)); }, 3600_000);
   const t3 = setInterval(updatePruefen, 24 * 3600_000);
 
   // ---------- helpers ----------
@@ -379,8 +405,10 @@ async function starten(o) {
       const args = fn === 'kalender' ? [argumente[0], argumente[1], w.benutzer?.id ?? null] : argumente;
       if (NUR_SERVER.has(fn)) return json(res, 200, { wert: fachlich(() => serverFunktion(fn, args, w)) });
       if (typeof fn !== 'string' || typeof roh[fn] !== 'function') throw new Fehler(400, `Unbekannte Funktion: ${fn}`);
-      const vorher = aenderungen();
+      // Setting the context writes to temp.kontext: counted before, every read would look like a change (and
+      // other windows would reload, which made them reload each other).
       kontext(req, w);
+      const vorher = aenderungen();
       // A case assigned to someone else: that user gets a notification.
       const zuweisung = fn === 'save' && args[0] === 'vorgaenge' && args[1]?.zustaendig && Number(args[1].zustaendig) !== w.benutzer?.id
         ? { neu: Number(args[1].zustaendig), alt: args[1].id ? raw.prepare('SELECT zustaendig FROM vorgaenge WHERE id = ?').get(args[1].id)?.zustaendig : null } : null;
@@ -392,8 +420,10 @@ async function starten(o) {
       }
       // Stored mail passwords (encrypted) stay on the server; the page only learns that one is set.
       if (fn === 'einstellungen') wert = Object.fromEntries(Object.entries(wert).map(([k, v]) => [k, /_passwort_(server|enc|klar)$/.test(k) && v ? 'gesetzt' : v]));
-      if (aenderungen() !== vorher) { senden('aktualisiert', null, req.headers['x-client'] ?? null); pulsSenden(); }
-      return json(res, 200, { wert: wert === undefined ? null : wert });
+      const geaendert = aenderungen() !== vorher;
+      if (geaendert) { senden('aktualisiert', null, req.headers['x-client'] ?? null); pulsSenden(); }
+      // A call that changed nothing may be kept by the browser for reading without a connection.
+      return json(res, 200, { wert: wert === undefined ? null : wert }, geaendert ? {} : { 'X-Lesend': '1' });
     }
     if (p === '/api/info') {
       const e = dbSystem.einstellungen();
@@ -462,6 +492,23 @@ async function starten(o) {
         senden('aktualisiert', null, req.headers['x-client'] ?? null);
         pulsSenden();
         return json(res, 200, r);
+      } finally { t.weg(); }
+    }
+    // Meter photo: filed with the meter's house and unit, then its digits are read; the reading dialog proposes them.
+    if (post && p === '/api/zaehlerfoto') {
+      const z = roh.get('zaehler', Number(u.searchParams.get('zaehler')));
+      if (!z) throw new Fehler(404, 'Zähler nicht gefunden.');
+      const t = temporaer(u.searchParams.get('name') || 'Zaehler.jpg', await lesen(req));
+      try {
+        kontext(req, w);
+        const [r] = ana.importieren([t.p], { objekt_id: z.objekt_id, einheit_id: z.einheit_id, status: 'abgelegt', typ: 'Foto' });
+        roh.dokumentSpeichern({ id: r.id, titel: `Zählerfoto ${z.nummer ?? z.art} ${ortszeit.heute().split('-').reverse().join('.')}`, typ: 'Foto', datum: ortszeit.heute() });
+        const d = roh.dokument(r.id);
+        const letzter = raw.prepare('SELECT stand FROM zaehlerstaende WHERE zaehler_id = ? ORDER BY datum DESC LIMIT 1').get(z.id)?.stand ?? null;
+        let kandidaten = [];
+        try { kandidaten = zaehlerKandidaten(await ana.ziffernLesen(fs.readFileSync(path.join(dokumentOrdner(), d.datei))), letzter); } catch (e) { console.error('Zählerfoto', e); }
+        senden('aktualisiert', null, req.headers['x-client'] ?? null);
+        return json(res, 200, { dokument_id: r.id, datei: d.datei, kandidaten, letzter });
       } finally { t.weg(); }
     }
     if (post && p === '/api/dokument-loeschen') {
@@ -638,6 +685,7 @@ async function starten(o) {
     dbSystem,
     auth,
     senden,
+    serverWarnungen,
     dokumentOrdner,
     importieren: (pfade, opt) => { const r = ana.importieren(pfade, opt); senden('aktualisiert'); return r; },
     eingangsordnerSetzen: (pfad) => { dbSystem.setzeEinstellungen({ eingangsordner: pfad || null }); ein.ordnerSetzen(pfad || null); },

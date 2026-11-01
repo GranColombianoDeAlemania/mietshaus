@@ -29,7 +29,7 @@ export function Ampel(props: { benutzer?: string | null }) {
       <button className={`ampel ${f}`} title={TEXT[f]} aria-label={TEXT[f]} onClick={() => setOffen(!offen)}><span /></button>
       {offen && (
         <div className="ampel-details" role="dialog">
-          <b>{TEXT[f]}{f === 'gelb' && gelbGrund ? ` (${gelbGrund})` : ''}</b>
+          <b>{TEXT[f]}{f === 'gelb' && gelbGrund ? ` (${gelbGrund})` : ''}{v.offline ? ' – offline lesen' : ''}</b>
           <dl>
             <dt>Server</dt><dd>{lokal ? 'eingebaut, auf diesem Mac' : location.host}</dd>
             {props.benutzer && <><dt>Angemeldet</dt><dd>{props.benutzer}</dd></>}

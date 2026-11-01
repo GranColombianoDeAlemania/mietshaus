@@ -173,6 +173,17 @@ From the pick of 28.10.2026 („Paket 1 – ich will nichts bezahlen; Paket 2 so
 | Änderungsinfo | „Zuletzt geändert von … am …“ in every edit dialog (`aenderungsNamen`) | done |
 | Härtung | compose: read_only, tmpfs /tmp, cap_drop ALL, no-new-privileges, memory/pids limits; CI starts the image that way (`scripts/rauchtest.sh`: status, logo, user, receipt OCR) before publishing; Trivy scan in the summary; `npm audit` stops on high; Dependabot | done |
 
+## Version 0.14 – photos, reading offline, server warnings
+
+| Area | Contents | Status |
+|------|----------|--------|
+| Fotos | „Foto“ opens the phone's camera (`capture`), in every gallery, at a case (`dokumente.vorgang_id`, gallery in the case dialog) and in the handover | done |
+| Beleg-Foto | „Beleg fotografieren“ (cockpit, inbox, invoices): upload, OCR, then the document dialog to book | done |
+| Zählerfoto | `/api/zaehlerfoto`: photo filed with house/unit, digits read (black/white, two passes, digits only), candidates checked against the last reading (`electron/zaehlerfoto.cjs`); proposals as buttons, photo kept with the reading (`zaehlerstaende.dokument_id`) | done |
+| Offline lesen | Server marks reading calls (`X-Lesend`); answers kept per user in IndexedDB (`src/offline.ts`), shown without a connection with a red bar; service worker keeps the page; cleared on logout or another user | done |
+| Serverwarnungen | Push kind `server`: little space, no backup for two days, new version installed (once a day each) | done |
+| Fix | Context writes were counted as changes: every read sent „aktualisiert“, so open windows made each other reload | done |
+
 ## Development
 
 ```

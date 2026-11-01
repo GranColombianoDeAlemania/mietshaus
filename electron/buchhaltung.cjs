@@ -793,11 +793,11 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
 
     zaehlerstaende: (zaehlerId) => all('SELECT * FROM zaehlerstaende WHERE zaehler_id = ? ORDER BY datum DESC', zaehlerId),
 
-    // Saves many readings at once (reading day for the whole house).
-    ablesung: (datum, werte) => tx(() => {
-      const st = db.prepare(`INSERT INTO zaehlerstaende (zaehler_id, datum, stand) VALUES (?, ?, ?)
-        ON CONFLICT (zaehler_id, datum) DO UPDATE SET stand = excluded.stand`);
-      for (const [id, stand] of Object.entries(werte)) if (stand != null && stand !== '') st.run(Number(id), datum, Number(stand));
+    // Saves many readings at once (reading day for the whole house); fotos: meter id → document of the photo taken.
+    ablesung: (datum, werte, fotos = {}) => tx(() => {
+      const st = db.prepare(`INSERT INTO zaehlerstaende (zaehler_id, datum, stand, dokument_id) VALUES (?, ?, ?, ?)
+        ON CONFLICT (zaehler_id, datum) DO UPDATE SET stand = excluded.stand, dokument_id = coalesce(excluded.dokument_id, dokument_id)`);
+      for (const [id, stand] of Object.entries(werte)) if (stand != null && stand !== '') st.run(Number(id), datum, Number(stand), fotos[id] ?? null);
     }),
 
     // Suggests a counter account for each bank transaction: returned debits, open invoices, learned rules, then the payer's IBAN.

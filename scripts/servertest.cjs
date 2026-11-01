@@ -166,6 +166,21 @@ function client(url) {
     pruefe('Beleg-Foto gelesen', d.analyse === 'fertig' && d.betrag_ct === 4890 && d.ocr === 1, `${d.analyse} ${d.betrag_ct} ${d.ocr}`);
   }
 
+  // ---------- 4a'. meter photo: digits proposed, photo kept with the reading ----------
+  {
+    const oid = await anna.call('save', 'objekte', { bezeichnung: 'Zählerhaus', art: 'miete' });
+    const zid = await anna.call('save', 'zaehler', { objekt_id: oid, art: 'kaltwasser', nummer: '19-445566' });
+    await anna.call('ablesung', '2025-12-31', { [zid]: 4790.4 });
+    const r = await (await anna.anfrage(`/api/zaehlerfoto?zaehler=${zid}&name=zaehler.png`, { methode: 'POST', roh: fs.readFileSync(path.join(__dirname, 'testdaten', 'zaehler.png')) })).json();
+    pruefe('Zählerfoto: Stand vorgeschlagen', r.kandidaten?.[0] === 4821.7 && r.letzter === 4790.4, JSON.stringify(r));
+    const d = await anna.call('dokument', r.dokument_id);
+    pruefe('Zählerfoto im Archiv beim Objekt', d.objekt_id === oid && d.typ === 'Foto' && d.status === 'abgelegt', JSON.stringify(d).slice(0, 200));
+    await anna.call('ablesung', '2026-11-01', { [zid]: 4821.7 }, { [zid]: r.dokument_id });
+    pruefe('Foto hängt am Stand', (await anna.call('zaehlerstaende', zid)).find((s) => s.datum === '2026-11-01')?.dokument_id === r.dokument_id);
+    pruefe('Fremder Zähler 404', (await anna.anfrage('/api/zaehlerfoto?zaehler=999999&name=x.png', { methode: 'POST', roh: Buffer.from('x') })).status === 404);
+    await anna.call('remove', 'objekte', oid);
+  }
+
   // ---------- 4b. moving files of a Mac ----------
   const name = '0123abcd-0000-4000-8000-000000000001.pdf';
   pruefe('Dokumentdatei übertragen', (await (await anna.anfrage(`/api/dokument-datei?name=${name}`, { methode: 'POST', roh: Buffer.from('%PDF-1') })).json()).gespeichert === true);
@@ -273,6 +288,29 @@ function client(url) {
     await anna.call('passkeyLoeschen', (await anna.call('passkeyListe'))[0].id);
     const opt3 = await (await fremd.anfrage('/api/passkey/anmelden/optionen', { methode: 'POST', json: {} })).json();
     pruefe('Entfernter Passkey gilt nicht mehr', (await fremd.anfrage('/api/passkey/anmelden', { methode: 'POST', json: { vorgang: opt3.vorgang, antwort: geraet.anmelden(opt3.optionen, s.url) } })).status === 401);
+  }
+
+  // ---------- 5'. answers kept for reading without a connection ----------
+  {
+    const lesend = await anna.anfrage('/api/call', { methode: 'POST', json: { fn: 'objekte', args: ['miete'] } });
+    const schreibend = await anna.anfrage('/api/call', { methode: 'POST', json: { fn: 'save', args: ['objekte', { id: o, notiz: 'offline-test' }] } });
+    pruefe('Lesender Aufruf als lesend markiert', lesend.headers.get('x-lesend') === '1' && schreibend.ok && schreibend.headers.get('x-lesend') === null);
+    // Reading sends no "aktualisiert" to the other windows (they would reload each other without end).
+    await warte(300);
+    const vorherZahl = ereignisse.join('').split('event: aktualisiert').length;
+    await anna.call('objekte', 'miete');
+    await warte(200);
+    pruefe('Lesen löst kein Aktualisieren aus', ereignisse.join('').split('event: aktualisiert').length === vorherZahl);
+  }
+
+  // ---------- 5a. warnings about the server ----------
+  {
+    const w1 = await s.serverWarnungen({ frei: 1.5 * 1024 ** 3, gesamt: 1000 * 1024 ** 3 });
+    pruefe('Warnung bei wenig Speicher', w1.some((w) => w.art === 'platz' && /1,5 GB/.test(w.text)), JSON.stringify(w1));
+    pruefe('Nur einmal am Tag', !(await s.serverWarnungen({ frei: 1, gesamt: 100 })).some((w) => w.art === 'platz'));
+    pruefe('Genug Platz: keine Warnung', !(await s.serverWarnungen({ frei: 500 * 1024 ** 3, gesamt: 1000 * 1024 ** 3 })).length);
+    s.dbSystem.setzeEinstellungen({ letzte_version: '0.0.1', server_warnungen: '{}' });
+    pruefe('Neue Version gemeldet', (await s.serverWarnungen({ frei: 500 * 1024 ** 3, gesamt: 1000 * 1024 ** 3 })).some((w) => w.art === 'version' && w.text.includes('0.0.1')));
   }
 
   // ---------- 5b. status page ----------

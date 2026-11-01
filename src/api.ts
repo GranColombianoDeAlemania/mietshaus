@@ -24,6 +24,10 @@ declare global {
       dokumentLoeschen: (id: number) => Promise<void>;
       importieren: (files: FileList | File[], opt?: Row) => Promise<{ id: number; doppelt: boolean; name: string }[]>;
       dateienImportieren: (opt?: Row) => Promise<{ id: number; doppelt: boolean; name: string }[]>;
+      // On a phone the camera opens at once; on a computer it is a picker for images.
+      fotoAufnehmen: (opt?: Row) => Promise<{ id: number; doppelt: boolean; name: string }[]>;
+      // Photo of a meter: filed, and the digits read as proposals (null when no photo was taken).
+      zaehlerFoto: (zaehlerId: number) => Promise<{ dokument_id: number; datei: string; kandidaten: number[]; letzter: number | null } | null>;
       neuAnalysieren: (id: number) => Promise<void>;
       bei: (kanal: string, fn: (...a: any[]) => void) => () => void;
       extern: (url: string) => Promise<void>;

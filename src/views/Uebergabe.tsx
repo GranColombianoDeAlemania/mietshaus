@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import * as I from 'lucide-react';
 import { anrede, call, datum, euro, fehler, heute, parseZahl, zahl, type Row } from '../api';
+import { handy } from '../Foto';
 import { useLoad } from '../useLoad';
 import { L } from '../navi';
 import { Dialog } from '../ui';
@@ -52,7 +53,7 @@ export function UebergabeEditor(props: { id: number; onClose: () => void }) {
 
   async function fotoHinzu(i: number, files: FileList | null) {
     const r = await (files ? window.hv.importieren(files, { objekt_id: u!.einheit.objekt_id, einheit_id: u!.einheit_id, status: 'abgelegt', typ: 'Foto' })
-      : window.hv.dateienImportieren({ objekt_id: u!.einheit.objekt_id, einheit_id: u!.einheit_id, status: 'abgelegt', typ: 'Foto' }));
+      : window.hv[handy() ? 'fotoAufnehmen' : 'dateienImportieren']({ objekt_id: u!.einheit.objekt_id, einheit_id: u!.einheit_id, status: 'abgelegt', typ: 'Foto' }));
     const docs = await Promise.all(r.map(async (x) => {
       await call('dokumentSpeichern', { id: x.id, titel: `${u!.art === 'einzug' ? 'Einzug' : 'Auszug'} ${u!.einheit.bezeichnung}: ${u!.raeume[i].name}`, typ: 'Foto', datum: u!.datum });
       return { id: x.id, datei: (await call('dokument', x.id)).datei };

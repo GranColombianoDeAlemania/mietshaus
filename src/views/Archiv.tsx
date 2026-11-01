@@ -7,6 +7,7 @@ import { L } from '../navi';
 import { painUeberweisung } from '../bankformate';
 import { bestaetigen, hinweis } from '../frage';
 import { emailSchreiben } from '../Mail';
+import { BelegFoto } from '../Foto';
 
 const istBild = (datei: string) => /\.(png|jpe?g|gif|webp|bmp|tiff?)$/i.test(datei);
 export const dokUrl = (datei: string) => `/dateien/dokument/${encodeURIComponent(datei)}`;
@@ -226,6 +227,7 @@ export function Postfach() {
         <h1>Postfach</h1>
         <span className="hinweis">{liste?.length ?? 0} Dokumente warten</span>
         <span className="spacer" />
+        <BelegFoto onFertig={reload} />
         <button className="primary" onClick={() => window.hv.dateienImportieren({}).then(reload)}>Dateien hinzufügen…</button>
       </div>
       <p className="hinweis klein">
@@ -407,6 +409,7 @@ export function Rechnungen(props: { objekt?: Row }) {
         {props.objekt && <label className="check"><input type="checkbox" checked={nurObjekt} onChange={(e) => setNurObjekt(e.target.checked)} /> nur {props.objekt.bezeichnung}</label>}
         <select value={jahr} onChange={(e) => setJahr(e.target.value)}><option value="">alle Jahre</option>{Array.from({ length: 8 }, (_, i) => diesesJahr() - i).map((j) => <option key={j}>{j}</option>)}</select>
         <span className="spacer" />
+        <BelegFoto onFertig={reload} />
         <button disabled={!fuerSepa.length || !nurObjekt} title="Ausgewählte offene Rechnungen als SEPA-Überweisungsdatei" onClick={sepa}>Überweisen ({fuerSepa.length})</button>
       </div>
       <div className="kacheln">

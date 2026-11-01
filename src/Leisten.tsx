@@ -1,6 +1,7 @@
-// Notes at the bottom of the window that concern the program itself: a newer Mac app, or an app too old for the server.
+// Notes at the bottom of the window that concern the program itself: a newer Mac app, an app too old for the server, or
+// reading without a connection.
 import { useEffect, useState } from 'react';
-import type { status, Update } from './bruecke';
+import { verbindungBeobachten, type status, type Update, type Verbindung } from './bruecke';
 import { fehler } from './api';
 
 export function Leisten(props: { status: Awaited<ReturnType<typeof status>> }) {
@@ -8,6 +9,8 @@ export function Leisten(props: { status: Awaited<ReturnType<typeof status>> }) {
   const [update, setUpdate] = useState<Update | null>(null);
   const [fortschritt, setFortschritt] = useState('');
   const [weg, setWeg] = useState(false);
+  const [v, setV] = useState<Verbindung | null>(null);
+  useEffect(() => verbindungBeobachten(setV), []);
   useEffect(() => {
     if (!d) return;
     d.updateStatus().then(setUpdate);
@@ -22,6 +25,14 @@ export function Leisten(props: { status: Awaited<ReturnType<typeof status>> }) {
       <div className="leiste rot">
         Diese Mietshaus-App ({d!.version}) ist zu alt für den Server ({props.status.version}). Bitte aktualisieren.
         {update && !update.hindernis && <button className="primary" onClick={() => d!.updateInstallieren().catch(fehler)}>Jetzt aktualisieren</button>}
+      </div>
+    );
+  }
+  if (v?.offline || props.status.offline) {
+    const stand = v?.offline ? new Date(v.offline).toLocaleString('de-DE', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : null;
+    return (
+      <div className="leiste rot">
+        <span><b>Keine Verbindung</b> – du siehst {stand ? `den Stand von ${stand}` : 'den zuletzt geladenen Stand'}. Ändern und Speichern geht erst wieder mit Verbindung.</span>
       </div>
     );
   }

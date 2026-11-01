@@ -3,11 +3,12 @@ import { useEffect, useState } from 'react';
 import { call, datum, type Row } from './api';
 import { useLoad } from './useLoad';
 import { DokumentDialog, dokUrl } from './views/Archiv';
+import { FotoKnopf } from './Foto';
 
 const istBild = (datei: string) => /\.(png|jpe?g|gif|webp)$/i.test(datei);
 const symbol = (d: Row) => (/\.pdf$/i.test(d.datei) ? '📄' : /\.(docx?|odt|txt)$/i.test(d.datei) ? '📝' : /\.(xlsx?|ods|csv)$/i.test(d.datei) ? '📊' : '📎');
 
-export function Galerie(props: { filter: { objekt_id?: number; einheit_id?: number; projekt_id?: number; person_id?: number };
+export function Galerie(props: { filter: { objekt_id?: number; einheit_id?: number; projekt_id?: number; person_id?: number; vorgang_id?: number };
   hinweis?: string; ablage?: Record<string, unknown> }) {
   const [nurBilder, setNurBilder] = useState(false);
   const [liste, reload] = useLoad<Row[]>(() => call('galerie', { ...props.filter, nur_bilder: nurBilder }), [JSON.stringify(props.filter), nurBilder]);
@@ -43,7 +44,7 @@ export function Galerie(props: { filter: { objekt_id?: number; einheit_id?: numb
         onDragLeave={() => setZone(false)}
         onDrop={(e) => { e.preventDefault(); e.stopPropagation(); setZone(false); if (e.dataTransfer.files.length) hinzufuegen(e.dataTransfer.files); }}>
         Fotos und Dateien hierher ziehen – sie werden direkt hier abgelegt{props.hinweis ? ` (${props.hinweis})` : ''}. &nbsp;
-        <button onClick={() => hinzufuegen()}>Dateien wählen…</button>
+        <button onClick={() => hinzufuegen()}>Dateien wählen…</button> <FotoKnopf opt={props.ablage ?? props.filter} onFertig={reload} />
         <label className="check" style={{ display: 'inline-flex', marginLeft: 12 }}><input type="checkbox" checked={nurBilder} onChange={(e) => setNurBilder(e.target.checked)} /> nur Fotos</label>
       </div>
       {liste && !liste.length && <p className="hinweis">Noch nichts abgelegt.</p>}

@@ -4,6 +4,7 @@
 // a browser gets an equivalent (print dialog, download, its own small menu).
 import type { Row } from './api';
 import { frage } from './frage';
+import * as offline from './offline';
 
 type DateiFilter = { name: string; extensions: string[] };
 type MenueEintrag = { id: string; label: string; enabled?: boolean } | '-';
@@ -66,8 +67,9 @@ export type Verbindung = {
   latenz: number | null;                // last request, ms
   puls: { zeit: string; version: string; analyse: number; letzte: { zeit: string; wer: string | null } | null } | null;
   pulsAm: number | null;
+  offline: number | null;               // without a connection: time of the oldest kept answer shown
 };
-const zustand: Verbindung = { strom: 'verbindet', wegSeit: null, offen: 0, latenz: null, puls: null, pulsAm: null };
+const zustand: Verbindung = { strom: 'verbindet', wegSeit: null, offen: 0, latenz: null, puls: null, pulsAm: null, offline: null };
 const beobachter = new Set<(v: Verbindung) => void>();
 const melden = () => { for (const fn of beobachter) fn({ ...zustand }); };
 export function verbindungBeobachten(fn: (v: Verbindung) => void) {
@@ -76,9 +78,9 @@ export function verbindungBeobachten(fn: (v: Verbindung) => void) {
   ereignisse();
   return () => { beobachter.delete(fn); };
 }
-// Red: stream or network gone for more than 5 seconds, or no sign of life for 40 seconds.
+// Red: showing kept answers, stream or network gone for more than 5 seconds, or no sign of life for 40 seconds.
 export const farbe = (v: Verbindung, jetzt = Date.now()): 'gruen' | 'gelb' | 'rot' =>
-  (v.wegSeit != null && jetzt - v.wegSeit > 5000) || (v.pulsAm != null && jetzt - v.pulsAm > 40_000) ? 'rot'
+  v.offline != null || (v.wegSeit != null && jetzt - v.wegSeit > 5000) || (v.pulsAm != null && jetzt - v.pulsAm > 40_000) ? 'rot'
     : v.strom !== 'offen' || v.offen > 0 || (v.puls?.analyse ?? 0) > 0 ? 'gelb' : 'gruen';
 export const neuVerbinden = () => { quelle?.close(); quelle = null; zustand.strom = 'verbindet'; melden(); ereignisse(); };
 
@@ -104,6 +106,7 @@ export async function anfrage(pfad: string, opt: { methode?: string; json?: unkn
     melden();
   }
   zustand.latenz = Math.round(performance.now() - start);
+  zustand.offline = null;
   if (zustand.strom === 'offen') zustand.wegSeit = null;
   melden();
   if (!r.ok) {
@@ -169,10 +172,12 @@ async function speichern(inhalt: string | Uint8Array, name: string, filter?: Dat
 }
 
 // Hidden file input, resolved with the chosen files (an empty list when cancelled).
-export function dateienWaehlen(opt: { mehrere?: boolean; endungen?: string[] } = {}): Promise<File[]> {
+// kamera: the phone opens its camera directly (rear camera); elsewhere only images can be chosen.
+export function dateienWaehlen(opt: { mehrere?: boolean; endungen?: string[]; kamera?: boolean } = {}): Promise<File[]> {
   return new Promise((ok) => {
     const i = Object.assign(document.createElement('input'), { type: 'file', multiple: !!opt.mehrere });
     if (opt.endungen?.length) i.accept = opt.endungen.map((e) => `.${e}`).join(',');
+    if (opt.kamera) { i.accept = 'image/*'; i.setAttribute('capture', 'environment'); }
     i.style.display = 'none';
     i.onchange = () => { ok([...(i.files ?? [])]); i.remove(); };
     i.addEventListener('cancel', () => { ok([]); i.remove(); });
@@ -249,8 +254,16 @@ export function brueckeEinrichten() {
     zoom: (f) => (d ? d.zoom(f) : void (document.documentElement.style.zoom = String(f))),
     call: async (fn, ...args) => {
       try {
-        return (await jsonVon('/api/call', { fn, args })).wert;
+        const r = await anfrage('/api/call', { json: { fn, args } });
+        const { wert } = await r.json();
+        if (r.headers.get('x-lesend') === '1') offline.merken(fn, args, wert);
+        return wert;
       } catch (e) {
+        // No connection: the last kept answer, marked in the traffic light; saving fails as before.
+        if (e instanceof HttpFehler && e.status === 0) {
+          const alt = await offline.holen(fn, args);
+          if (alt) { zustand.offline = Math.min(zustand.offline ?? alt.zeit, alt.zeit); melden(); return alt.wert; }
+        }
         if (!(e instanceof HttpFehler) || !e.konflikt) throw e;
         // Someone else changed the record meanwhile: overwrite on purpose, or keep theirs and see it.
         const wahl = await frage({ titel: 'Inzwischen geändert', text: <>{absatz(e.message)}{absatz('Deine Änderung überschreibt seine. Wenn du abbrichst, siehst du den neuen Stand und kannst deine Änderung dort noch einmal eintragen.')}</>,
@@ -300,6 +313,15 @@ export function brueckeEinrichten() {
       const files = await dateienWaehlen({ mehrere: true });
       return files.length ? hochladen(files, opt) : [];
     },
+    fotoAufnehmen: async (opt) => {
+      const files = await dateienWaehlen({ kamera: true });
+      return files.length ? hochladen(files, opt) : [];
+    },
+    zaehlerFoto: async (zaehlerId) => {
+      const [f] = await dateienWaehlen({ kamera: true });
+      if (!f) return null;
+      return (await anfrage(`/api/zaehlerfoto?zaehler=${zaehlerId}&name=${encodeURIComponent(f.name)}`, { roh: f, typ: 'application/octet-stream' })).json();
+    },
     neuAnalysieren: async (id) => { await anfrage('/api/neu-analysieren', { json: { id } }); },
     bei: (kanal, fn) => {
       if (kanal === 'navigation') return d?.bei('navigation', fn) ?? (() => {});
@@ -333,11 +355,22 @@ export function brueckeEinrichten() {
 }
 
 // Login state for the start screen.
-export const status = (): Promise<{ modus: 'server' | 'lokal'; version: string; desktop_schnittstelle: number; angemeldet: boolean; benutzer: Row | null; einrichtung: boolean }> =>
-  fetch('/api/status', { credentials: 'same-origin' }).then((r) => r.json());
+type Status = { modus: 'server' | 'lokal'; version: string; desktop_schnittstelle: number; angemeldet: boolean; benutzer: Row | null; einrichtung: boolean; offline?: boolean };
+// Without a connection the last status of this device is used, if answers are kept for reading (server only).
+export async function status(): Promise<Status> {
+  try {
+    const s: Status = await fetch('/api/status', { credentials: 'same-origin' }).then((r) => r.json());
+    if (s.modus === 'server' && s.angemeldet) await offline.benutzerSetzen(String(s.benutzer?.id), s);
+    return s;
+  } catch (e) {
+    const alt = desktop()?.lokal ? null : offline.letzterStatus();
+    if (alt?.angemeldet) { zustand.wegSeit ??= Date.now(); return { ...alt, offline: true }; }
+    throw e;
+  }
+}
 export const anmelden = (login: string, passwort: string) => anfrage('/api/anmelden', { json: { login, passwort } }).then((r) => r.json());
 export const einrichten = (login: string, name: string, passwort: string) => anfrage('/api/einrichten', { json: { login, name, passwort } }).then((r) => r.json());
-export const abmelden = () => anfrage('/api/abmelden', { json: {} });
+export const abmelden = async () => { await anfrage('/api/abmelden', { json: {} }); await offline.leeren(); await offline.benutzerSetzen(null); };
 
 // Passkeys (WebAuthn) – only where the browser offers them; the Mac app's window does not.
 export const passkeyMoeglich = () => !window.hvDesktop && typeof window.PublicKeyCredential === 'function' && window.isSecureContext;

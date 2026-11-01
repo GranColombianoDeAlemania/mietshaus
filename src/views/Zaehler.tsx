@@ -1,5 +1,7 @@
 import { useState } from 'react';
-import { call, datum, heute, inTagen, parseZahl, zahl, type Row } from '../api';
+import * as I from 'lucide-react';
+import { call, datum, fehler, heute, inTagen, parseZahl, zahl, type Row } from '../api';
+import { dokUrl } from './Archiv';
 import { FormDialog, type Field } from '../Form';
 import { useLoad } from '../useLoad';
 import { L } from '../navi';
@@ -81,14 +83,17 @@ export function Zaehler(props: { objekt: Row }) {
 function Verlauf(props: { zaehler: Row; onClose: () => void }) {
   const [rows, reload] = useLoad<Row[]>(() => call('zaehlerstaende', props.zaehler.id), [props.zaehler.id]);
   const [neu, setNeu] = useState({ datum: heute(), stand: '' });
+  const [foto, setFoto] = useState<Foto | undefined>();
   return (
     <Dialog titel={`Zählerstände ${artName(props.zaehler.art)} ${props.zaehler.nummer ?? ''}`} onClose={props.onClose}>
       <div className="toolbar">
         <input type="date" value={neu.datum} onChange={(e) => setNeu({ ...neu, datum: e.target.value })} />
         <input className="num" placeholder="Stand" value={neu.stand} onChange={(e) => setNeu({ ...neu, stand: e.target.value })} />
+        <ZaehlerFoto zaehlerId={props.zaehler.id} foto={foto} onFoto={setFoto} onWert={(v) => setNeu({ ...neu, stand: v })} />
         <button className="primary" disabled={parseZahl(neu.stand) == null} onClick={async () => {
-          await call('ablesung', neu.datum, { [props.zaehler.id]: parseZahl(neu.stand) });
+          await call('ablesung', neu.datum, { [props.zaehler.id]: parseZahl(neu.stand) }, foto ? { [props.zaehler.id]: foto.dokument_id } : {});
           setNeu({ ...neu, stand: '' });
+          setFoto(undefined);
           reload();
         }}>Hinzufügen</button>
       </div>
@@ -108,19 +113,39 @@ function Verlauf(props: { zaehler: Row; onClose: () => void }) {
   );
 }
 
+// Photo of a meter: the proposals of the text recognition as buttons; a click puts the value into the field.
+type Foto = { dokument_id: number; datei: string; kandidaten: number[] };
+function ZaehlerFoto(props: { zaehlerId: number; foto?: Foto; onFoto: (f: Foto) => void; onWert: (wert: string) => void }) {
+  const [laeuft, setLaeuft] = useState(false);
+  return (
+    <span className="zaehlerfoto">
+      <button className="icon" title="Foto vom Zähler – der Stand wird gelesen und vorgeschlagen" disabled={laeuft} onClick={async () => {
+        setLaeuft(true);
+        try { const f = await window.hv.zaehlerFoto(props.zaehlerId); if (f) props.onFoto(f); } catch (e) { fehler(e); } finally { setLaeuft(false); }
+      }}>{laeuft ? '…' : <I.Camera size={15} />}</button>
+      {props.foto && <a href={dokUrl(props.foto.datei)} target="_blank" rel="noreferrer"><img src={dokUrl(props.foto.datei)} alt="Zählerfoto" /></a>}
+      {props.foto && (props.foto.kandidaten.length
+        ? props.foto.kandidaten.slice(0, 3).map((k) => <button key={k} className="chip" title="Diesen Wert übernehmen" onClick={() => props.onWert(zahl(k))}>{zahl(k)}?</button>)
+        : <span className="klein hinweis">nicht lesbar – bitte eintippen</span>)}
+    </span>
+  );
+}
+
 // Reading day: one input per meter, saved together.
 function Ablesung(props: { zaehler: Row[]; onClose: () => void }) {
   const [tag, setTag] = useState(heute());
   const [werte, setWerte] = useState<Record<number, string>>({});
+  const [fotos, setFotos] = useState<Record<number, Foto>>({});
   return (
     <Dialog titel="Ablesung erfassen" onClose={props.onClose} breit aktionen={
       <button className="primary" onClick={async () => {
-        await call('ablesung', tag, Object.fromEntries(Object.entries(werte).map(([k, v]) => [k, parseZahl(v)]).filter(([, v]) => v != null)));
+        await call('ablesung', tag, Object.fromEntries(Object.entries(werte).map(([k, v]) => [k, parseZahl(v)]).filter(([, v]) => v != null)),
+          Object.fromEntries(Object.entries(fotos).map(([k, f]) => [k, f.dokument_id])));
         props.onClose();
       }}>Speichern</button>}>
       <div className="toolbar"><label>Ablesedatum <input type="date" value={tag} onChange={(e) => setTag(e.target.value)} /></label></div>
       <table>
-        <thead><tr><th>Einheit</th><th>Zähler</th><th className="num">Letzter Stand</th><th className="num">Neuer Stand</th></tr></thead>
+        <thead><tr><th>Einheit</th><th>Zähler</th><th className="num">Letzter Stand</th><th className="num">Neuer Stand</th><th>Foto</th></tr></thead>
         <tbody>
           {props.zaehler.map((z) => (
             <tr key={z.id}>
@@ -128,6 +153,7 @@ function Ablesung(props: { zaehler: Row[]; onClose: () => void }) {
               <td>{artName(z.art)} {z.nummer}</td>
               <td className="num">{zahl(z.letzter_stand)} <span className="klein">{datum(z.letztes_datum)}</span></td>
               <td><input className="num zelle" value={werte[z.id] ?? ''} onChange={(e) => setWerte({ ...werte, [z.id]: e.target.value })} /></td>
+              <td><ZaehlerFoto zaehlerId={z.id} foto={fotos[z.id]} onFoto={(f) => setFotos({ ...fotos, [z.id]: f })} onWert={(v) => setWerte({ ...werte, [z.id]: v })} /></td>
             </tr>
           ))}
         </tbody>

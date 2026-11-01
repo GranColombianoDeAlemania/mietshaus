@@ -8,6 +8,7 @@ import { L, mitLinks, useNavi } from '../navi';
 import { Jahreswechsel, jahreswechselZeit } from './Jahreswechsel';
 import { CockpitKpis, CockpitRadar, CockpitVorschau } from './Kennzahlen';
 import { Kennzahl } from '../zeiger';
+import { BelegFoto } from '../Foto';
 
 const STUFE: Record<string, [string, string]> = { rot: ['●', 'Jetzt handeln'], orange: ['●', 'Bald / prüfen'], gelb: ['●', 'Chance / Hinweis'] };
 
@@ -38,7 +39,8 @@ export function Uebersicht(props: { modus: Modus; objekte: Row[]; oeffne: (seite
     <section className="cockpit">
       <div className="toolbar"><h1>{weg ? 'WEG-Verwaltung' : 'Mietverwaltung'} – Cockpit</h1>
         {/* The cockpit sums up every house of this mode, whichever object is chosen at the top. */}
-        <span className="hinweis klein">{props.objekte.length === 1 ? '1 Objekt' : `alle ${props.objekte.length} Objekte`}</span></div>
+        <span className="hinweis klein">{props.objekte.length === 1 ? '1 Objekt' : `alle ${props.objekte.length} Objekte`}</span>
+        <span className="spacer" /><BelegFoto /></div>
       <p className="kurzlage">
         {handeln.length === 0 ? 'Alles erledigt – nichts braucht gerade deine Aufmerksamkeit.'
           : `${handeln.length} ${handeln.length === 1 ? 'Punkt braucht' : 'Punkte brauchen'} deine Aufmerksamkeit${rot ? `, davon ${rot} dringend` : ''}.`}

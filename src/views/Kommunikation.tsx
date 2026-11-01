@@ -9,6 +9,7 @@ import { FormDialog, type Field } from '../Form';
 import { absaetze, absenderAus, alsPdf, brief, esc, empfaengerVon } from '../dokument';
 import { L } from '../navi';
 import { bestaetigen, hinweis } from '../frage';
+import { Galerie } from '../Galerie';
 
 export const PLATZHALTER: [string, string][] = [
   ['anrede', 'Briefanrede („Sehr geehrte Frau …,“)'], ['name', 'Vollständiger Name'], ['vorname', 'Vorname'], ['nachname', 'Nachname'],
@@ -332,6 +333,9 @@ function Vorgang(props: { v: Row; onClose: () => void }) {
             <td className="aktionen"><button onClick={async () => { await call('remove', 'vorgangseintraege', e.id); reload(); }}>×</button></td></tr>
         ))}</tbody>
       </table>
+      <h3>Fotos und Dokumente</h3>
+      <Galerie filter={{ vorgang_id: props.v.id }} ablage={{ vorgang_id: props.v.id, objekt_id: props.v.objekt_id, ...(props.v.einheit_id ? { einheit_id: props.v.einheit_id } : {}) }}
+        hinweis="am Vorgang" />
     </Dialog>
   );
 }

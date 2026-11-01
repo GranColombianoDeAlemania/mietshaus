@@ -124,16 +124,16 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME }) {
     dokumentNeu: (row) => {
       const vorhanden = row.sha256 ? get('SELECT id, titel, status FROM dokumente WHERE sha256 = ?', row.sha256) : null;
       if (vorhanden) return { id: vorhanden.id, doppelt: true, titel: vorhanden.titel };
-      const id = Number(db.prepare(`INSERT INTO dokumente (objekt_id, einheit_id, projekt_id, person_id, buchung_id, typ, titel, datei, name, groesse, sha256, status, quelle, erfasst, analyse)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, date('now', 'localtime'), 'offen')`).run(row.objekt_id ?? null, row.einheit_id ?? null, row.projekt_id ?? null,
-        row.person_id ?? null, row.buchung_id ?? null, row.typ ?? null, row.titel, row.datei, row.name, row.groesse, row.sha256 ?? null, row.status ?? 'postfach', row.quelle ?? 'upload').lastInsertRowid);
+      const id = Number(db.prepare(`INSERT INTO dokumente (objekt_id, einheit_id, projekt_id, person_id, buchung_id, vorgang_id, typ, titel, datei, name, groesse, sha256, status, quelle, erfasst, analyse)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, date('now', 'localtime'), 'offen')`).run(row.objekt_id ?? null, row.einheit_id ?? null, row.projekt_id ?? null,
+        row.person_id ?? null, row.buchung_id ?? null, row.vorgang_id ?? null, row.typ ?? null, row.titel, row.datei, row.name, row.groesse, row.sha256 ?? null, row.status ?? 'postfach', row.quelle ?? 'upload').lastInsertRowid);
       indexieren(id);
       return { id, doppelt: false };
     },
 
     dokumentSpeichern: (row) => {
       const cols = ['objekt_id', 'projekt_id', 'person_id', 'einheit_id', 'titel', 'kategorie', 'datum', 'notiz', 'status', 'typ', 'betrag_ct',
-        'absender', 'rechnungsnr', 'iban', 'faellig', 'zusammenfassung', 'buchung_id', 'netto_ct', 'ust_ct'];
+        'absender', 'rechnungsnr', 'iban', 'faellig', 'zusammenfassung', 'buchung_id', 'netto_ct', 'ust_ct', 'vorgang_id'];
       const keys = cols.filter((c) => c in row);
       if (keys.length) db.prepare(`UPDATE dokumente SET ${keys.map((k) => `${k} = ?`).join(', ')} WHERE id = ?`)
         .run(...keys.map((k) => (row[k] === '' || row[k] === undefined ? null : row[k])), row.id);
@@ -143,7 +143,7 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME }) {
 
     // Drag & drop of a filed or inbox document onto a person, unit, contract or posting.
     dokumentZuordnen: (id, ziel) => {
-      const erlaubt = ['objekt_id', 'einheit_id', 'person_id', 'buchung_id', 'projekt_id'];
+      const erlaubt = ['objekt_id', 'einheit_id', 'person_id', 'buchung_id', 'projekt_id', 'vorgang_id'];
       const werte = Object.fromEntries(Object.entries(ziel).filter(([k, v]) => erlaubt.includes(k) && v != null));
       const keys = Object.keys(werte);
       if (keys.length) db.prepare(`UPDATE dokumente SET ${keys.map((k) => `${k} = ?`).join(', ')}, status = 'abgelegt' WHERE id = ?`).run(...keys.map((k) => werte[k]), id);
@@ -185,12 +185,12 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME }) {
     }),
 
     // Photos and documents linked to an object, a unit or a project (for the galleries).
-    galerie: ({ objekt_id = null, einheit_id = null, projekt_id = null, person_id = null, nur_bilder = false } = {}) => all(`SELECT d.id, d.titel, d.typ, d.datum, d.erfasst,
+    galerie: ({ objekt_id = null, einheit_id = null, projekt_id = null, person_id = null, vorgang_id = null, nur_bilder = false } = {}) => all(`SELECT d.id, d.titel, d.typ, d.datum, d.erfasst,
         d.datei, d.name, d.einheit_id, d.status, e.bezeichnung AS einheit FROM dokumente d LEFT JOIN einheiten e ON e.id = d.einheit_id
       WHERE d.status <> 'postfach' AND (?1 IS NULL OR d.objekt_id = ?1) AND (?2 IS NULL OR d.einheit_id = ?2) AND (?3 IS NULL OR d.projekt_id = ?3)
-        AND (?5 IS NULL OR d.person_id = ?5)
+        AND (?5 IS NULL OR d.person_id = ?5) AND (?6 IS NULL OR d.vorgang_id = ?6)
         AND (?4 = 0 OR lower(d.datei) GLOB '*.png' OR lower(d.datei) GLOB '*.jp*g' OR lower(d.datei) GLOB '*.webp' OR lower(d.datei) GLOB '*.gif')
-      ORDER BY coalesce(d.datum, d.erfasst) DESC, d.id DESC`, objekt_id, einheit_id, projekt_id, nur_bilder ? 1 : 0, person_id),
+      ORDER BY coalesce(d.datum, d.erfasst) DESC, d.id DESC`, objekt_id, einheit_id, projekt_id, nur_bilder ? 1 : 0, person_id, vorgang_id),
 
     postfachAnzahl: () => get(`SELECT count(*) AS n FROM dokumente WHERE status = 'postfach'`).n,
 

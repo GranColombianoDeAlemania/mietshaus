@@ -797,6 +797,11 @@ const MIGRATIONS = [
    ALTER TABLE benutzer ADD COLUMN einladung_bis TEXT;`,
   // Calendar subscription (iPhone, Mac): a secret link per user, of which only the hash is kept.
   `ALTER TABLE benutzer ADD COLUMN kalender_token_hash TEXT;`,
+  // Photos at a case (damage) and the photo behind a meter reading (proof for the statement).
+  `ALTER TABLE dokumente ADD COLUMN vorgang_id INTEGER REFERENCES vorgaenge(id) ON DELETE SET NULL;
+   ALTER TABLE zaehlerstaende ADD COLUMN dokument_id INTEGER REFERENCES dokumente(id) ON DELETE SET NULL;`,
+  // Notifications about the server itself: whoever gets the backup problems gets these too.
+  `UPDATE push_abos SET arten = arten || ',server' WHERE (',' || arten || ',') LIKE '%,sicherung,%';`,
 ];
 
 // Tables without change time: the log itself, settings of this installation and page state.
@@ -874,7 +879,7 @@ const TABLES = {
   anpassungen: ['vertrag_typ', 'vertrag_id', 'gueltig_ab', 'grund', 'kaltmiete_ct', 'bk_vz_ct', 'hk_vz_ct',
     'sonstiges_ct', 'hausgeld_ct', 'ruecklage_ct', 'notiz'],
   zaehler: ['objekt_id', 'einheit_id', 'art', 'nummer', 'ort', 'einheit', 'faktor', 'einbau', 'ausbau', 'eichung_bis', 'notiz'],
-  zaehlerstaende: ['zaehler_id', 'datum', 'stand', 'notiz'],
+  zaehlerstaende: ['zaehler_id', 'datum', 'stand', 'notiz', 'dokument_id'],
   bankregeln: ['objekt_id', 'muster', 'konto_id'],
   kautionen: ['vertrag_id', 'art', 'bank', 'iban', 'zinssatz', 'notiz'],
   kautionsbewegungen: ['kaution_id', 'datum', 'art', 'betrag_ct', 'text'],

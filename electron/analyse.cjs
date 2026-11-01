@@ -90,7 +90,7 @@ module.exports = function analyse({ db, dokumentOrdner, vorschauOrdner, onFertig
   }
 
   // Copies files into the archive; identical files (same SHA-256) are only stored once.
-  function importieren(pfade, { objekt_id = null, einheit_id = null, projekt_id = null, person_id = null, buchung_id = null, typ = null, quelle = 'upload', status = 'postfach' } = {}) {
+  function importieren(pfade, { objekt_id = null, einheit_id = null, projekt_id = null, person_id = null, buchung_id = null, vorgang_id = null, typ = null, quelle = 'upload', status = 'postfach' } = {}) {
     fs.mkdirSync(dokumentOrdner(), { recursive: true });
     const out = [];
     for (const p of pfade) {
@@ -104,7 +104,7 @@ module.exports = function analyse({ db, dokumentOrdner, vorschauOrdner, onFertig
       }
       const datei = `${crypto.randomUUID()}${ext}`;
       const name = path.basename(p);
-      const r = db.dokumentNeu({ objekt_id, einheit_id, projekt_id, person_id, buchung_id, typ, titel: name.replace(/\.[^.]+$/, ''), datei, name, groesse: daten.length, sha256, quelle, status });
+      const r = db.dokumentNeu({ objekt_id, einheit_id, projekt_id, person_id, buchung_id, vorgang_id, typ, titel: name.replace(/\.[^.]+$/, ''), datei, name, groesse: daten.length, sha256, quelle, status });
       if (!r.doppelt) fs.writeFileSync(path.join(dokumentOrdner(), datei), daten);
       out.push({ ...r, name });
     }
@@ -112,15 +112,49 @@ module.exports = function analyse({ db, dokumentOrdner, vorschauOrdner, onFertig
     return out;
   }
 
+  // Digits of a meter photo: the lines with their height (the counter is the largest), read on a black-and-white copy
+  // twice – as one block and as sparse text – by a worker that only knows digits.
+  let ziffernWorker = null;
+  async function ziffernLesen(bild) {
+    if (!ziffernWorker) {
+      const { createWorker } = require('tesseract.js');
+      ziffernWorker = await createWorker(['eng'], 1, { langPath: tessdata, gzip: false, cachePath: cacheOrdner,
+        workerPath: ausserhalbAsar(require.resolve('tesseract.js/src/worker-script/node/index.js')) });
+    }
+    const { createCanvas, loadImage } = require('@napi-rs/canvas');
+    const img = await loadImage(bild);
+    // Large phone photos are scaled down to 1600 px: faster and no worse for digits.
+    const f = Math.min(1, 1600 / Math.max(img.width, img.height));
+    const c = createCanvas(Math.round(img.width * f), Math.round(img.height * f));
+    const g = c.getContext('2d');
+    g.drawImage(img, 0, 0, c.width, c.height);
+    const d = g.getImageData(0, 0, c.width, c.height);
+    for (let i = 0; i < d.data.length; i += 4) {
+      const v = d.data[i] * 0.3 + d.data[i + 1] * 0.59 + d.data[i + 2] * 0.11 > 128 ? 255 : 0;
+      d.data[i] = d.data[i + 1] = d.data[i + 2] = v;
+    }
+    g.putImageData(d, 0, 0);
+    const sw = c.toBuffer('image/png');
+    const zeilen = [];
+    for (const psm of ['6', '11']) {
+      await ziffernWorker.setParameters({ tessedit_char_whitelist: '0123456789,.', tessedit_pageseg_mode: psm });
+      const { data } = await ziffernWorker.recognize(sw, {}, { text: true, blocks: true });
+      for (const b of data.blocks ?? []) for (const p of b.paragraphs) for (const l of p.lines) zeilen.push({ text: l.text.trim(), hoehe: l.bbox.y1 - l.bbox.y0 });
+    }
+    return zeilen;
+  }
+
   return {
     importieren,
     warteschlange,
+    ziffernLesen,
     neuAnalysieren: (id) => {
       db.analyseZuruecksetzen(id);
       setImmediate(warteschlange);
     },
     beenden: async () => {
       if (ocrWorker) await ocrWorker.terminate();
+      if (ziffernWorker) await ziffernWorker.terminate();
     },
   };
 };
