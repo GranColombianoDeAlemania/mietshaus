@@ -533,7 +533,7 @@ export default function App(props: { benutzer?: Row | null }) {
               const id = Number(e.target.value);
               detail ? zu({ seite: modus === 'projekt' ? 'zeitplan' : 'steckbrief', objektId: id }) : gehe({ objektId: id, param: undefined });
             }} disabled={!objekte?.length}>
-              {!objekte?.length && <option value="">{modus === 'projekt' ? '– noch keine Projekte –' : '– noch keine Objekte –'}</option>}
+              {!objekte?.length && <option value="">{!objekte ? 'lädt …' : modus === 'projekt' ? '– noch keine Projekte –' : '– noch keine Objekte –'}</option>}
               {detail && objektId && !objekte?.some((o) => o.id === objektId) && <option value={objektId}>…</option>}
               {objekte?.map((o) => (
                 <option key={o.id} value={o.id}>{o.bezeichnung ?? o.titel}{o.art === 'gemischt' ? ' (gemischt)' : ''}</option>

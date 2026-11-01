@@ -5,6 +5,7 @@ import { anleitungHtml, einladungsLink, verbindenLink, type Einladung } from '..
 import { ARTEN, homeBildschirmNoetig, pushAbo, pushAusschalten, pushEinschalten, pushMoeglich } from '../mitteilungen';
 import { useLoad } from '../useLoad';
 import { anzeige, SCHRIFTGROESSEN, type Thema } from '../anzeige';
+import { strasseTeilen, strasseVerbinden } from '../adresse';
 import { Tabs } from '../ui';
 import { bestaetigen, frage, hinweis } from '../frage';
 
@@ -33,6 +34,14 @@ export function Einstellungen() {
   const [werte, setWerte] = useState<Row>({});
   const [meldung, setMeldung] = useState('');
   const wert = (k: string) => werte[k] ?? e?.[k] ?? '';
+  // Street and house number are two inputs; while editing both parts are kept apart and joined on saving.
+  const [strasse, setStrasse] = useState<[string, string] | null>(null);
+  const teil = (i: 0 | 1) => (strasse ?? strasseTeilen(e?.verwalter_strasse))[i];
+  const setzeTeil = (i: 0 | 1, v: string) => {
+    const neu: [string, string] = i === 0 ? [v, teil(1)] : [teil(0), v];
+    setStrasse(neu);
+    setWerte({ ...werte, verwalter_strasse: strasseVerbinden(...neu) });
+  };
 
   return (
     <section>
@@ -40,7 +49,12 @@ export function Einstellungen() {
       <div className="block">
         <h3>Verwalter (Absender auf Briefen und Abrechnungen)</h3>
         <div className="maske">
-          {FELDER.map(([k, l]) => (
+          {FELDER.map(([k, l]) => k === 'verwalter_strasse' ? (
+            <label key={k} className="breit">Straße und Hausnummer<span className="strasse-nr">
+              <input value={teil(0)} onChange={(ev) => setzeTeil(0, ev.target.value)} />
+              <input aria-label="Hausnummer" placeholder="Nr." value={teil(1)} onChange={(ev) => setzeTeil(1, ev.target.value)} />
+            </span></label>
+          ) : (
             <label key={k}>{l}<input value={wert(k)} onChange={(ev) => setWerte({ ...werte, [k]: ev.target.value })} /></label>
           ))}
         </div>
@@ -48,6 +62,7 @@ export function Einstellungen() {
           <button className="primary" disabled={!Object.keys(werte).length} onClick={async () => {
             await call('setzeEinstellungen', werte);
             setWerte({});
+            setStrasse(null);
             reload();
             setMeldung('Gespeichert.');
           }}>Speichern</button>

@@ -8,9 +8,11 @@ ENV ELECTRON_SKIP_BINARY_DOWNLOAD=1
 COPY package.json package-lock.json ./
 RUN npm ci --ignore-scripts
 COPY index.html vite.config.mts tsconfig.json ./
+COPY public ./public
 COPY src ./src
 COPY electron ./electron
-RUN npx vite build
+# Logo, icons, manifest and service worker come from public/; without them the page shows no logo and push stays off.
+RUN npx vite build && test -f dist/logo.svg && test -f dist/sw.js && test -f dist/manifest.webmanifest
 
 # ---- server ----
 FROM node:24-bookworm-slim

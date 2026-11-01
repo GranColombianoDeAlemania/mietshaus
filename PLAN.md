@@ -155,6 +155,14 @@ From the pick of 28.10.2026 („Paket 1 – ich will nichts bezahlen; Paket 2 so
 | Logo | House with a capybara in the door (resources/logo.svg); Mac icon, sidebar, login, browser tab, home screen (`scripts/icons.cjs`) | done |
 | Ersteinrichtung | Field „Benutzername wählen“ with explanation | done |
 
+### 0.12.1 – fixes
+
+| Area | Contents | Status |
+|------|----------|--------|
+| Logo im Container | The image built the interface without `public/`: no logo, icons, manifest or service worker on the NAS (push did not work either). Dockerfile copies it and fails the build without them; a missing file is a 404 instead of the page | done |
+| Hausnummer | Street and house number in two fields (objects, address book, manager), stored together as one line for letters and e-invoices | done |
+| Browser | Letter/PDF tab blocked by Safari: a button opens it; failed page loads show why; object list says „lädt …“ while loading; shortcut hint per platform | done |
+
 ## Development
 
 ```

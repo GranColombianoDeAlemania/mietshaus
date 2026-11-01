@@ -12,7 +12,7 @@ export const PERSON_FELDER: Field[] = [
   { key: 'vorname', label: 'Vorname' },
   { key: 'nachname', label: 'Nachname' },
   { key: 'firma', label: 'Firma', wide: true },
-  { key: 'strasse', label: 'Straße', wide: true, section: 'Anschrift' },
+  { key: 'strasse', label: 'Straße', type: 'strasse', wide: true, section: 'Anschrift' },
   { key: 'plz', label: 'PLZ' },
   { key: 'ort', label: 'Ort' },
   { key: 'land', label: 'Land' },

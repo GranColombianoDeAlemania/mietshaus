@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { fehler } from './api';
 
 // Loads data whenever deps change; returns the data and a reload function.
 export function useLoad<T>(load: () => Promise<T>, deps: unknown[]): [T | undefined, () => void] {
@@ -12,7 +13,8 @@ export function useLoad<T>(load: () => Promise<T>, deps: unknown[]): [T | undefi
   }, []);
   useEffect(() => {
     let aktiv = true;
-    load().then((d) => aktiv && setData(d));
+    // A failed load says why (a lost connection only turns the light red, a lapsed login leads to the sign-in).
+    load().then((d) => { if (aktiv) setData(d); }, (e) => { if (aktiv && ![0, 401].includes(e?.status)) fehler(e); });
     return () => {
       aktiv = false;
     };

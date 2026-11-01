@@ -213,7 +213,11 @@ async function starten(o) {
 
   function statisch(req, res, pfad) {
     let datei = path.join(dist, path.normalize(decodeURIComponent(pfad)).replace(/^(\.\.[/\\])+/, ''));
-    if (!datei.startsWith(dist) || !fs.existsSync(datei) || fs.statSync(datei).isDirectory()) datei = path.join(dist, 'index.html');
+    if (!datei.startsWith(dist) || !fs.existsSync(datei) || fs.statSync(datei).isDirectory()) {
+      // A missing file (logo, script) is a 404 – the page itself only for addresses inside the app.
+      if (path.extname(pfad)) return json(res, 404, { fehler: 'Datei nicht gefunden.' });
+      datei = path.join(dist, 'index.html');
+    }
     if (!fs.existsSync(datei)) return json(res, 503, { fehler: 'Die Oberfläche ist nicht gebaut (npm run build).' });
     const ext = path.extname(datei).toLowerCase();
     // Only the built files with a hash in their name (assets/) may be kept for long; sw.js, icons and the page are checked each time.

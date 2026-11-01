@@ -57,6 +57,15 @@ function client(url) {
   pruefe('Nach 5 Fehlversuchen gesperrt', (await fremd.anfrage('/api/anmelden', { methode: 'POST', json: { login: 'anna', passwort: 'geheim-genug-1' } })).status === 429);
   pruefe('Andere Logins nicht gesperrt', (await client(s.url).anfrage('/api/anmelden', { methode: 'POST', json: { login: 'ben', passwort: 'auch-geheim-22' } })).ok);
 
+  // ---------- 1a. static files: logo and icons are there, a missing file is no page ----------
+  {
+    const logo = await fremd.anfrage('/logo.svg');
+    pruefe('Logo wird ausgeliefert', logo.ok && logo.headers.get('content-type') === 'image/svg+xml' && (await logo.text()).includes('<svg'));
+    pruefe('Manifest und Service-Worker da', (await fremd.anfrage('/manifest.webmanifest')).ok && (await fremd.anfrage('/sw.js')).ok);
+    pruefe('Fehlende Datei 404', (await fremd.anfrage('/gibt-es-nicht.png')).status === 404);
+    pruefe('Seitenadresse liefert die App', (await (await fremd.anfrage('/objekte')).text()).includes('<div id="root">'));
+  }
+
   // ---------- 1b. invitations ----------
   {
     const e1 = await anna.call('personEinladen', { login: 'clara', name: 'Clara Neu' });

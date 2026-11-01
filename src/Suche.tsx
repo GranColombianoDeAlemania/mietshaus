@@ -64,7 +64,7 @@ export function Suche(props: { befehle: Befehl[]; onDokument: (d: Row) => void }
 
   return (
     <div className="globalsuche">
-      <input ref={feld} placeholder="Suchen / Befehl  ⌘K" value={q} onFocus={() => setOffen(true)}
+      <input ref={feld} placeholder={matchMedia('(pointer: coarse)').matches ? 'Suchen / Befehl' : navigator.platform.startsWith('Mac') ? 'Suchen / Befehl  ⌘K' : 'Suchen / Befehl  Strg+K'} value={q} onFocus={() => setOffen(true)}
         onBlur={() => setTimeout(() => setOffen(false), 150)}
         onChange={(e) => { setQ(e.target.value); setOffen(true); }}
         onKeyDown={(e) => {

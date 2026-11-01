@@ -1,11 +1,13 @@
 import { useState, type ReactNode } from 'react';
 import { parseZahl, type Row } from './api';
+import { strasseTeilen, strasseVerbinden } from './adresse';
 import { bestaetigen } from './frage';
 
 export type Field = {
   key: string;
   label: string;
-  type?: 'text' | 'number' | 'money' | 'date' | 'select' | 'textarea' | 'check';
+  // 'strasse': street and house number in two inputs, stored together in one column.
+  type?: 'text' | 'number' | 'money' | 'date' | 'select' | 'textarea' | 'check' | 'strasse';
   options?: [value: string | number, label: string][];
   required?: boolean;
   wide?: boolean;
@@ -20,6 +22,7 @@ function toForm(fields: Field[], row: Row): Row {
     if (d.type === 'check') f[d.key] = !!v;
     else if (d.type === 'money') f[d.key] = v == null ? '' : (v / 100).toFixed(2).replace('.', ',');
     else if (d.type === 'number') f[d.key] = v == null ? '' : String(v).replace('.', ',');
+    else if (d.type === 'strasse') [f[d.key], f[`${d.key}_nr`]] = strasseTeilen(v);
     else f[d.key] = v ?? '';
   }
   return f;
@@ -33,6 +36,7 @@ function fromForm(fields: Field[], f: Row): Row {
     else if (d.type === 'money') r[d.key] = Math.round((parseZahl(v) ?? 0) * 100);
     else if (d.type === 'number') r[d.key] = parseZahl(v);
     else if (d.type === 'select') r[d.key] = v === '' ? null : isNaN(Number(v)) ? v : Number(v);
+    else if (d.type === 'strasse') r[d.key] = strasseVerbinden(v, f[`${d.key}_nr`]);
     else r[d.key] = typeof v === 'string' ? v.trim() : v;
   }
   return r;
@@ -97,6 +101,13 @@ export function FormDialog(props: {
                   ))}
                 </select>
               );
+            else if (d.type === 'strasse')
+              input = (
+                <span className="strasse-nr">
+                  <input value={f[d.key] ?? ''} onChange={(e) => set(e.target.value)} />
+                  <input aria-label="Hausnummer" placeholder="Nr." value={f[`${d.key}_nr`] ?? ''} onChange={(e) => setF({ ...f, [`${d.key}_nr`]: e.target.value })} />
+                </span>
+              );
             else if (d.type === 'textarea') input = <textarea rows={3} value={f[d.key] ?? ''} onChange={(e) => set(e.target.value)} />;
             else if (d.type === 'check')
               return [...out, (
@@ -116,7 +127,7 @@ export function FormDialog(props: {
               );
             return [...out, (
               <label key={d.key} className={d.wide || d.type === 'textarea' ? 'wide' : undefined}>
-                <span>{label}{d.type === 'money' ? ' (€)' : ''}</span>
+                <span>{label}{d.type === 'money' ? ' (€)' : d.type === 'strasse' ? ' und Hausnummer' : ''}</span>
                 {input}
               </label>
             )];

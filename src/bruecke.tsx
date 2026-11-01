@@ -209,10 +209,13 @@ function webMenue(eintraege: MenueEintrag[]): Promise<string | null> {
 }
 
 // Browser: the letter opens in a new tab with the print dialog (save as PDF, on the iPhone through "Share").
-function drucken(html: string) {
+// Safari (above all on the iPhone) blocks a new tab that does not open right on a tap; then a button opens it.
+async function drucken(html: string) {
   const url = URL.createObjectURL(new Blob([html.replace('</body>', '<script>addEventListener("load",()=>setTimeout(()=>print(),300))</script></body>')], { type: 'text/html' }));
-  window.open(url, '_blank');
-  setTimeout(() => URL.revokeObjectURL(url), 120_000);
+  setTimeout(() => URL.revokeObjectURL(url), 600_000);
+  if (window.open(url, '_blank')) return;
+  if (await frage({ titel: 'Dokument ist fertig', text: absatz('Es öffnet sich in einem neuen Tab. Dort „Teilen → Drucken“ oder „Als PDF sichern“ wählen.'),
+    optionen: [{ id: 'nein', label: 'Abbrechen' }, { id: 'auf', label: 'Öffnen', primary: true }] }) === 'auf') window.open(url, '_blank');
 }
 
 const absatz = (t: string) => <p>{t}</p>;
@@ -258,7 +261,7 @@ export function brueckeEinrichten() {
       }
     },
     pdf: async (html, name) => {
-      if (!d) { drucken(html); return null; }
+      if (!d) { await drucken(html); return null; }
       return d.speichern(await d.pdfBytes(html), name, { name: 'PDF', extensions: ['pdf'] }, true);
     },
     pdfAblegen: async (html, name, meta) => {
