@@ -30,6 +30,8 @@ jobs:
       - run: node scripts/rechentest.cjs
       - run: node scripts/sicherungstest.cjs
       - run: node scripts/claudetest.cjs
+      # The server test also checks the page, logo and service worker: they come from the built interface.
+      - run: npx vite build
       - run: node scripts/servertest.cjs
       - run: node scripts/fintstest.cjs
       # A tag must carry the version of package.json, so app, server and release agree.
