@@ -1,7 +1,7 @@
 // Object tiles (cockpit), the object fact sheet, the person file and the loans page.
 import { useState } from 'react';
 import * as I from 'lucide-react';
-import { call, datum, euro, heute, OBJEKT_ART, parseZahl, zahl, type Modus, type Row } from '../api';
+import { call, datum, euro, fehler, heute, OBJEKT_ART, parseZahl, zahl, type Modus, type Row } from '../api';
 import { useLoad } from '../useLoad';
 import { Chip, DetailKopf, Dialog, Leer } from '../ui';
 import { FormDialog, type Field } from '../Form';
@@ -69,7 +69,20 @@ export function Steckbrief(props: { objekt: Row; oeffne: (seite: string, id?: nu
           <Chip>{s.einheiten} Einheiten{s.flaeche ? ` · ${zahl(s.flaeche)} m²` : ''}</Chip>
           {weg && <Chip art="weg">MEA {zahl(s.mea)}</Chip>}
         </>}
-        aktionen={<button className="icon" onClick={() => props.oeffne('objekte')}><I.Pencil size={15} />Stammdaten</button>}
+        aktionen={<>
+          {'geolocation' in navigator && window.isSecureContext && (
+            <button className="icon" title={o.breite ? 'Standort ist gespeichert – Fotos, die hier mit der Foto-Taste aufgenommen werden, landen bei diesem Objekt. Zum Erneuern hier tippen.'
+              : 'Am Haus stehend antippen: Fotos, die hier mit der Foto-Taste aufgenommen werden, landen dann direkt bei diesem Objekt.'}
+              onClick={() => navigator.geolocation.getCurrentPosition(async (pos) => {
+                try {
+                  await call('save', 'objekte', { id: o.id, breite: pos.coords.latitude, laenge: pos.coords.longitude });
+                  window.dispatchEvent(new CustomEvent('hv-meldung', { detail: `Standort von ${o.bezeichnung} gespeichert (± ${Math.round(pos.coords.accuracy)} m).` }));
+                } catch (e) { fehler(e); }
+              }, (e) => fehler(new Error(`Standort nicht verfügbar: ${e.message}`)), { enableHighAccuracy: true, timeout: 15000 })}>
+              <I.MapPin size={15} />{o.breite ? 'Standort gespeichert' : 'Standort hier speichern'}</button>
+          )}
+          <button className="icon" onClick={() => props.oeffne('objekte')}><I.Pencil size={15} />Stammdaten</button>
+        </>}
       />
       <div className="kacheln">
         {miete && <button className="kachel klickbar" onClick={() => navi.zu({ seite: 'op', objektId: o.id, modus: 'miete' })}>

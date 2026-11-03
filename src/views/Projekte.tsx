@@ -8,6 +8,7 @@ import { Gantt, type GanttZeile } from '../Gantt';
 import { Tabs } from '../ui';
 import { DokumentDialog } from './Archiv';
 import { Galerie } from '../Galerie';
+import { SYMBOL } from '../icons';
 
 export const PROJEKT_STATUS: [string, string][] = [['planung', 'in Planung'], ['laufend', 'läuft'], ['pausiert', 'pausiert'], ['abgeschlossen', 'abgeschlossen']];
 const statusName = (s: string) => PROJEKT_STATUS.find(([k]) => k === s)?.[1] ?? s;
@@ -170,7 +171,7 @@ export function ProjektZeitplan(props: { projekt: Row }) {
                 <td className="aktionen">
                   <button title="Diese und alle folgenden Aufgaben eine Woche früher" onClick={async () => { await call('aufgabeVerschieben', a.id, -7); reload(); }}>−1 Wo.</button>
                   <button title="Diese und alle folgenden Aufgaben eine Woche später" onClick={async () => { await call('aufgabeVerschieben', a.id, 7); reload(); }}>+1 Wo.</button>
-                  <button onClick={async () => { await call('save', 'projektaufgaben', { id: a.id, fortschritt: 100 }); reload(); }}>✓</button>
+                  <button onClick={async () => { await call('save', 'projektaufgaben', { id: a.id, fortschritt: 100 }); reload(); }} title="Erledigt" aria-label="Erledigt"><SYMBOL.erledigt size={15} /></button>
                 </td>
               </tr>
             ))}

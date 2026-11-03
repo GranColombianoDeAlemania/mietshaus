@@ -4,9 +4,10 @@ import { call, datum, type Row } from './api';
 import { useLoad } from './useLoad';
 import { DokumentDialog, dokUrl } from './views/Archiv';
 import { FotoKnopf } from './Foto';
+import { dateiSymbol } from './icons';
 
 const istBild = (datei: string) => /\.(png|jpe?g|gif|webp)$/i.test(datei);
-const symbol = (d: Row) => (/\.pdf$/i.test(d.datei) ? '📄' : /\.(docx?|odt|txt)$/i.test(d.datei) ? '📝' : /\.(xlsx?|ods|csv)$/i.test(d.datei) ? '📊' : '📎');
+const Symbol = (props: { datei: string }) => { const S = dateiSymbol(props.datei); return <S size={34} strokeWidth={1.4} aria-hidden="true" />; };
 
 export function Galerie(props: { filter: { objekt_id?: number; einheit_id?: number; projekt_id?: number; person_id?: number; vorgang_id?: number };
   hinweis?: string; ablage?: Record<string, unknown> }) {
@@ -53,7 +54,7 @@ export function Galerie(props: { filter: { objekt_id?: number; einheit_id?: numb
           <div key={d.id} className="kachelbild" title={d.name} draggable data-ziel={`dokument:${d.id}`}
             onDragStart={(e) => { e.dataTransfer.setData('application/x-hv-dokument', String(d.id)); e.dataTransfer.effectAllowed = 'link'; }}
             onClick={() => (istBild(d.datei) ? setGross(bilder.findIndex((b) => b.id === d.id)) : setMeta(d))}>
-            <div className="bild" style={istBild(d.datei) ? { backgroundImage: `url("${dokUrl(d.datei)}")` } : undefined}>{istBild(d.datei) ? '' : symbol(d)}</div>
+            <div className="bild" style={istBild(d.datei) ? { backgroundImage: `url("${dokUrl(d.datei)}")` } : undefined}>{istBild(d.datei) ? null : <Symbol datei={d.datei} />}</div>
             <div className="titel">{d.titel}<span className="klein">{[d.einheit, d.typ, datum(d.datum ?? d.erfasst)].filter(Boolean).join(' · ')}</span></div>
           </div>
         ))}

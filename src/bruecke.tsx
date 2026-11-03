@@ -3,7 +3,7 @@
 // native menus and save dialogs, Claude Desktop) comes from window.hvDesktop, which the Mac app's preload provides;
 // a browser gets an equivalent (print dialog, download, its own small menu).
 import type { Row } from './api';
-import { frage } from './frage';
+import { bestaetigen, frage } from './frage';
 import * as offline from './offline';
 
 type DateiFilter = { name: string; extensions: string[] };
@@ -41,7 +41,7 @@ declare global {
 }
 
 export class HttpFehler extends Error {
-  constructor(public status: number, text: string, public konflikt?: { wer: string; wann: string }) { super(text); }
+  constructor(public status: number, text: string, public konflikt?: { wer: string; wann: string }, public bestaetigen?: string) { super(text); }
 }
 // An error the user already knows about (e.g. chose not to overwrite): fehler() shows nothing for it.
 export class StillerFehler extends Error { still = true; }
@@ -111,10 +111,10 @@ export async function anfrage(pfad: string, opt: { methode?: string; json?: unkn
   melden();
   if (!r.ok) {
     let text = `Fehler ${r.status}`;
-    let konflikt;
-    try { const j = await r.json(); text = j.fehler ?? text; konflikt = j.konflikt; } catch {}
+    let konflikt, bestaetigen;
+    try { const j = await r.json(); text = j.fehler ?? text; konflikt = j.konflikt; bestaetigen = j.bestaetigen; } catch {}
     if (r.status === 401) window.dispatchEvent(new Event('hv-abgemeldet'));
-    throw new HttpFehler(r.status, text, konflikt);
+    throw new HttpFehler(r.status, text, konflikt, bestaetigen);
   }
   return r;
 }
@@ -205,7 +205,8 @@ function webMenue(eintraege: MenueEintrag[]): Promise<string | null> {
       b.onclick = () => zu(x.id);
       menue.append(b);
     }
-    document.body.append(menue);
+    // Inside an open window the menu belongs to it: a modal window blocks clicks on everything outside itself.
+    ([...document.querySelectorAll('[role="dialog"]')].pop() ?? document.body).append(menue);
     const r = menue.getBoundingClientRect();
     menue.style.left = `${Math.min(zeiger.x, innerWidth - r.width - 8)}px`;
     menue.style.top = `${Math.min(zeiger.y, innerHeight - r.height - 8)}px`;
@@ -264,6 +265,11 @@ export function brueckeEinrichten() {
           const alt = await offline.holen(fn, args);
           if (alt) { zustand.offline = Math.min(zustand.offline ?? alt.zeit, alt.zeit); melden(); return alt.wert; }
         }
+        // A plausibility question of the server: asked here, then sent again as confirmed.
+        if (e instanceof HttpFehler && e.bestaetigen) {
+          if (!await bestaetigen(e.bestaetigen, { titel: 'Bitte prüfen', ja: 'Ja, so speichern' })) throw new StillerFehler('Nicht gespeichert.');
+          return (await (await anfrage('/api/call', { json: { fn, args }, kopf: { 'X-Bestaetigt': '1' } })).json()).wert;
+        }
         if (!(e instanceof HttpFehler) || !e.konflikt) throw e;
         // Someone else changed the record meanwhile: overwrite on purpose, or keep theirs and see it.
         const wahl = await frage({ titel: 'Inzwischen geändert', text: <>{absatz(e.message)}{absatz('Deine Änderung überschreibt seine. Wenn du abbrichst, siehst du den neuen Stand und kannst deine Änderung dort noch einmal eintragen.')}</>,
@@ -316,6 +322,17 @@ export function brueckeEinrichten() {
     fotoAufnehmen: async (opt) => {
       const files = await dateienWaehlen({ kamera: true });
       return files.length ? hochladen(files, opt) : [];
+    },
+    // The phone's camera button: the position is asked for while the camera is open (the camera has to open right on
+    // the tap), the server files the photo at the house nearby or puts it in the inbox.
+    fotoMitStandort: async () => {
+      const ort = new Promise<{ lat: number; lon: number } | null>((ok) => {
+        if (!('geolocation' in navigator) || !window.isSecureContext) return ok(null);
+        navigator.geolocation.getCurrentPosition((p) => ok({ lat: p.coords.latitude, lon: p.coords.longitude }), () => ok(null),
+          { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 });
+      });
+      const files = await dateienWaehlen({ kamera: true });
+      return files.length ? hochladen(files, { standort: await ort }) : [];
     },
     zaehlerFoto: async (zaehlerId) => {
       const [f] = await dateienWaehlen({ kamera: true });
@@ -370,7 +387,7 @@ export async function status(): Promise<Status> {
 }
 export const anmelden = (login: string, passwort: string) => anfrage('/api/anmelden', { json: { login, passwort } }).then((r) => r.json());
 export const einrichten = (login: string, name: string, passwort: string) => anfrage('/api/einrichten', { json: { login, name, passwort } }).then((r) => r.json());
-export const abmelden = async () => { await anfrage('/api/abmelden', { json: {} }); await offline.leeren(); await offline.benutzerSetzen(null); };
+export const abmelden = async () => { await anfrage('/api/abmelden', { json: {} }); await offline.leeren(); await offline.benutzerSetzen(null); window.dispatchEvent(new Event('hv-abgemeldet')); };
 
 // Passkeys (WebAuthn) – only where the browser offers them; the Mac app's window does not.
 export const passkeyMoeglich = () => !window.hvDesktop && typeof window.PublicKeyCredential === 'function' && window.isSecureContext;

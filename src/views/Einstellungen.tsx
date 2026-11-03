@@ -9,6 +9,7 @@ import { strasseTeilen, strasseVerbinden } from '../adresse';
 import { orteZurPlz } from '../plz';
 import { Tabs } from '../ui';
 import { bestaetigen, frage, hinweis } from '../frage';
+import { SYMBOL } from '../icons';
 
 const FELDER: [string, string][] = [
   ['verwalter_name', 'Name / Firma'],
@@ -141,7 +142,7 @@ function ClaudeVerbindung() {
         }} /> Buchungen, Verträge und Änderungen an Personen (z. B. Bankverbindung) erst nach meiner Freigabe übernehmen (empfohlen)
       </label>
       {st && (
-        <p>{st.verbunden ? <b className="meldung">✓ Verbunden.</b> : st.installiert ? 'Noch nicht verbunden.' : 'Claude Desktop scheint nicht installiert zu sein (claude.ai/download).'}</p>
+        <p>{st.verbunden ? <b className="meldung"><SYMBOL.erledigt size={15} /> Verbunden.</b> : st.installiert ? 'Noch nicht verbunden.' : 'Claude Desktop scheint nicht installiert zu sein (claude.ai/download).'}</p>
       )}
       <div className="buttons">
         <button className="primary" onClick={async () => {

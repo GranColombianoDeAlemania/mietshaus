@@ -2,12 +2,14 @@
 import { useEffect, useState } from 'react';
 import { betrag, call, datum, diesesJahr, euro, fehler, heute, parseCent, personName, zahl, type Row } from '../api';
 import { useLoad } from '../useLoad';
-import { Dialog, KontoSelect, Leer } from '../ui';
+import { Dialog, Fenster, FensterTitel, KontoSelect, Leer } from '../ui';
 import { L } from '../navi';
 import { painUeberweisung } from '../bankformate';
 import { bestaetigen, hinweis } from '../frage';
 import { emailSchreiben } from '../Mail';
 import { BelegFoto } from '../Foto';
+import { SYMBOL } from '../icons';
+import { Arbeitskorb } from '../Arbeitskorb';
 import { belegDaten, belegWerte, BetraegeUndPositionen, Rechnungssteller, type BelegWerte } from './Beleg';
 
 const RECHNUNGSARTEN = ['Rechnung', 'Gutschrift', 'Mahnung', 'Angebot'];
@@ -83,6 +85,7 @@ function DokumentFormular(props: { id: number; onFertig: () => void; postfach?: 
   const [f, setF] = useState<Row | null>(null);
   const [w, setW] = useState<BelegWerte | null>(null);
   const [buchen, setBuchen] = useState(false);
+  const [vorschlag] = useLoad<Row | null>(() => (props.postfach ? call('rechnungWieBisher', props.id) : Promise.resolve(null)), [props.id, d?.analyse, d?.objekt_id, d?.typ]);
 
   useEffect(() => {
     if (d) setF({ ...d, betrag: d.betrag_ct != null ? (d.betrag_ct / 100).toFixed(2).replace('.', ',') : '' });
@@ -110,6 +113,16 @@ function DokumentFormular(props: { id: number; onFertig: () => void; postfach?: 
     }
   }
   const rechnung = RECHNUNGSARTEN.includes(f.typ) || !!d.steller;
+  // Known sender, booked alike at least twice: one click books this one the same way.
+  const wieBisher = props.postfach && !d.buchung_id ? vorschlag : null;
+  const soBuchen = async () => {
+    if (!wieBisher || !(await speichern(undefined, false))) return;
+    try {
+      if (!f.objekt_id) await call('dokumentSpeichern', { id: d.id, objekt_id: wieBisher.objekt_id });
+      await call('belegBuchen', d.id, { kosten_konto_id: wieBisher.kosten_konto_id, geld_konto_id: wieBisher.geld_konto_id });
+      props.onFertig();
+    } catch (e) { fehler(e); }
+  };
   // A copy of an invoice that is filed or booked already: it can only go to the recycle bin (db: duplikatSperre).
   const kopie = d.duplikat && d.status !== 'abgelegt' && (d.duplikat.status === 'abgelegt' || d.duplikat.buchung_id) ? d.duplikat : null;
 
@@ -167,6 +180,12 @@ function DokumentFormular(props: { id: number; onFertig: () => void; postfach?: 
         <label className="breit">IBAN<input value={f.iban ?? ''} onChange={(e) => set('iban', e.target.value)} /></label>
         <label className="breit">Zusammenfassung / Notiz<textarea rows={2} value={f.zusammenfassung ?? f.notiz ?? ''} onChange={(e) => set('zusammenfassung', e.target.value)} /></label>
       </div>
+      {wieBisher && !kopie && (
+        <div className="hinweisbox klein wie-bisher">
+          <span>Wie die letzten {wieBisher.anzahl} Male buchen: <b>{wieBisher.kosten}</b>, bezahlt von <b>{wieBisher.geld}</b>.</span>
+          <button className="primary" onClick={soBuchen}>So buchen und weiter</button>
+        </div>
+      )}
       {rechnung && <>
         <Rechnungssteller w={w} set={setW} offen={!!props.postfach} kontakt={{ id: d.person_id }}
           onKontakt={async () => { if (await speichern(undefined, false)) { try { await call('kontaktAusSteller', d.id); ladeD(); } catch (e) { fehler(e); } } }} />
@@ -197,7 +216,7 @@ function DokumentFormular(props: { id: number; onFertig: () => void; postfach?: 
           <button disabled={!f.objekt_id || !parseCent(f.betrag) || !!kopie} title={kopie ? 'Duplikat – wird nicht doppelt gebucht' : !f.objekt_id ? 'Bitte zuerst ein Objekt wählen' : ''} onClick={async () => { if (await speichern(undefined, false)) setBuchen(true); }}>Buchen…</button>
         )}
         <button className="primary" disabled={!!kopie && props.postfach} title={kopie && props.postfach ? 'Duplikat – wird nicht doppelt abgelegt' : ''}
-          onClick={() => speichern(props.postfach ? 'abgelegt' : undefined)}>{props.postfach ? 'Ablegen' : 'Speichern'}</button>
+          onClick={() => speichern(props.postfach ? 'abgelegt' : undefined)}>{props.postfach ? 'Ablegen und weiter' : 'Speichern'}</button>
       </div>
     </div>
   );
@@ -248,13 +267,23 @@ function Belegbuchung(props: { dok: Row; onFertig: (buchungId: number) => void; 
 
 export function Postfach() {
   const [liste, reload] = useLoad<Row[]>(() => call('dokumentListe', { status: 'postfach' }), []);
-  const [aktiv, setAktiv] = useState<number | null>(null);
   const [auswahl, setAuswahl] = useState<Record<number, boolean>>({});
   useEffect(() => {
-    if (liste && !liste.some((d) => d.id === aktiv)) setAktiv(liste[0]?.id ?? null);
     if (liste) setAuswahl((a) => Object.fromEntries(Object.entries(a).filter(([id]) => liste.some((d) => d.id === Number(id)))));
   }, [liste]);
-  const d = liste?.find((x) => x.id === aktiv);
+  // Invoices of known senders that can be booked like the last times, all at once.
+  const [bekannt] = useLoad<Row[]>(() => call('bekannteRechnungen'), [liste]);
+  const bekannteBuchen = async () => {
+    if (!bekannt?.length) return;
+    const text = bekannt.map((r) => `• ${r.absender ?? r.titel}: ${euro(r.betrag_ct)} → ${r.kosten}, bezahlt von ${r.geld}`).join('\n');
+    if (!await bestaetigen(`${bekannt.length} Rechnung(en) wie bisher buchen?\n\n${text}\n\nMwSt, Arbeitsanteil und Duplikat-Prüfung gelten wie beim einzelnen Buchen.`, { ja: 'Alle buchen' })) return;
+    try {
+      const r = await call<Row>('bekannteBuchen', bekannt.map((x) => x.id));
+      await hinweis(`${r.gebucht} Rechnung(en) gebucht und abgelegt.${r.fehler.length ? `\n\nNicht gebucht:\n${r.fehler.map((f: Row) => `• ${bekannt.find((x) => x.id === f.id)?.titel ?? f.id}: ${f.grund}`).join('\n')}` : ''}`);
+    } catch (e) { fehler(e); }
+    reload();
+    window.dispatchEvent(new Event('hv-daten'));
+  };
   const gewaehlt = (liste ?? []).filter((x) => auswahl[x.id]);
   const [korb, ladeKorb] = useLoad<number>(() => call('papierkorbAnzahl'), [liste]);
   const [korbOffen, setKorbOffen] = useState(false);
@@ -265,6 +294,7 @@ export function Postfach() {
         <h1>Postfach</h1>
         <span className="hinweis">{liste?.length ?? 0} Dokumente warten</span>
         <span className="spacer" />
+        {!!bekannt?.length && <button onClick={bekannteBuchen} title="Rechnungen von Absendern, die schon mindestens zweimal gleich gebucht wurden">{bekannt.length} bekannte Rechnung{bekannt.length === 1 ? '' : 'en'} buchen</button>}
         <button className="link" onClick={() => setKorbOffen(true)} title="Gelöschte Dokumente, 30 Tage wiederherstellbar">Papierkorb{korb ? ` (${korb})` : ''}</button>
         <BelegFoto onFertig={reload} />
         <button className="primary" onClick={() => window.hv.dateienImportieren({}).then(reload)}>Dateien hinzufügen…</button>
@@ -282,32 +312,25 @@ export function Postfach() {
       ) : (
         <>
           {gewaehlt.length > 0 && <Stapel dokumente={gewaehlt} onFertig={() => { setAuswahl({}); reload(); }} onLoeschen={() => loeschen(gewaehlt)} />}
-          <div className="postfach-raster">
-            <ul className="dokliste">
-              <li className="kopf">
-                <input type="checkbox" checked={!!liste?.length && gewaehlt.length === liste.length}
-                  onChange={(e) => setAuswahl(e.target.checked ? Object.fromEntries((liste ?? []).map((x) => [x.id, true])) : {})} />
-                <span className="klein"><b>Alle auswählen</b></span>
-              </li>
-              {liste?.map((x) => (
-                <li key={x.id} className={x.id === aktiv ? 'aktiv' : ''} onClick={() => setAktiv(x.id)} draggable
-                  onDragStart={(e) => { e.dataTransfer.setData('application/x-hv-dokument', String(x.id)); e.dataTransfer.effectAllowed = 'link'; }}
-                  title="Zum Zuordnen auf eine Person, Einheit oder Buchung ziehen">
-                  <input type="checkbox" checked={!!auswahl[x.id]} onClick={(e) => e.stopPropagation()} onChange={(e) => setAuswahl({ ...auswahl, [x.id]: e.target.checked })} />
-                  <div className="inhalt">
-                    <b>{x.titel}</b>
-                    <span className="klein">{[x.typ, x.absender, x.betrag_ct != null ? euro(x.betrag_ct) : null, x.objekt].filter(Boolean).join(' · ') || x.name}</span>
-                    <span className="klein hinweis">{analyseText(x.analyse) || datum(x.datum ?? x.erfasst)}</span>
-                    {x.duplikat_von && <span className="klein"><span className="tag fehlertext">Duplikat</span>{' '}
-                      <button className="link klein" onClick={(e) => { e.stopPropagation(); loeschen([x]); }}>löschen</button></span>}
-                  </div>
-                  <button className="link loeschen" title="In den Papierkorb" aria-label="In den Papierkorb" onClick={(e) => { e.stopPropagation(); loeschen([x]); }}>🗑</button>
-                </li>
-              ))}
-            </ul>
-            {d && <Vorschau key={d.id} datei={d.datei} id={d.id} />}
-            {d && <DokumentFormular key={d.id + d.analyse} id={d.id} postfach onFertig={reload} />}
-          </div>
+          <Arbeitskorb eintraege={liste} id={(x) => x.id} className="postfach-korb"
+            kopf={<label className="check korb-alle"><input type="checkbox" checked={!!liste?.length && gewaehlt.length === liste.length}
+              onChange={(e) => setAuswahl(e.target.checked ? Object.fromEntries((liste ?? []).map((x) => [x.id, true])) : {})} /> <b className="klein">Alle auswählen</b></label>}
+            liProps={(x) => ({ draggable: true, title: 'Zum Zuordnen auf eine Person, Einheit oder Buchung ziehen',
+              onDragStart: (e) => { e.dataTransfer.setData('application/x-hv-dokument', String(x.id)); e.dataTransfer.effectAllowed = 'link'; } })}
+            vor={(x) => <input type="checkbox" className="korb-haken" aria-label={`${x.titel} auswählen`} checked={!!auswahl[x.id]} onChange={(e) => setAuswahl({ ...auswahl, [x.id]: e.target.checked })} />}
+            nach={(x) => <button className="link loeschen" title="In den Papierkorb" aria-label="In den Papierkorb" onClick={() => loeschen([x])}><SYMBOL.papierkorb size={15} /></button>}
+            zeile={(x) => <>
+              <b>{x.titel}</b>
+              <span className="klein">{[x.typ, x.absender, x.betrag_ct != null ? euro(x.betrag_ct) : null, x.objekt].filter(Boolean).join(' · ') || x.name}</span>
+              <span className="klein hinweis">{analyseText(x.analyse) || datum(x.datum ?? x.erfasst)}</span>
+              {x.duplikat_von && <span className="tag fehlertext">Duplikat</span>}
+            </>}
+            detail={(d) => (
+              <div className="postfach-detail">
+                <Vorschau key={d.id} datei={d.datei} id={d.id} />
+                <DokumentFormular key={d.id + d.analyse} id={d.id} postfach onFertig={reload} />
+              </div>
+            )} />
         </>
       )}
       {korbOffen && <Papierkorb onClose={() => { setKorbOffen(false); reload(); ladeKorb(); }} />}
@@ -446,17 +469,17 @@ export function DokumentDialog(props: { id: number; datei?: string; onClose: () 
   // Links only know the id; the stored file name is looked up then.
   const [d] = useLoad<Row>(() => (props.datei ? Promise.resolve({ datei: props.datei }) : call('dokument', props.id)), [props.id, props.datei]);
   return (
-    <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && props.onClose()}>
+    <Fenster onClose={props.onClose}>
       <div className="dialog sehrbreit">
         <div className="postfach-raster zwei">
           {d?.datei ? <Vorschau datei={d.datei} id={props.id} /> : <div className="vorschau leer">Dokument nicht gefunden.</div>}
           <div>
-            <div className="toolbar"><span className="spacer" /><button onClick={props.onClose}>Schließen</button></div>
+            <div className="toolbar"><FensterTitel className="sr-only">{d?.titel ?? 'Dokument'}</FensterTitel><span className="spacer" /><button onClick={props.onClose}>Schließen</button></div>
             <DokumentFormular id={props.id} onFertig={props.onClose} />
           </div>
         </div>
       </div>
-    </div>
+    </Fenster>
   );
 }
 

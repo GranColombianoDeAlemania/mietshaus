@@ -29,6 +29,7 @@ const TYPEN = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '
 const SICHERHEIT = { 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'SAMEORIGIN', 'Cross-Origin-Opener-Policy': 'same-origin' };
 const MAX_UPLOAD = 300 * 1024 * 1024;
 // Functions answered by the server itself, not by the database API.
+const MEINE = new Set(['mitteilungen', 'mitteilungenUngelesen', 'mitteilungGelesen', 'alleMitteilungenGelesen', 'aufgabenListe', 'vorgangStatus', 'vorgangKommentieren']);
 const NUR_SERVER = new Set(['benutzerListe', 'benutzerAnlegen', 'benutzerAendern', 'claudeToken', 'meineAufgaben', 'passkeyListe', 'passkeyLoeschen', 'personEinladen', 'einladungErneuern', 'kalenderAbo']);
 
 class Fehler extends Error { constructor(status, text) { super(text); this.status = status; } }
@@ -55,7 +56,7 @@ async function starten(o) {
   const dist = o.dist ?? path.join(__dirname, '..', 'dist');
   const dokumentOrdner = () => path.join(daten, 'dokumente');
   const vorschauOrdner = () => path.join(dokumentOrdner(), 'vorschau');
-  const SYSTEM = { quelle: 'app', geraet: o.geraet?.id ?? null, benutzer: null, ueberschreiben: null };
+  const SYSTEM = { quelle: 'app', geraet: o.geraet?.id ?? null, benutzer: null, ueberschreiben: null, rueckfrage: null };
 
   let raw = null, roh = null;
   // Tests hand over a prepared database (o.verbindung = { raw, api }); restoring a backup then is not possible.
@@ -104,14 +105,18 @@ async function starten(o) {
     onFertig: (id) => { senden('dokumentAnalysiert', id); pulsSenden(); } });
   ana.warteschlange();
   const push = pushModul({ daten, raw: () => raw, senden });
-  const benachrichtigen = (n) => push.benachrichtigen(n).catch((e) => console.error('Benachrichtigung', e));
+  // Every notification also goes to the bell (db: mitteilungAnlegen), then out as push / desktop notification.
+  const benachrichtigen = (n) => {
+    try { dbSystem.mitteilungAnlegen(n); } catch (e) { console.error('Glocke', e); }
+    return push.benachrichtigen(n).catch((e) => console.error('Benachrichtigung', e));
+  };
   const ein = eingang({
     db: dbSystem,
     importieren: (pfade, opt) => {
       const r = ana.importieren(pfade, opt);
       senden('aktualisiert');
       const neu = r.filter((x) => !x.doppelt).length;
-      if (neu) benachrichtigen({ art: 'postfach', titel: 'Neue Dokumente im Postfach', text: `${neu} ${neu === 1 ? 'neues Dokument' : 'neue Dokumente'} von ${opt?.quelle === 'email' ? 'E-Mail' : 'Eingangsordner'}.` });
+      if (neu) benachrichtigen({ art: 'postfach', ziel: { seite: 'postfach' }, titel: 'Neue Dokumente im Postfach', text: `${neu} ${neu === 1 ? 'neues Dokument' : 'neue Dokumente'} von ${opt?.quelle === 'email' ? 'E-Mail' : 'Eingangsordner'}.` });
       return r;
     },
     melden: (text) => senden('meldung', text),
@@ -132,6 +137,11 @@ async function starten(o) {
     }
   };
   // Documents in the recycle bin for more than 30 days go for good.
+  // Tasks due tomorrow or overdue: a reminder to the person in charge, once a day each (from 7 o'clock).
+  const erinnern = () => {
+    if (new Date().getHours() < 7) return;
+    try { for (const n of dbSystem.faelligeErinnerungen()) benachrichtigen(n); } catch (e) { console.error('Erinnerungen', e); }
+  };
   const papierkorbLeeren = () => { try { const d = dbSystem.papierkorbLeeren(); dateienEntfernen(d); if (d.length) senden('aktualisiert'); } catch (e) { console.error('Papierkorb', e); } };
   const autoSicherung = () => {
     try {
@@ -141,7 +151,7 @@ async function starten(o) {
       console.error('Automatische Sicherung', e);
       dbSystem.setzeEinstellungen({ letzter_sicherungsfehler: JSON.stringify({ zeit: new Date().toISOString(), fehler: String(e?.message ?? e) }) });
       senden('meldung', `Automatische Sicherung fehlgeschlagen: ${e?.message ?? e}`);
-      benachrichtigen({ art: 'sicherung', titel: 'Sicherung fehlgeschlagen', text: String(e?.message ?? e).slice(0, 200) });
+      benachrichtigen({ art: 'sicherung', ziel: { seite: 'status' }, titel: 'Sicherung fehlgeschlagen', text: String(e?.message ?? e).slice(0, 200) });
       return;
     }
     // Once a month the newest backup is restored on trial (into a temporary copy).
@@ -155,7 +165,7 @@ async function starten(o) {
     dbSystem.setzeEinstellungen({ sicherungstest: JSON.stringify(r) });
     if (!r.ok) {
       senden('meldung', `Sicherungstest fehlgeschlagen: ${r.fehler}`);
-      benachrichtigen({ art: 'sicherung', titel: 'Sicherungstest fehlgeschlagen', text: String(r.fehler).slice(0, 200) });
+      benachrichtigen({ art: 'sicherung', ziel: { seite: 'status' }, titel: 'Sicherungstest fehlgeschlagen', text: String(r.fehler).slice(0, 200) });
     }
     return r;
   };
@@ -211,13 +221,13 @@ async function starten(o) {
       dbSystem.setzeEinstellungen({ letzte_version: VERSION });
     }
     dbSystem.setzeEinstellungen({ server_warnungen: JSON.stringify(gesendet) });
-    for (const w of warnungen) await benachrichtigen({ art: 'server', titel: w.titel, text: w.text });
+    for (const w of warnungen) await benachrichtigen({ art: 'server', ziel: { seite: 'status' }, titel: w.titel, text: w.text });
     return warnungen;
   };
   automatik();
   papierkorbLeeren();
-  const t1 = setTimeout(() => { autoSicherung(); updatePruefen(); morgenUebersicht(); serverWarnungen().catch((e) => console.error('Serverwarnungen', e)); }, 60_000);
-  const t2 = setInterval(() => { automatik(); papierkorbLeeren(); autoSicherung(); morgenUebersicht(); serverWarnungen().catch((e) => console.error('Serverwarnungen', e)); }, 3600_000);
+  const t1 = setTimeout(() => { autoSicherung(); updatePruefen(); morgenUebersicht(); erinnern(); serverWarnungen().catch((e) => console.error('Serverwarnungen', e)); }, 60_000);
+  const t2 = setInterval(() => { automatik(); papierkorbLeeren(); erinnern(); autoSicherung(); morgenUebersicht(); serverWarnungen().catch((e) => console.error('Serverwarnungen', e)); }, 3600_000);
   const t3 = setInterval(updatePruefen, 24 * 3600_000);
 
   // ---------- helpers ----------
@@ -253,7 +263,9 @@ async function starten(o) {
     return null;
   }
   const kontext = (req, w, quelle = 'app') => kontextSetzen(raw, { quelle: w.claude ? 'claude' : quelle, geraet: String(req.headers['x-geraet'] ?? '').slice(0, 80) || o.geraet?.id || null,
-    benutzer: w.benutzer?.id ?? null, ueberschreiben: req.headers['x-ueberschreiben'] === '1' ? '1' : null });
+    benutzer: w.benutzer?.id ?? null, ueberschreiben: req.headers['x-ueberschreiben'] === '1' ? '1' : null,
+    // Plausibility questions for the app's own requests, unless just confirmed.
+    rueckfrage: req.headers['x-bestaetigt'] === '1' ? null : '1' });
 
   function statisch(req, res, pfad) {
     let datei = path.join(dist, path.normalize(decodeURIComponent(pfad)).replace(/^(\.\.[/\\])+/, ''));
@@ -307,6 +319,7 @@ async function starten(o) {
   // Network errors (e.g. mail server not reachable) come as AggregateError without a message of their own.
   const alsFehler = (e) => (e instanceof Fehler ? e
     : e?.code === 'KONFLIKT' ? Object.assign(new Fehler(409, e.message), { konflikt: e.konflikt })
+      : e?.code === 'RUECKFRAGE' ? Object.assign(new Fehler(409, e.message), { bestaetigen: e.bestaetigen })
       : new Fehler(400, e?.message || e?.errors?.[0]?.message || e?.code || String(e)));
   const fachlich = (fn) => {
     try {
@@ -398,7 +411,7 @@ async function starten(o) {
     if (p === '/mcp') {
       if (!o.mcp) throw new Fehler(404, 'Claude ist auf diesem Server nicht eingerichtet.');
       // Claude's tools run asynchronously: every access to the database marks the change as Claude's, for this user.
-      const k = { quelle: 'claude', geraet: o.geraet?.id ?? null, benutzer: w.benutzer?.id ?? null, ueberschreiben: null };
+      const k = { quelle: 'claude', geraet: o.geraet?.id ?? null, benutzer: w.benutzer?.id ?? null, ueberschreiben: null, rueckfrage: null };
       const dbClaude = new Proxy({}, { get: (_t, n) => { kontextSetzen(raw, k); return roh[n]; } });
       return o.mcp(req, res, dbClaude, { dokumente: dokumentOrdner(), aktualisiert: () => senden('aktualisiert') });
     }
@@ -419,7 +432,10 @@ async function starten(o) {
     if (post && p === '/api/call') {
       const { fn, args: argumente = [] } = await jsonLesen(req);
       // The calendar marks the cases of the signed-in user (filter "nur meine").
-      const args = fn === 'kalender' ? [argumente[0], argumente[1], w.benutzer?.id ?? null] : argumente;
+      const args = fn === 'kalender' ? [argumente[0], argumente[1], w.benutzer?.id ?? null]
+        // The bell shows only the signed-in user's notifications, and creating them is the server's business.
+        : MEINE.has(fn) ? [w.benutzer?.id ?? null, ...argumente] : argumente;
+      if (fn === 'mitteilungAnlegen') throw new Fehler(403, 'Nicht erlaubt.');
       if (NUR_SERVER.has(fn)) return json(res, 200, { wert: fachlich(() => serverFunktion(fn, args, w)) });
       if (typeof fn !== 'string' || typeof roh[fn] !== 'function') throw new Fehler(400, `Unbekannte Funktion: ${fn}`);
       // Setting the context writes to temp.kontext: counted before, every read would look like a change (and
@@ -430,12 +446,18 @@ async function starten(o) {
       const zuweisung = fn === 'save' && args[0] === 'vorgaenge' && args[1]?.zustaendig && Number(args[1].zustaendig) !== w.benutzer?.id
         ? { neu: Number(args[1].zustaendig), alt: args[1].id ? raw.prepare('SELECT zustaendig FROM vorgaenge WHERE id = ?').get(args[1].id)?.zustaendig : null } : null;
       let wert = await fachlich(() => roh[fn](...args));
+      // A comment notifies the person in charge.
+      if (fn === 'vorgangKommentieren' && wert?.benachrichtigen) { benachrichtigen(wert.benachrichtigen); wert = true; }
       // Removed for good: the records are gone, their files go too.
       if (fn === 'dokumentEndgueltig' || fn === 'papierkorbLeeren') { dateienEntfernen(wert); wert = wert.length; }
       if (zuweisung && zuweisung.neu !== zuweisung.alt) {
-        const v = raw.prepare('SELECT v.titel, v.faellig, o.bezeichnung AS objekt FROM vorgaenge v LEFT JOIN objekte o ON o.id = v.objekt_id WHERE v.id = ?').get(args[1].id ?? wert);
-        if (v) benachrichtigen({ art: 'aufgaben', benutzer: zuweisung.neu, titel: `${w.benutzer?.name ?? 'Jemand'} hat dir einen Vorgang zugewiesen`,
+        const v = raw.prepare('SELECT v.titel, v.faellig, v.objekt_id, o.bezeichnung AS objekt FROM vorgaenge v LEFT JOIN objekte o ON o.id = v.objekt_id WHERE v.id = ?').get(args[1].id ?? wert);
+        if (v) benachrichtigen({ art: 'aufgaben', benutzer: zuweisung.neu, ziel: { vorgang: args[1].id ?? wert, objektId: v.objekt_id ?? null }, titel: `${w.benutzer?.name ?? 'Jemand'} hat dir einen Vorgang zugewiesen`,
           text: `${v.titel}${v.objekt ? ` · ${v.objekt}` : ''}${v.faellig ? ` · fällig ${v.faellig.split('-').reverse().join('.')}` : ''}` });
+        // The history of the task says who handed it to whom.
+        const an = raw.prepare('SELECT name FROM benutzer WHERE id = ?').get(zuweisung.neu)?.name;
+        if (v && an) raw.prepare(`INSERT INTO vorgangseintraege (vorgang_id, datum, art, text, von) VALUES (?, ?, 'status', ?, ?)`)
+          .run(args[1].id ?? wert, ortszeit.heute(), `Zugewiesen an ${an}`, w.benutzer?.name ?? null);
       }
       // Stored mail passwords (encrypted) stay on the server; the page only learns that one is set.
       if (fn === 'einstellungen') wert = Object.fromEntries(Object.entries(wert).map(([k, v]) => [k, /_passwort_(server|enc|klar)$/.test(k) && v ? 'gesetzt' : v]));
@@ -503,11 +525,14 @@ async function starten(o) {
     if (p.startsWith('/dateien/dokument/')) return datei(res, dokumentOrdner(), p.slice('/dateien/dokument/'.length), u.searchParams.get('name'));
     if (p.startsWith('/dateien/vorschau/')) return datei(res, vorschauOrdner(), p.slice('/dateien/vorschau/'.length));
     if (post && p === '/api/hochladen') {
-      const opt = JSON.parse(u.searchParams.get('opt') ?? '{}');
+      const { standort, ...opt } = JSON.parse(u.searchParams.get('opt') ?? '{}');
       const t = temporaer(u.searchParams.get('name'), await lesen(req));
       try {
         kontext(req, w);
-        const r = ana.importieren([t.p], { ...opt, quelle: opt.quelle ?? 'upload' });
+        // A photo from the phone's camera button: the house nearby (if its location is saved), else the inbox.
+        const o = !opt.objekt_id && standort && Number.isFinite(standort.lat) && Number.isFinite(standort.lon) ? roh.objektBeiStandort(standort.lat, standort.lon) : null;
+        const r = ana.importieren([t.p], { ...opt, ...(o ? { objekt_id: o.id } : {}), quelle: opt.quelle ?? 'upload' });
+        if (o) r.forEach((x) => { x.objekt = o.bezeichnung; });
         senden('aktualisiert', null, req.headers['x-client'] ?? null);
         pulsSenden();
         return json(res, 200, r);
@@ -703,7 +728,7 @@ async function starten(o) {
     bearbeiten(req, res).catch((e) => {
       const status = e instanceof Fehler ? e.status : 500;
       if (status === 500) console.error(req.method, req.url, e);
-      if (!res.headersSent) json(res, status, { fehler: String(e?.message ?? e), ...(e?.konflikt ? { konflikt: e.konflikt } : {}) });
+      if (!res.headersSent) json(res, status, { fehler: String(e?.message ?? e), ...(e?.konflikt ? { konflikt: e.konflikt } : {}), ...(e?.bestaetigen ? { bestaetigen: e.bestaetigen } : {}) });
       else res.end();
     });
   });

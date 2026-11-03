@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
+import { Fenster, FensterTitel } from './ui';
 
 // Question dialog that can be awaited from anywhere: `await frage({...})` resolves with the id of the chosen option,
 // or null when the dialog is closed. <FrageHost /> in the app shell renders it.
@@ -16,25 +17,19 @@ export function FrageHost() {
     zeigen = setF;
     return () => { zeigen = null; };
   }, []);
-  useEffect(() => {
-    if (!f) return;
-    const taste = (e: KeyboardEvent) => { if (e.key === 'Escape') { setF(null); f.fertig(null); } };
-    document.addEventListener('keydown', taste);
-    return () => document.removeEventListener('keydown', taste);
-  }, [f]);
   if (!f) return null;
   const ende = (id: string | null) => { setF(null); f.fertig(id); };
   return (
-    <div className="overlay frage" onMouseDown={(e) => e.target === e.currentTarget && ende(null)}>
+    <Fenster frage onClose={() => ende(null)}>
       <div className="dialog">
-        <h2>{f.titel}</h2>
+        <FensterTitel>{f.titel}</FensterTitel>
         {f.text}
         <div className="buttons">
           <span className="spacer" />
           {f.optionen.map((o) => <button key={o.id} className={o.primary ? 'primary' : ''} onClick={() => ende(o.id)}>{o.label}</button>)}
         </div>
       </div>
-    </div>
+    </Fenster>
   );
 }
 

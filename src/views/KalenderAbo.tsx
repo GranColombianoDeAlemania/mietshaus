@@ -1,4 +1,5 @@
 // Calendar subscription for the iPhone or Mac calendar: a personal secret link (server only). A new link stops the old one.
+import { Fenster, FensterTitel } from '../ui';
 import { useState } from 'react';
 import { call, fehler } from '../api';
 import { bestaetigen } from '../frage';
@@ -14,9 +15,9 @@ export function KalenderAbo(props: { onClose: () => void }) {
     } catch (e) { fehler(e); }
   };
   return (
-    <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && props.onClose()}>
+    <Fenster onClose={props.onClose}>
       <div className="dialog">
-        <h2>Kalender-Abo</h2>
+        <FensterTitel>Kalender-Abo</FensterTitel>
         <p>Termine, Fristen, deine Vorgänge und Projekttermine erscheinen im Kalender von iPhone, iPad oder Mac und werden etwa stündlich aktualisiert.</p>
         <ul className="klein">
           <li>Das Abo aktualisiert sich nur, wenn <b>Tailscale</b> auf dem Gerät verbunden ist.</li>
@@ -40,6 +41,6 @@ export function KalenderAbo(props: { onClose: () => void }) {
           <button onClick={props.onClose}>Schließen</button>
         </div>
       </div>
-    </div>
+    </Fenster>
   );
 }

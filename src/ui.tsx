@@ -1,5 +1,6 @@
 // Small shared UI pieces.
-import { Component, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Component, useEffect, useRef, useState, type ReactElement, type ReactNode } from 'react';
+import * as RD from '@radix-ui/react-dialog';
 import { KLASSEN, kontoLabel, type Row } from './api';
 
 // Folds case and umlauts, so "uberw" finds "Überweisung".
@@ -96,11 +97,27 @@ export function Zeitraum(props: { von: string; bis: string; onChange: (von: stri
   );
 }
 
+// Modal window (Radix): focus stays inside, Escape or a click beside it closes it (unless schliessbar is false), and
+// windows opened from a window stack on top. The child is the window itself (div.dialog or form.dialog); its heading
+// is a FensterTitel so screen readers announce it.
+export function Fenster(props: { onClose: () => void; children: ReactElement; schliessbar?: boolean; frage?: boolean }) {
+  return (
+    <RD.Root open onOpenChange={(o) => { if (!o && props.schliessbar !== false) props.onClose(); }}>
+      <RD.Portal>
+        <RD.Overlay className={props.frage ? 'overlay frage' : 'overlay'}>
+          <RD.Content asChild aria-describedby={undefined}>{props.children}</RD.Content>
+        </RD.Overlay>
+      </RD.Portal>
+    </RD.Root>
+  );
+}
+export const FensterTitel = RD.Title;
+
 export function Dialog(props: { titel: string; children: ReactNode; onClose: () => void; breit?: boolean; aktionen?: ReactNode }) {
   return (
-    <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && props.onClose()}>
+    <Fenster onClose={props.onClose}>
       <div className={`dialog${props.breit ? ' breit' : ''}`}>
-        <h2>{props.titel}</h2>
+        <FensterTitel>{props.titel}</FensterTitel>
         {props.children}
         <div className="buttons">
           <span className="spacer" />
@@ -108,7 +125,7 @@ export function Dialog(props: { titel: string; children: ReactNode; onClose: () 
           <button onClick={props.onClose}>Schließen</button>
         </div>
       </div>
-    </div>
+    </Fenster>
   );
 }
 

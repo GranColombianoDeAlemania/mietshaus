@@ -202,6 +202,32 @@ function client(url) {
     await anna.call('remove', 'objekte', oid);
   }
 
+  // ---------- 4a'''. 0.17: plausibility question (409 → confirmed), the bell, photos filed at once ----------
+  {
+    const oid = await anna.call('save', 'objekte', { bezeichnung: 'Prüfhaus', art: 'miete', breite: 52.52, laenge: 13.405 });
+    const pid = await anna.call('save', 'personen', { nachname: 'Konto', iban: 'DE02120300000000202051' });
+    const r = await anna.anfrage('/api/call', { methode: 'POST', json: { fn: 'save', args: ['personen', { id: pid, iban: 'DE89370400440532013000' }] } });
+    const j = await r.json();
+    pruefe('IBAN-Änderung: 409 mit Rückfrage', r.status === 409 && /Bankverbindung/.test(j.bestaetigen ?? '') && (await anna.call('get', 'personen', pid)).iban === 'DE02120300000000202051', JSON.stringify(j));
+    const r2 = await anna.anfrage('/api/call', { methode: 'POST', json: { fn: 'save', args: ['personen', { id: pid, iban: 'DE89370400440532013000' }] }, kopf: { 'X-Bestaetigt': '1' } });
+    pruefe('Bestätigt: gespeichert', r2.ok && (await anna.call('get', 'personen', pid)).iban === 'DE89370400440532013000');
+    const vorher = await anna.call('mitteilungenUngelesen');
+    pruefe('Glocke: Mitteilungen anlegen nur der Server', await anna.call('mitteilungAnlegen', { art: 'server', titel: 'x' }).then(() => false, (e) => e.status === 403));
+    pruefe('Glocke: eigener Zähler', typeof vorher === 'number' && Array.isArray(await anna.call('mitteilungen')));
+    const bild = fs.readFileSync(path.join(__dirname, 'testdaten', 'zaehler.png'));
+    const f1 = await (await anna.anfrage(`/api/hochladen?name=keller.png&opt=${encodeURIComponent(JSON.stringify({ objekt_id: oid }))}`, { methode: 'POST', roh: bild })).json();
+    const d1 = await anna.call('dokument', f1[0].id);
+    pruefe('Foto beim Objekt: sofort abgelegt', d1.status === 'abgelegt' && d1.typ === 'Foto' && d1.objekt_id === oid, JSON.stringify(d1).slice(0, 160));
+    const f2 = await (await anna.anfrage(`/api/hochladen?name=hof.png&opt=${encodeURIComponent(JSON.stringify({ standort: { lat: 52.5201, lon: 13.4049 } }))}`, { methode: 'POST', roh: Buffer.concat([bild, Buffer.from('2')]) })).json();
+    pruefe('Foto mit Standort: beim nahen Objekt abgelegt', f2[0].objekt === 'Prüfhaus' && (await anna.call('dokument', f2[0].id)).status === 'abgelegt', JSON.stringify(f2));
+    const f3 = await (await anna.anfrage(`/api/hochladen?name=weit.png&opt=${encodeURIComponent(JSON.stringify({ standort: { lat: 48.1, lon: 11.5 } }))}`, { methode: 'POST', roh: Buffer.concat([bild, Buffer.from('3')]) })).json();
+    pruefe('Foto weit weg: Postfach', !f3[0].objekt && (await anna.call('dokument', f3[0].id)).status === 'postfach');
+    for (const f of [f1, f2, f3]) await anna.anfrage('/api/dokument-loeschen', { methode: 'POST', json: { id: f[0].id } });
+    await anna.call('dokumentEndgueltig', [f1[0].id, f2[0].id, f3[0].id]);
+    await anna.call('remove', 'objekte', oid);
+    await anna.call('remove', 'personen', pid);
+  }
+
   // ---------- 4b. moving files of a Mac ----------
   const name = '0123abcd-0000-4000-8000-000000000001.pdf';
   pruefe('Dokumentdatei übertragen', (await (await anna.anfrage(`/api/dokument-datei?name=${name}`, { methode: 'POST', roh: Buffer.from('%PDF-1') })).json()).gespeichert === true);

@@ -3,6 +3,7 @@
 import { anfrage } from './bruecke';
 
 export const ARTEN: [string, string][] = [['postfach', 'Neue Dokumente im Postfach'], ['aufgaben', 'Mir zugewiesene Vorgänge'],
+  ['faellig', 'Meine Aufgaben morgen fällig oder überfällig'], ['kommentar', 'Kommentare an meinen Aufgaben'],
   ['morgen', 'Morgenübersicht (ab 7 Uhr)'], ['sicherung', 'Probleme mit der Sicherung'], ['server', 'Server: wenig Speicher, fehlende Sicherung, neue Version']];
 
 const lesen = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };

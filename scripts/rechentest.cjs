@@ -1,6 +1,6 @@
 // Calculation test: builds a sample house with two years of data and recomputes every figure independently, to the cent.
 // Run: ELECTRON_RUN_AS_NODE=1 npx electron scripts/rechentest.cjs
-const { open, api } = require('../electron/db.cjs');
+const { open, api, kontextSetzen } = require('../electron/db.cjs');
 const kalender = require('../electron/kalender.cjs');
 
 let ok = 0, falsch = 0;
@@ -1277,6 +1277,96 @@ Stadtsparkasse München | IBAN DE02 7015 0000 0000 1234 56 | BIC SSKMDEMMXXX`;
   gleich('Endgültig löschen nur aus dem Papierkorb', t.dokumentEndgueltig([k2]), []);
   t.dokumentLoeschen(k2);
   gleich('Endgültig löschen aus dem Papierkorb', [t.dokumentEndgueltig([k2]), t.papierkorbAnzahl()], [[`beleg-${nr}.pdf`], 0]);
+}
+
+// ---------- 0.17: bell, tasks, recurring invoices, plausibility questions, photos ----------
+{
+  const raw = open(':memory:');
+  const t = api(raw);
+  t.setzeEinstellungen({ bundesland: 'BE', auto_soll: '0' });
+  // Bell: without users once, with users once each; morning overviews stay push-only.
+  gleich('Glocke ohne Benutzer: ein Eintrag', [t.mitteilungAnlegen({ art: 'postfach', titel: 'Neue Dokumente', ziel: { seite: 'postfach' } }), t.mitteilungenUngelesen(null)], [1, 1]);
+  const anna = Number(raw.prepare(`INSERT INTO benutzer (login, name, passwort_hash) VALUES ('anna', 'Anna Meier', '!')`).run().lastInsertRowid);
+  const ben = Number(raw.prepare(`INSERT INTO benutzer (login, name, passwort_hash) VALUES ('ben', 'Ben Kurz', '!')`).run().lastInsertRowid);
+  gleich('Glocke an alle: je Benutzer', [t.mitteilungAnlegen({ art: 'server', titel: 'Wenig Speicher' }), t.mitteilungenUngelesen(anna), t.mitteilungenUngelesen(ben)], [2, 1, 1]);
+  gleich('Morgenübersicht nur als Push', t.mitteilungAnlegen({ art: 'morgen', titel: 'Guten Morgen', benutzer: anna }), 0);
+  t.mitteilungAnlegen({ art: 'aufgaben', benutzer: anna, titel: 'Zugewiesen', ziel: { vorgang: 1 } });
+  const m = t.mitteilungen(anna);
+  gleich('Glocke: neueste zuerst, Ziel als Objekt', [m.length, m[0].titel, m[0].ziel], [2, 'Zugewiesen', { vorgang: 1 }]);
+  t.mitteilungGelesen(anna, m[0].id);
+  gleich('Gelesen markiert, fremde nicht', [t.mitteilungenUngelesen(anna), (t.mitteilungGelesen(ben, m[1].id), t.mitteilungenUngelesen(anna))], [1, 1]);
+  gleich('Alle gelesen', [t.alleMitteilungenGelesen(anna), t.mitteilungenUngelesen(anna), t.mitteilungenUngelesen(ben)], [1, 0, 1]);
+
+  // Tasks.
+  const ob = t.neuesObjekt({ bezeichnung: 'Aufgabenhaus', art: 'miete', strasse: 'Weg 1', plz: '10115', ort: 'Berlin' });
+  const v1 = t.save('vorgaenge', { objekt_id: ob, titel: 'Dachrinne reinigen', status: 'offen', prioritaet: 2, zustaendig: anna, faellig: '2026-11-04' });
+  const v2 = t.save('vorgaenge', { objekt_id: ob, titel: 'Heizung prüfen', status: 'offen', prioritaet: 1, zustaendig: ben, faellig: '2026-10-30' });
+  gleich('Board: beide offen, Hohe Priorität zuerst', t.aufgabenListe(anna, {}).map((v) => v.titel), ['Heizung prüfen', 'Dachrinne reinigen']);
+  gleich('Board: nur meine', t.aufgabenListe(anna, { nur_meine: true }).map((v) => v.titel), ['Dachrinne reinigen']);
+  t.vorgangStatus(anna, v1, 'in_arbeit');
+  gleich('Statuswechsel im Verlauf mit Name', t.liste('vorgangseintraege', { vorgang_id: v1 }).map((e) => [e.art, e.text, e.von]), [['status', 'Offen → In Arbeit', 'Anna Meier']]);
+  gleich('Gleicher Status: kein Eintrag', t.vorgangStatus(anna, v1, 'in_arbeit'), false);
+  gleich('Kommentar von Ben an Annas Aufgabe: Anna wird benachrichtigt', t.vorgangKommentieren(ben, v1, 'Leiter steht im Keller').benachrichtigen?.benutzer, anna);
+  gleich('Eigener Kommentar: keine Benachrichtigung', t.vorgangKommentieren(anna, v1, 'Danke'), {});
+  gleich('Kommentare zählen, Status nicht', t.aufgabenListe(anna, {}).find((v) => v.id === v1).eintraege, 2);
+  const e1 = t.faelligeErinnerungen('2026-11-03');
+  gleich('Erinnerung: morgen fällig und überfällig', e1.map((n) => [n.benutzer, n.titel]).sort(), [[anna, 'Morgen fällig: Dachrinne reinigen'], [ben, 'Überfällig: Heizung prüfen']].sort());
+  gleich('Erinnerung nur einmal am Tag', [t.faelligeErinnerungen('2026-11-03').length, t.faelligeErinnerungen('2026-11-04').length], [0, 2]);
+  t.vorgangStatus(ben, v2, 'erledigt');
+  gleich('Erledigt: keine Erinnerung mehr, bleibt 14 Tage auf dem Board', [t.faelligeErinnerungen('2026-11-05').map((n) => n.benutzer), t.aufgabenListe(null, {}).some((v) => v.id === v2)], [[anna], true]);
+
+  // Recurring invoices: the same sender booked twice alike → proposal, one click or all at once.
+  const kt = t.konten(ob);
+  const bank = kt.find((k) => k.nr === 1200).id;
+  const muell = kt.find((k) => k.bezeichnung === 'Müllabfuhr')?.id ?? kt.find((k) => k.klasse === 'kosten').id;
+  let nr = 0;
+  const rechnung = (betrag, x = {}) => {
+    const { id } = t.dokumentNeu({ titel: `Abfall ${++nr}`, datei: `abfall-${nr}.pdf`, name: `abfall-${nr}.pdf`, groesse: 1, sha256: `abfall-${nr}` });
+    t.analyseSpeichern(id, `BSR Berliner Stadtreinigung AöR\nRechnung Nr. A-${nr}\nRechnungsdatum: 0${nr}.10.2026\nGesamtbetrag ${betrag} €`, 1, false);
+    t.dokumentSpeichern({ id, objekt_id: ob, typ: 'Rechnung', ...x });
+    return id;
+  };
+  const r1 = rechnung('120,00');
+  gleich('Erste Rechnung: noch kein Vorschlag', t.rechnungWieBisher(r1), null);
+  t.belegBuchen(r1, { kosten_konto_id: muell, geld_konto_id: bank, datum: '2026-10-05' });
+  const r2 = rechnung('125,00');
+  t.belegBuchen(r2, { kosten_konto_id: muell, geld_konto_id: bank, datum: '2026-10-06' });
+  const r3 = rechnung('118,00');
+  const vor = t.rechnungWieBisher(r3);
+  gleich('Nach zwei gleichen Buchungen: Vorschlag', [vor?.kosten_konto_id, vor?.geld_konto_id, vor?.anzahl], [muell, bank, 2]);
+  const r4 = rechnung('119,00');
+  gleich('Bekannte Rechnungen im Postfach', t.bekannteRechnungen().map((x) => x.id).sort(), [r3, r4].sort());
+  const sammel = t.bekannteBuchen([r3, r4]);
+  gleich('Alle bekannten gebucht und abgelegt', [sammel.gebucht, sammel.fehler, t.dokument(r3).status, !!t.dokument(r4).buchung_id], [2, [], 'abgelegt', true]);
+
+  // Plausibility questions: only when the app asks for them (kontext 'rueckfrage').
+  const frage = (fn) => { try { fn(); return null; } catch (e) { return e.code === 'RUECKFRAGE' ? 'rückfrage' : e.message; } };
+  const alt = { objekt_id: ob, datum: '2024-01-15', text: 'Alt', positionen: [{ soll_id: muell, haben_id: bank, betrag_ct: 1000 }] };
+  gleich('Ohne Rückfrage-Kontext (Import, Test): altes Datum geht', frage(() => t.buchen(alt)), null);
+  kontextSetzen(raw, { rueckfrage: '1' });
+  gleich('Buchungsdatum über ein Jahr zurück: Rückfrage', frage(() => t.buchen(alt)), 'rückfrage');
+  gleich('Buchungsdatum 90 Tage voraus: Rückfrage', frage(() => t.buchen({ ...alt, datum: '2027-02-15' })), 'rückfrage');
+  gleich('Normales Datum: keine Rückfrage', frage(() => t.buchen({ ...alt, datum: '2026-10-20' })), null);
+  const p = t.save('personen', { nachname: 'Iban', iban: 'DE02120300000000202051' });
+  gleich('IBAN-Änderung: Rückfrage', frage(() => t.save('personen', { id: p, iban: 'DE89370400440532013000' })), 'rückfrage');
+  gleich('Andere Felder ohne Rückfrage', frage(() => t.save('personen', { id: p, telefon: '030 1' })), null);
+  const z = t.save('zaehler', { objekt_id: ob, art: 'kaltwasser', nummer: 'KW-1' });
+  t.ablesung('2026-01-01', { [z]: 100 });
+  gleich('Kleinerer Zählerstand: Rückfrage', frage(() => t.ablesung('2026-06-01', { [z]: 90 })), 'rückfrage');
+  gleich('Größerer Zählerstand: keine', frage(() => t.ablesung('2026-06-01', { [z]: 110 })), null);
+  const r5 = rechnung('1.900,00');
+  gleich('Rechnung über dem Fünffachen des Absenders: Rückfrage', frage(() => t.belegBuchen(r5, { kosten_konto_id: muell, geld_konto_id: bank, datum: '2026-10-21' })), 'rückfrage');
+  kontextSetzen(raw, { rueckfrage: null });
+  gleich('Bestätigt (ohne Rückfrage-Kontext): gebucht', frage(() => t.belegBuchen(r5, { kosten_konto_id: muell, geld_konto_id: bank, datum: '2026-10-21' })), null);
+
+  // Photos: the house by its position, the date and title from the photo.
+  t.save('objekte', { id: ob, breite: 52.52, laenge: 13.405 });
+  gleich('Objekt beim Standort (50 m entfernt)', t.objektBeiStandort(52.52045, 13.405)?.id, ob);
+  gleich('Zu weit weg (500 m): keins', t.objektBeiStandort(52.5245, 13.405), null);
+  const { id: fid } = t.dokumentNeu({ titel: 'IMG_4711', datei: 'f.jpg', name: 'IMG_4711.jpg', groesse: 1, sha256: 'foto-1', typ: 'Foto', status: 'postfach' });
+  t.analyseSpeichern(fid, 'Rechnung 01.01.2020', 1, true, null, null, { aufnahme: '2026-10-12T09:30:00.000Z', standort: { lat: 52.5201, lon: 13.4051 } });
+  const fd = t.dokument(fid);
+  gleich('Foto: Aufnahmetag, Titel, Objekt aus dem Standort', [fd.datum, fd.titel, fd.objekt_id], ['2026-10-12', 'Foto vom 12.10.2026, 11:30', ob]);
 }
 
 console.log(`\nRechentest: ${ok} Prüfungen richtig, ${falsch} falsch.`);

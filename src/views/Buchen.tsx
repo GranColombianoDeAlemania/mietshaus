@@ -1,3 +1,5 @@
+import { Lock } from 'lucide-react';
+import { Tabelle } from '../Tabelle';
 import { useState } from 'react';
 import { betrag, call, datum, diesesJahr, euro, fehler, fehlerText, heute, parseCent, type Row } from '../api';
 import { useLoad } from '../useLoad';
@@ -48,20 +50,19 @@ export function Buchen(props: { objekt: Row }) {
       {offen && konten && (
         <Buchungsmaske objekt={props.objekt} konten={konten} einheiten={einheiten ?? []} onDone={() => { reload(); ladeKonten(); }} onClose={() => setOffen(false)} />
       )}
-      <table>
-        <thead><tr><th>Datum</th><th>Beleg</th><th>Text</th><th>Soll</th><th>Haben</th><th className="num">Betrag</th><th /></tr></thead>
-        <tbody>
-          {rows?.map((b) => (
-            <tr key={b.id} className={b.gruppe ? 'split' : ''} data-ziel={`buchung:${b.id}`} title="Rechtsklick für weitere Aktionen; Beleg hierher ziehen, um ihn zuzuordnen">
-              <td>{datum(b.datum)}</td>
-              <td>{b.dok_id ? <L zu={{ dokument: b.dok_id, datei: b.dok_datei }} title="Beleg öffnen">{b.beleg || 'Beleg'}</L> : b.beleg}</td>
-              <td>{b.text} {b.art === 'soll' && <span className="tag">Soll</span>}{b.art === 'bank' && <span className="tag">Bank</span>}
-                {b.storniert ? <span className="tag fehlertext">storniert</span> : null}{b.festgeschrieben ? <span className="tag" title="festgeschriebener Zeitraum">🔒</span> : null}
-                {b.einheit_bez ? <span className="tag" title={b.einheit_id ? 'Kosten dieser Einheit' : 'Einheit aus Beleg oder Projekt'}>{b.einheit_bez}</span> : null}</td>
-              <td className="klein"><L zu={b.soll_vid ? { vertrag: b.soll_vid, typ: b.soll_vtyp } : { konto: b.soll_id }}>{b.soll_nr} {b.soll_bez}</L></td>
-              <td className="klein"><L zu={b.haben_vid ? { vertrag: b.haben_vid, typ: b.haben_vtyp } : { konto: b.haben_id }}>{b.haben_nr} {b.haben_bez}</L></td>
-              <td className="num">{betrag(b.betrag_ct)}</td>
-              <td className="aktionen">
+      <Tabelle zeilen={rows} leer="Keine Buchungen in diesem Zeitraum."
+        zeilenProps={(b) => ({ className: b.gruppe ? 'split' : '', 'data-ziel': `buchung:${b.id}`, title: 'Rechtsklick für weitere Aktionen; Beleg hierher ziehen, um ihn zuzuordnen' })}
+        spalten={[
+          { id: 'datum', titel: 'Datum', sortWert: (b) => b.datum, wert: (b) => datum(b.datum) },
+          { id: 'beleg', titel: 'Beleg', sortWert: (b) => b.beleg, wert: (b) => (b.dok_id ? <L zu={{ dokument: b.dok_id, datei: b.dok_datei }} title="Beleg öffnen">{b.beleg || 'Beleg'}</L> : b.beleg) },
+          { id: 'text', titel: 'Text', sortWert: (b) => b.text, wert: (b) => <>{b.text} {b.art === 'soll' && <span className="tag">Soll</span>}{b.art === 'bank' && <span className="tag">Bank</span>}
+            {b.storniert ? <span className="tag fehlertext">storniert</span> : null}{b.festgeschrieben ? <span className="tag" title="festgeschriebener Zeitraum"><Lock size={11} aria-label="festgeschrieben" /></span> : null}
+            {b.einheit_bez ? <span className="tag" title={b.einheit_id ? 'Kosten dieser Einheit' : 'Einheit aus Beleg oder Projekt'}>{b.einheit_bez}</span> : null}</> },
+          { id: 'soll', titel: 'Soll', klasse: 'klein', sortWert: (b) => `${b.soll_nr} ${b.soll_bez}`, wert: (b) => <L zu={b.soll_vid ? { vertrag: b.soll_vid, typ: b.soll_vtyp } : { konto: b.soll_id }}>{b.soll_nr} {b.soll_bez}</L> },
+          { id: 'haben', titel: 'Haben', klasse: 'klein', sortWert: (b) => `${b.haben_nr} ${b.haben_bez}`, wert: (b) => <L zu={b.haben_vid ? { vertrag: b.haben_vid, typ: b.haben_vtyp } : { konto: b.haben_id }}>{b.haben_nr} {b.haben_bez}</L> },
+          { id: 'betrag', titel: 'Betrag', klasse: 'num', sortWert: (b) => b.betrag_ct, wert: (b) => betrag(b.betrag_ct) },
+        ]}
+        aktionen={(b) => <>
                 {(b.soll_klasse === 'kosten' || b.haben_klasse === 'kosten') && !b.festgeschrieben && (
                   <button title="Die Kosten einer Einheit zuordnen: zählen dann voll für eine vermietete Einheit und nicht für die selbst genutzte" onClick={() => setZuordnen(b)}>Einheit</button>
                 )}
@@ -81,11 +82,7 @@ export function Buchen(props: { objekt: Row }) {
                     ladeKonten();
                   }}>Löschen</button>
                 )}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+</>} />
       {zuordnen && <EinheitZuordnen buchung={zuordnen} einheiten={einheiten ?? []} onClose={() => { setZuordnen(null); reload(); }} />}
     </section>
   );

@@ -14,6 +14,8 @@ const auswertung = require('./auswertung.cjs');
 const akten = require('./akten.cjs');
 const darlehen = require('./darlehen.cjs');
 const mieterwechsel = require('./mieterwechsel.cjs');
+const mitteilungenModul = require('./mitteilungen.cjs');
+const aufgabenModul = require('./aufgaben.cjs');
 const pruefung = require('./pruefung.cjs');
 const { AKTIONEN } = require('./claudeAktionen.cjs');
 const kennzahlen = require('./kennzahlen.cjs');
@@ -815,10 +817,30 @@ const MIGRATIONS = [
    ALTER TABLE personen ADD COLUMN steuernr TEXT;
    ALTER TABLE personen ADD COLUMN web TEXT;
    UPDATE dokumente SET analyse = 'offen' WHERE status = 'postfach' OR erechnung IS NOT NULL;`,
+  // The notification bell: notifications per user with their target and when they were read.
+  `CREATE TABLE mitteilungen (
+    id INTEGER PRIMARY KEY,
+    benutzer_id INTEGER REFERENCES benutzer(id) ON DELETE CASCADE,
+    art TEXT NOT NULL,
+    titel TEXT NOT NULL,
+    text TEXT,
+    ziel TEXT,
+    erstellt TEXT NOT NULL,
+    gelesen TEXT
+  );
+  CREATE INDEX mitteilungen_benutzer ON mitteilungen (benutzer_id, gelesen);`,
+  // Tasks: who wrote an entry (comments, status changes), the day of the last reminder; the new notification kinds
+  // go to whoever already gets assigned cases.
+  `ALTER TABLE vorgangseintraege ADD COLUMN von TEXT;
+   ALTER TABLE vorgaenge ADD COLUMN erinnert TEXT;
+   UPDATE push_abos SET arten = arten || ',faellig,kommentar' WHERE (',' || arten || ',') LIKE '%,aufgaben,%';`,
+  // Where a house is (saved on the spot from a phone): photos taken there find their house.
+  `ALTER TABLE objekte ADD COLUMN breite REAL;
+   ALTER TABLE objekte ADD COLUMN laenge REAL;`,
 ];
 
 // Tables without change time: the log itself, settings of this installation and page state.
-const AENDERUNG_AUSGENOMMEN = new Set(['protokoll', 'einstellungen', 'hinweis_status', 'checkliste', 'geraete', 'benutzer', 'sitzungen', 'push_abos', 'passkeys']);
+const AENDERUNG_AUSGENOMMEN = new Set(['protokoll', 'einstellungen', 'hinweis_status', 'checkliste', 'geraete', 'benutzer', 'sitzungen', 'push_abos', 'passkeys', 'mitteilungen']);
 const UTC_JETZT = `strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`;
 
 // Ordinary tables holding user data; with vorMigration the columns need not exist yet.
@@ -875,7 +897,7 @@ function datenStand(db) {
 // Columns the renderer may write, per table. Everything else is rejected.
 const TABLES = {
   objekte: ['bezeichnung', 'art', 'strasse', 'plz', 'ort', 'baujahr', 'wj_beginn', 'iban', 'bic', 'bank',
-    'ruecklage_iban', 'sepa_glaeubiger_id', 'hausmeister', 'notiz', 'kaufpreis_ct', 'kaufnebenkosten_ct', 'kaufdatum', 'gebaeudeanteil', 'afa_satz', 'titelbild_id', 'vorsteuer_quote', 'kappungsgrenze',
+    'ruecklage_iban', 'sepa_glaeubiger_id', 'hausmeister', 'notiz', 'kaufpreis_ct', 'kaufnebenkosten_ct', 'kaufdatum', 'gebaeudeanteil', 'afa_satz', 'titelbild_id', 'vorsteuer_quote', 'kappungsgrenze', 'breite', 'laenge',
     'vergleichsmiete_ct', 'mietspiegel_von_ct', 'mietspiegel_bis_ct'],
   einheiten: ['objekt_id', 'nr', 'bezeichnung', 'art', 'lage', 'wohnflaeche', 'zimmer', 'mea', 'notiz', 'vergleichsmiete_ct', 'mietspiegel_von_ct', 'mietspiegel_bis_ct'],
   selbstnutzung: ['einheit_id', 'beginn', 'ende', 'personen', 'notiz'],
@@ -911,7 +933,7 @@ const TABLES = {
     'steller', 'steuer', 'positionen', 'lohn_ct'],
   erhaltungsverteilung: ['objekt_id', 'jahr', 'betrag_ct', 'jahre', 'text'],
   vorgaenge: ['objekt_id', 'person_id', 'einheit_id', 'titel', 'kategorie', 'status', 'prioritaet', 'faellig', 'beschreibung', 'projekt_id', 'zustaendig'],
-  vorgangseintraege: ['vorgang_id', 'datum', 'art', 'text'],
+  vorgangseintraege: ['vorgang_id', 'datum', 'art', 'text', 'von'],
   termine: ['objekt_id', 'person_id', 'vorgang_id', 'titel', 'datum', 'uhrzeit', 'dauer_min', 'ort', 'erledigt', 'notiz', 'projekt_id'],
   projekte: ['titel', 'beschreibung', 'status', 'objekt_id', 'einheit_id', 'kosten_konto_id', 'budget_ct', 'beginn', 'ende', 'notiz'],
   projektaufgaben: ['projekt_id', 'titel', 'gewerk', 'beginn', 'ende', 'fortschritt', 'nach_id', 'person_id', 'meilenstein', 'sort', 'notiz'],
@@ -1099,6 +1121,56 @@ function api(db) {
     throw e;
   }
 
+  // Plausibility questions (poka-yoke): only for the app's own requests (kontext 'rueckfrage', set by the server unless
+  // the user has just confirmed – header X-Bestaetigt). Imports, automatic postings, tests and Claude are not asked.
+  const kontextWert = (k) => get('SELECT wert FROM temp.kontext WHERE schluessel = ?', k)?.wert ?? null;
+  function rueckfrage(text) {
+    if (kontextWert('rueckfrage') !== '1') return;
+    const e = new Error(text);
+    e.code = 'RUECKFRAGE';
+    e.bestaetigen = text;
+    throw e;
+  }
+  const de = (d) => String(d ?? '').slice(0, 10).split('-').reverse().join('.');
+  const tageBis = (d) => Math.round((Date.parse(`${String(d).slice(0, 10)}T12:00:00Z`) - Date.parse(`${ortszeit.heute()}T12:00:00Z`)) / 864e5);
+  const plus = (d, n) => new Date(Date.parse(`${String(d).slice(0, 10)}T12:00:00Z`) + n * 864e5).toISOString().slice(0, 10);
+  function datumPruefen(datum) {
+    if (!datum) return;
+    const t = tageBis(datum);
+    if (t < -400) rueckfrage(`Das Buchungsdatum ${de(datum)} liegt mehr als ein Jahr zurück. Ist das Jahr richtig?`);
+    if (t > 60) rueckfrage(`Das Buchungsdatum ${de(datum)} liegt ${t} Tage in der Zukunft. Ist das richtig?`);
+  }
+  // A payment on a tenant's account long before the lease or long after it ended (a final statement still fits).
+  function buchungPruefen(b) {
+    datumPruefen(b.datum);
+    const gesehen = new Set();
+    for (const p of b.positionen ?? []) for (const kid of [p.soll_id, p.haben_id]) {
+      const k = kid && !gesehen.has(kid) && get('SELECT vertrag_typ, vertrag_id FROM konten WHERE id = ?', kid);
+      gesehen.add(kid);
+      if (k?.vertrag_typ !== 'miete' || !b.datum) continue;
+      const v = get('SELECT m.beginn, m.ende, e.bezeichnung FROM mietverhaeltnisse m JOIN einheiten e ON e.id = m.einheit_id WHERE m.id = ?', k.vertrag_id);
+      if (v && (b.datum < plus(v.beginn, -31) || (v.ende && b.datum > plus(v.ende, 400))))
+        rueckfrage(`Am ${de(b.datum)} gibt es für ${v.bezeichnung} keinen laufenden Mietvertrag (${de(v.beginn)} bis ${v.ende ? de(v.ende) : 'offen'}). Trotzdem auf dieses Mieterkonto buchen?`);
+    }
+  }
+  function zaehlerPruefen(zaehlerId, datum, stand) {
+    if (stand == null || stand === '') return;
+    const vorher = get('SELECT datum, stand FROM zaehlerstaende WHERE zaehler_id = ? AND datum < ? ORDER BY datum DESC LIMIT 1', zaehlerId, datum);
+    if (vorher && Number(stand) < Number(vorher.stand)) {
+      const z = get('SELECT nummer, art FROM zaehler WHERE id = ?', zaehlerId);
+      rueckfrage(`Der Stand ${String(stand).replace('.', ',')} für Zähler ${z?.nummer ?? z?.art ?? zaehlerId} ist kleiner als der vom ${de(vorher.datum)} (${String(vorher.stand).replace('.', ',')}). `
+        + 'Bei einem Zählertausch bitte einen neuen Zähler anlegen. Trotzdem speichern?');
+    }
+  }
+  // A changed bank account is the usual trick of fraudulent mails: ask once more, showing old and new.
+  function ibanPruefen(row) {
+    if (!row?.id || !('iban' in row)) return;
+    const p = get(`SELECT iban, ${PERSON_NAME} AS name FROM personen p WHERE p.id = ?`, row.id);
+    const norm = (x) => String(x ?? '').replace(/\s/g, '').toUpperCase();
+    if (p?.iban && norm(p.iban) !== norm(row.iban))
+      rueckfrage(`Bankverbindung von ${p.name} ändern?\nBisher: ${p.iban}\nNeu: ${row.iban || '(leer)'}\nKam die neue IBAN per E-Mail, bitte vorher telefonisch bestätigen lassen – geänderte Kontodaten sind ein häufiger Betrug.`);
+  }
+
   // Object types visible in each mode: mixed houses appear in both.
   const artenFuer = (modus) => (modus === 'weg' ? ['weg', 'gemischt'] : ['miete', 'gemischt']);
 
@@ -1108,6 +1180,8 @@ function api(db) {
   const ab = abrechnung({ db, all, get, tx, PERSON_NAME, bh });
   const vw = verwaltung({ db, all, get, tx, PERSON_NAME, bh });
   const ar = archiv({ db, all, get, tx, PERSON_NAME });
+  const mt = mitteilungenModul({ db, all, get, tx });
+  const af = aufgabenModul({ db, all, get, tx, PERSON_NAME });
 
   // Master data changes can create or rename accounts.
   const SYNC = new Set(['objekte', 'einheiten', 'personen', 'mietverhaeltnisse', 'eigentum']);
@@ -1127,6 +1201,8 @@ function api(db) {
     // A contract and its charges are saved together or not at all.
     save: (table, row) => tx(() => {
       konfliktPruefen(table, row);
+      if (table === 'personen') ibanPruefen(row);
+      if (table === 'zaehlerstaende' && row?.zaehler_id) zaehlerPruefen(row.zaehler_id, row.datum, row.stand);
       const id = save(table, row);
       if (SYNC.has(table)) bh.syncKonten();
       sollNachziehen(vertragVon(table, id));
@@ -1372,8 +1448,10 @@ function api(db) {
   };
 
   const alles = {
-    ...bh, ...ab, ...vw, ...ar, ...au, ...pj, ...aw, ...ak, ...dl, ...mw, ...pr, ...kz, ...basis, ...vorschlaege,
+    ...bh, ...ab, ...vw, ...ar, ...mt, ...af, ...au, ...pj, ...aw, ...ak, ...dl, ...mw, ...pr, ...kz, ...basis, ...vorschlaege,
     protokollRueckgaengig: rueckgaengig,
+    buchen: (b, ohneTx) => { buchungPruefen(b); return bh.buchen(b, ohneTx); },
+    ablesung: (datum, werte, fotos) => { for (const [id, stand] of Object.entries(werte ?? {})) zaehlerPruefen(Number(id), datum, stand); return bh.ablesung(datum, werte, fotos); },
     // Names behind the change columns of the records (geaendert_benutzer, geaendert_von), for "Zuletzt geändert von …".
     aenderungsNamen: () => ({
       benutzer: Object.fromEntries(all('SELECT id, name FROM benutzer').map((b) => [b.id, b.name])),
@@ -1446,6 +1524,12 @@ function api(db) {
       const doppelt = ar.dokumentDuplikat(dokId, { abgelegt: true });
       if (doppelt) throw new Error(`Diese Rechnung ist schon ${doppelt.buchung_id ? 'gebucht' : 'abgelegt'} („${doppelt.titel}“) – gleiche Rechnungsnummer, gleicher Betrag, gleicher Absender. Sie wird nicht doppelt gebucht.`);
       const a = alles.belegAufteilung(dokId, { kosten_konto_id, betrag_ct, vorsteuer });
+      datumPruefen(datum ?? d.datum);
+      // Far more than this sender ever charged: a misread amount (a comma lost) or a wrong invoice.
+      const bisher = all(`SELECT x.betrag_ct FROM dokumente x WHERE x.id <> ? AND x.buchung_id IS NOT NULL AND x.status <> 'papierkorb'
+        AND ((? IS NOT NULL AND x.person_id = ?) OR (? IS NOT NULL AND x.absender = ?))`, dokId, d.person_id ?? null, d.person_id ?? null, d.absender ?? null, d.absender ?? null).map((x) => x.betrag_ct);
+      if (bisher.length >= 2 && a.betrag_ct > 5 * Math.max(...bisher))
+        rueckfrage(`${d.absender ?? 'Dieser Absender'} hat bisher höchstens ${(Math.max(...bisher) / 100).toLocaleString('de-DE', { minimumFractionDigits: 2 })} € berechnet, diese Rechnung lautet auf ${(a.betrag_ct / 100).toLocaleString('de-DE', { minimumFractionDigits: 2 })} €. Ist der Betrag richtig gelesen?`);
       const gutschrift = d.typ === 'Gutschrift';
       const pos = [{ konto: kosten_konto_id, ct: a.kosten_ct, p35a_ct: a.p35a_ct }, ...a.vorsteuer.map((t) => ({ konto: t.konto_id, ct: t.ct }))];
       const id = bh.buchenIntern({ objekt_id: d.objekt_id, datum: datum ?? d.datum ?? ortszeit.heute(), beleg: d.rechnungsnr,
@@ -1456,6 +1540,48 @@ function api(db) {
       ar.kontaktSicherstellen(dokId);
       return id;
     }),
+    // A sender whose invoices were booked at least twice the same way (same expense and money account, same house):
+    // the proposal to book the next one alike. The sender is the contact, else the VAT id, else the sender's name.
+    rechnungWieBisher: (dokId) => {
+      const d = ar.dokument(dokId);
+      if (!d || d.buchung_id || !['Rechnung', 'Gutschrift'].includes(d.typ) || !d.betrag_ct) return null;
+      const ust = d.steller?.ust_id ?? null;
+      const frueher = all(`SELECT x.objekt_id, b.soll_id, b.haben_id, x.typ FROM dokumente x JOIN buchungen b ON b.id = x.buchung_id
+        WHERE x.id <> ? AND x.status <> 'papierkorb' AND x.typ = ? AND (?3 IS NULL OR x.objekt_id = ?3)
+          AND ((?4 IS NOT NULL AND x.person_id = ?4) OR (?5 IS NOT NULL AND json_extract(x.steller, '$.ust_id') = ?5) OR (?6 IS NOT NULL AND x.absender = ?6))
+        ORDER BY x.id DESC LIMIT 12`, dokId, d.typ, d.objekt_id ?? null, d.person_id ?? null, ust, d.absender ?? null);
+      // Expense and money account of a credit note are the other way round.
+      const paare = frueher.map((f) => ({ objekt_id: f.objekt_id, kosten: d.typ === 'Gutschrift' ? f.haben_id : f.soll_id, geld: d.typ === 'Gutschrift' ? f.soll_id : f.haben_id }));
+      const zaehl = new Map();
+      for (const p of paare) { const k = `${p.objekt_id}:${p.kosten}:${p.geld}`; zaehl.set(k, { ...p, n: (zaehl.get(k)?.n ?? 0) + 1 }); }
+      const best = [...zaehl.values()].sort((a, b) => b.n - a.n)[0];
+      if (!best || best.n < 2) return null;
+      const k = get('SELECT nr, bezeichnung FROM konten WHERE id = ?', best.kosten);
+      const g = get('SELECT nr, bezeichnung FROM konten WHERE id = ?', best.geld);
+      if (!k || !g) return null;
+      return { objekt_id: best.objekt_id, kosten_konto_id: best.kosten, geld_konto_id: best.geld, anzahl: best.n,
+        kosten: `${k.nr} ${k.bezeichnung}`, geld: `${g.nr} ${g.bezeichnung}` };
+    },
+    // Invoices in the inbox that can be booked like before (not copies of filed ones).
+    bekannteRechnungen: () => all(`SELECT id FROM dokumente WHERE status = 'postfach' AND typ IN ('Rechnung', 'Gutschrift') AND buchung_id IS NULL AND betrag_ct > 0 AND analyse = 'fertig'`)
+      .map((x) => ({ id: x.id, vorschlag: alles.rechnungWieBisher(x.id) }))
+      .filter((x) => x.vorschlag && !ar.dokumentDuplikat(x.id, { abgelegt: true }))
+      .map((x) => { const d = ar.dokument(x.id); return { id: x.id, titel: d.titel, absender: d.absender, betrag_ct: d.betrag_ct, datum: d.datum, ...x.vorschlag }; }),
+    // Books them all as proposed (each with its VAT and labour share, refusing copies); returns how many and which failed.
+    bekannteBuchen: (ids) => {
+      let n = 0;
+      const fehler = [];
+      for (const id of ids) {
+        const v = alles.rechnungWieBisher(id);
+        if (!v) { fehler.push({ id, grund: 'kein Vorschlag mehr' }); continue; }
+        try {
+          if (!ar.dokument(id).objekt_id) alles.dokumentSpeichern({ id, objekt_id: v.objekt_id });
+          alles.belegBuchen(id, { kosten_konto_id: v.kosten_konto_id, geld_konto_id: v.geld_konto_id });
+          n++;
+        } catch (e) { fehler.push({ id, grund: e.message }); }
+      }
+      return { gebucht: n, fehler };
+    },
     // Bank lines paid to a loan account are booked as instalments (interest + repayment).
     bankBuchen: (objektId, geldKontoId, zeilen, lernen) => {
       const istDarlehen = (z) => z.konto_id && z.betrag_ct < 0 && dl.darlehenZuKonto(z.konto_id);

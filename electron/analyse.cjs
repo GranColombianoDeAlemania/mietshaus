@@ -12,6 +12,16 @@ const BILDER = new Set(['.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp', '.webp
 const TEXT = new Set(['.txt', '.csv', '.md', '.xml', '.json', '.eml', '.html', '.htm']);
 
 // tessdata: folder with the Tesseract language files (resources/tessdata); cacheOrdner: Tesseract's cache.
+// When and where a photo was taken (EXIF): the time for the document date and title, the position to find the house.
+async function fotoDaten(bild) {
+  try {
+    const e = await require('exifr').parse(bild, { gps: true, pick: ['DateTimeOriginal', 'CreateDate', 'latitude', 'longitude'] });
+    const zeit = e?.DateTimeOriginal ?? e?.CreateDate;
+    return { aufnahme: zeit instanceof Date && !Number.isNaN(zeit.getTime()) ? zeit.toISOString() : null,
+      standort: Number.isFinite(e?.latitude) && Number.isFinite(e?.longitude) ? { lat: e.latitude, lon: e.longitude } : null };
+  } catch { return null; }
+}
+
 module.exports = function analyse({ db, dokumentOrdner, vorschauOrdner, onFertig, tessdata = path.join(__dirname, '..', 'resources', 'tessdata'),
   cacheOrdner = path.join(os.tmpdir(), 'mietshaus-ocr') }) {
   let ocrWorker = null;
@@ -66,7 +76,11 @@ module.exports = function analyse({ db, dokumentOrdner, vorschauOrdner, onFertig
       const e = r.xml ? erechnung.lesen(r.xml) : null;
       return { text: seiten.join('\n\f\n') + (e ? `\n\f\n${erechnung.alsText(e)}` : ''), seiten: r.seiten.length, ocr: ocrNoetig, erechnung: e, layout };
     }
-    if (BILDER.has(ext)) { const o = await ocr(fs.readFileSync(voll)); return { text: o.text, seiten: 1, ocr: true, layout: o.zeilen }; }
+    if (BILDER.has(ext)) {
+      const bild = fs.readFileSync(voll);
+      const o = await ocr(bild);
+      return { text: o.text, seiten: 1, ocr: true, layout: o.zeilen, foto: await fotoDaten(bild) };
+    }
     if (ext === '.xml') {
       const xml = fs.readFileSync(voll, 'utf8');
       const e = erechnung.lesen(xml);
@@ -87,7 +101,7 @@ module.exports = function analyse({ db, dokumentOrdner, vorschauOrdner, onFertig
         for (const d of offen) {
           try {
             const r = await lesen(d.datei);
-            db.analyseSpeichern(d.id, r.text, r.seiten, r.ocr, r.erechnung ?? null, r.layout ?? null);
+            db.analyseSpeichern(d.id, r.text, r.seiten, r.ocr, r.erechnung ?? null, r.layout ?? null, r.foto ?? null);
           } catch (e) {
             db.analyseFehler(d.id, String(e?.message ?? e));
           }
@@ -114,7 +128,10 @@ module.exports = function analyse({ db, dokumentOrdner, vorschauOrdner, onFertig
       }
       const datei = `${crypto.randomUUID()}${ext}`;
       const name = path.basename(p);
-      const r = db.dokumentNeu({ objekt_id, einheit_id, projekt_id, person_id, buchung_id, vorgang_id, typ, titel: name.replace(/\.[^.]+$/, ''), datei, name, groesse: daten.length, sha256, quelle, status });
+      // A photo taken for a house, a unit, a case or a project is filed there at once – no inbox, no questions.
+      const foto = BILDER.has(ext) && !typ && !!(objekt_id || einheit_id || vorgang_id || projekt_id) && quelle === 'upload';
+      const r = db.dokumentNeu({ objekt_id, einheit_id, projekt_id, person_id, buchung_id, vorgang_id, typ: foto ? 'Foto' : typ, titel: name.replace(/\.[^.]+$/, ''), datei, name,
+        groesse: daten.length, sha256, quelle, status: foto ? 'abgelegt' : status });
       if (!r.doppelt) fs.writeFileSync(path.join(dokumentOrdner(), datei), daten);
       out.push({ ...r, name });
     }

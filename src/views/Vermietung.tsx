@@ -9,6 +9,7 @@ import { absenderAus, alsPdf, bericht, esc, tabelle } from '../dokument';
 import { dokUrl } from './Archiv';
 import { sollNachfrage } from './Sollstellung';
 import { bestaetigen } from '../frage';
+import { SYMBOL } from '../icons';
 
 const SPALTEN: [string, string][] = [['neu', 'Neu'], ['besichtigung', 'Besichtigung'], ['auskunft', 'Unterlagen da'], ['favorit', 'Favorit'], ['absage', 'Abgesagt']];
 const cent2 = (ct?: number | null) => (ct == null ? '' : (ct / 100).toFixed(2).replace('.', ','));
@@ -139,7 +140,7 @@ function EinheitVermietung(props: { einheit: Row; objekt: Row; reload: () => voi
                 <div key={x.id} className="karte" draggable onDragStart={(ev) => ev.dataTransfer.setData('text/interessent', String(x.id))} onDoubleClick={() => setEdit(x)}>
                   <b>{x.name}</b>
                   <div className="klein">{[x.personen ? `${x.personen} Pers.` : null, x.einkommen_ct ? `${euro(x.einkommen_ct)} netto` : null, x.beruf].filter(Boolean).join(' · ')}</div>
-                  <div className="klein hinweis">{x.bewertung ? '★'.repeat(x.bewertung) + ' ' : ''}{x.besichtigung ? `Besichtigung ${datum(x.besichtigung)}` : ''}
+                  <div className="klein hinweis">{x.bewertung ? <span className="sterne" aria-label={`${x.bewertung} von 5`}>{Array.from({ length: x.bewertung }, (_, i) => <SYMBOL.stern key={i} size={12} fill="currentColor" />)} </span> : ''}{x.besichtigung ? `Besichtigung ${datum(x.besichtigung)}` : ''}
                     {x.einkommen_ct && warm ? ` · Miete ${Math.round((warm / x.einkommen_ct) * 100)} % vom Netto` : ''}</div>
                   <div className="buttons" style={{ marginTop: 6 }}>
                     <button className="icon" title="Bearbeiten" onClick={() => setEdit(x)}><I.Pencil size={14} /></button>

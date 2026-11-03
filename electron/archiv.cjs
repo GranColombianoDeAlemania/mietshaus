@@ -111,6 +111,14 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME }) {
     return st;
   }
 
+  // The house within maxM metres of a position (its location saved once on the spot, "Standort hier speichern").
+  function objektBeiStandort(lat, lon, maxM = 150) {
+    const r = (x) => (x * Math.PI) / 180;
+    const abstand = (o) => 2 * 6371000 * Math.asin(Math.sqrt(Math.sin(r(o.breite - lat) / 2) ** 2 + Math.cos(r(lat)) * Math.cos(r(o.breite)) * Math.sin(r(o.laenge - lon) / 2) ** 2));
+    return all('SELECT id, bezeichnung, breite, laenge FROM objekte WHERE breite IS NOT NULL AND laenge IS NOT NULL')
+      .map((o) => ({ ...o, m: abstand(o) })).filter((o) => o.m <= maxM).sort((a, b) => a.m - b.m)[0] ?? null;
+  }
+
   // The contact behind a sender: by VAT id, IBAN, e-mail, then company name.
   function kontaktFinden(st) {
     if (!st) return null;
@@ -241,13 +249,23 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME }) {
       return kontaktAnlegen(dokId, st);
     }),
     kontaktSicherstellen,
+    objektBeiStandort,
     dokumentDuplikat: (id, opt) => duplikat(id, opt),
     dokumentTypen: () => TYPEN,
 
     // Stores recognised text and fills empty fields from the rule-based extraction.
-    analyseSpeichern: (id, text, seiten, ocr, er = null, layout = null) => tx(() => {
+    analyseSpeichern: (id, text, seiten, ocr, er = null, layout = null, foto = null) => tx(() => {
       const d = get('SELECT * FROM dokumente WHERE id = ?', id);
       const f = felderErkennen(text ?? '');
+      // Photos: the day it was taken (not a date read in the picture), a title from it, the house from its position.
+      if (foto && (d?.typ === 'Foto' || !d?.typ)) {
+        if (foto.aufnahme) {
+          f.datum = ortszeit.lokalDatum(new Date(foto.aufnahme));
+          if (d && d.titel === d.name?.replace(/\.[^.]+$/, '') && (d.typ === 'Foto' || /^(img|dsc|photo|pxl|image)[_-]?\d/i.test(d.titel)))
+            db.prepare('UPDATE dokumente SET titel = ? WHERE id = ?').run(`Foto vom ${new Date(foto.aufnahme).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Berlin' })}`, id);
+        }
+        if (foto.standort && !d?.objekt_id) { const o = objektBeiStandort(foto.standort.lat, foto.standort.lon); if (o) db.prepare('UPDATE dokumente SET objekt_id = ? WHERE id = ?').run(o.id, id); }
+      }
       const z = zuordnungVorschlagen(text ?? '');
       const alsJson = (x) => (x == null ? null : JSON.stringify(x));
       // E-invoice data is exact: it replaces what was guessed from the text.

@@ -1,43 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from 'react';
 import { call, OBJEKT_ART, type Modus, type Row } from './api';
 import { useLoad } from './useLoad';
 import { Fehlergrenze } from './ui';
-import { Uebersicht } from './views/Uebersicht';
-import { Objekte } from './views/Objekte';
-import { Einheiten } from './views/Einheiten';
-import { Vertraege } from './views/Vertraege';
-import { Schluessel } from './views/Schluessel';
-import { Personen } from './views/Personen';
-import { Zaehler } from './views/Zaehler';
-import { Konten } from './views/Konten';
-import { Buchen } from './views/Buchen';
-import { Sollstellung } from './views/Sollstellung';
-import { OffenePosten } from './views/OffenePosten';
-import { Bank } from './views/Bank';
-import { Einstellungen } from './views/Einstellungen';
-import { NkAbrechnung } from './views/NkAbrechnung';
-import { WegAbrechnung } from './views/WegAbrechnung';
-import { Wirtschaftsplan } from './views/Wirtschaftsplan';
-import { Ruecklagen } from './views/Ruecklagen';
-import { Kautionen, Mietanpassung, Schluesselverwaltung, Versicherungen } from './views/MieteExtras';
-import { Beschluesse, Kontakte, Versammlungen } from './views/WegExtras';
-import { Briefe, Vorgaenge } from './views/Kommunikation';
-import { Kalender } from './views/Kalender';
-import { Archiv, DokumentDialog, Postfach, Rechnungen } from './views/Archiv';
-import { Export } from './views/Export';
-import { Protokoll } from './views/Protokoll';
-import { Vorschlaege } from './views/Vorschlaege';
 import { Ampel } from './Ampel';
-import { Status } from './views/Status';
+import { Glocke } from './Glocke';
 import { MailHost } from './Mail';
 import { desktopMitteilungen } from './mitteilungen';
-import { Uebergaben } from './views/Uebergabe';
-import { Vermietung } from './views/Vermietung';
-import { Auswertungen } from './views/Auswertungen';
-import { Darlehen, Steckbrief } from './views/Steckbrief';
-import { EinheitSeite, KontoSeite, PersonSeite, VertragSeite } from './views/Akten';
-import { ProjektCockpit, ProjektDokumente, ProjektKosten, ProjektListe, ProjektZeitplan } from './views/Projekte';
-import { Pruefbericht } from './views/Pruefbericht';
 import { Suche, type Befehl } from './Suche';
 import { Vorschaukarte } from './Vorschaukarte';
 import { FrageHost } from './frage';
@@ -47,9 +15,98 @@ import { anzeige } from './anzeige';
 import { DETAILSEITEN, NaviContext, zielAusKey, type Ort, type PfadTeil, type Ziel } from './navi';
 import * as I from 'lucide-react';
 
+// Pages load when first opened (one chunk per view file); the most used ones are fetched in the background after start.
+const ansicht = <M,>(laden: () => Promise<M>, name: keyof M) => lazy(() => laden().then((m) => ({ default: m[name] as unknown as ComponentType<any> })));
+const vUebersicht = () => import('./views/Uebersicht');
+const Uebersicht = ansicht(vUebersicht, 'Uebersicht');
+const vObjekte = () => import('./views/Objekte');
+const Objekte = ansicht(vObjekte, 'Objekte');
+const vEinheiten = () => import('./views/Einheiten');
+const Einheiten = ansicht(vEinheiten, 'Einheiten');
+const vVertraege = () => import('./views/Vertraege');
+const Vertraege = ansicht(vVertraege, 'Vertraege');
+const vSchluessel = () => import('./views/Schluessel');
+const Schluessel = ansicht(vSchluessel, 'Schluessel');
+const vPersonen = () => import('./views/Personen');
+const Personen = ansicht(vPersonen, 'Personen');
+const vZaehler = () => import('./views/Zaehler');
+const Zaehler = ansicht(vZaehler, 'Zaehler');
+const vKonten = () => import('./views/Konten');
+const Konten = ansicht(vKonten, 'Konten');
+const vBuchen = () => import('./views/Buchen');
+const Buchen = ansicht(vBuchen, 'Buchen');
+const vSollstellung = () => import('./views/Sollstellung');
+const Sollstellung = ansicht(vSollstellung, 'Sollstellung');
+const vOffenePosten = () => import('./views/OffenePosten');
+const OffenePosten = ansicht(vOffenePosten, 'OffenePosten');
+const vBank = () => import('./views/Bank');
+const Bank = ansicht(vBank, 'Bank');
+const vEinstellungen = () => import('./views/Einstellungen');
+const Einstellungen = ansicht(vEinstellungen, 'Einstellungen');
+const vNkAbrechnung = () => import('./views/NkAbrechnung');
+const NkAbrechnung = ansicht(vNkAbrechnung, 'NkAbrechnung');
+const vWegAbrechnung = () => import('./views/WegAbrechnung');
+const WegAbrechnung = ansicht(vWegAbrechnung, 'WegAbrechnung');
+const vWirtschaftsplan = () => import('./views/Wirtschaftsplan');
+const Wirtschaftsplan = ansicht(vWirtschaftsplan, 'Wirtschaftsplan');
+const vRuecklagen = () => import('./views/Ruecklagen');
+const Ruecklagen = ansicht(vRuecklagen, 'Ruecklagen');
+const vMieteExtras = () => import('./views/MieteExtras');
+const Kautionen = ansicht(vMieteExtras, 'Kautionen');
+const Mietanpassung = ansicht(vMieteExtras, 'Mietanpassung');
+const Schluesselverwaltung = ansicht(vMieteExtras, 'Schluesselverwaltung');
+const Versicherungen = ansicht(vMieteExtras, 'Versicherungen');
+const vWegExtras = () => import('./views/WegExtras');
+const Beschluesse = ansicht(vWegExtras, 'Beschluesse');
+const Kontakte = ansicht(vWegExtras, 'Kontakte');
+const Versammlungen = ansicht(vWegExtras, 'Versammlungen');
+const vKommunikation = () => import('./views/Kommunikation');
+const Briefe = ansicht(vKommunikation, 'Briefe');
+const Vorgaenge = ansicht(vKommunikation, 'Vorgaenge');
+const vKalender = () => import('./views/Kalender');
+const Kalender = ansicht(vKalender, 'Kalender');
+const vArchiv = () => import('./views/Archiv');
+const Archiv = ansicht(vArchiv, 'Archiv');
+const DokumentDialog = ansicht(vArchiv, 'DokumentDialog');
+const Postfach = ansicht(vArchiv, 'Postfach');
+const Rechnungen = ansicht(vArchiv, 'Rechnungen');
+const vExport = () => import('./views/Export');
+const Export = ansicht(vExport, 'Export');
+const vProtokoll = () => import('./views/Protokoll');
+const Protokoll = ansicht(vProtokoll, 'Protokoll');
+const vVorschlaege = () => import('./views/Vorschlaege');
+const Vorschlaege = ansicht(vVorschlaege, 'Vorschlaege');
+const vStatus = () => import('./views/Status');
+const Status = ansicht(vStatus, 'Status');
+const vUebergabe = () => import('./views/Uebergabe');
+const Uebergaben = ansicht(vUebergabe, 'Uebergaben');
+const vVermietung = () => import('./views/Vermietung');
+const Vermietung = ansicht(vVermietung, 'Vermietung');
+const vAuswertungen = () => import('./views/Auswertungen');
+const Auswertungen = ansicht(vAuswertungen, 'Auswertungen');
+const vSteckbrief = () => import('./views/Steckbrief');
+const Darlehen = ansicht(vSteckbrief, 'Darlehen');
+const Steckbrief = ansicht(vSteckbrief, 'Steckbrief');
+const vAkten = () => import('./views/Akten');
+const EinheitSeite = ansicht(vAkten, 'EinheitSeite');
+const KontoSeite = ansicht(vAkten, 'KontoSeite');
+const PersonSeite = ansicht(vAkten, 'PersonSeite');
+const VertragSeite = ansicht(vAkten, 'VertragSeite');
+const vProjekte = () => import('./views/Projekte');
+const ProjektCockpit = ansicht(vProjekte, 'ProjektCockpit');
+const ProjektDokumente = ansicht(vProjekte, 'ProjektDokumente');
+const ProjektKosten = ansicht(vProjekte, 'ProjektKosten');
+const ProjektListe = ansicht(vProjekte, 'ProjektListe');
+const ProjektZeitplan = ansicht(vProjekte, 'ProjektZeitplan');
+const vPruefbericht = () => import('./views/Pruefbericht');
+const Pruefbericht = ansicht(vPruefbericht, 'Pruefbericht');
+const vAufgaben = () => import('./views/Aufgaben');
+const Aufgaben = ansicht(vAufgaben, 'Aufgaben');
+const vorladen = () => { for (const l of [vArchiv, vUebersicht, vKommunikation, vKalender, vAufgaben]) l().catch(() => {}); };
+
 // One icon per page; unknown ids fall back to a neutral dot.
 const ICON: Record<string, I.LucideIcon> = {
-  uebersicht: I.Gauge, pcockpit: I.Gauge, projekte: I.FolderKanban, zeitplan: I.CalendarRange, pkosten: I.HandCoins, pdok: I.Image,
+  uebersicht: I.Gauge, pcockpit: I.Gauge, aufgaben: I.SquareKanban, projekte: I.FolderKanban, zeitplan: I.CalendarRange, pkosten: I.HandCoins, pdok: I.Image,
   objekte: I.Building2, steckbrief: I.House, einheiten: I.LayoutGrid, vertraege: I.Users, zaehler: I.Gauge, schluessel: I.Scale, personen: I.Contact,
   postfach: I.Inbox, vorschlaege: I.Sparkles, archiv: I.Archive, rechnungen: I.Receipt,
   buchen: I.BookOpen, konten: I.Landmark, soll: I.Repeat, op: I.BadgeEuro, bank: I.Wallet, darlehen: I.PiggyBank,
@@ -82,8 +139,9 @@ const SEITEN: Seite[] = [
   { id: 'pkosten', label: 'Kosten & Budget', gruppe: 'Projekte', objekt: true, modi: ['projekt'], render: (c) => <ProjektKosten key={c.objekt.id} projekt={c.objekt} /> },
   { id: 'pdok', label: 'Fotos & Dokumente', gruppe: 'Projekte', objekt: true, modi: ['projekt'], render: (c) => <ProjektDokumente key={c.objekt.id} projekt={c.objekt} /> },
   { id: 'uebersicht', label: 'Cockpit', gruppe: 'Start', render: (c) => <Uebersicht modus={c.modus} objekte={c.objekte} oeffne={c.oeffne} /> },
+  { id: 'aufgaben', label: 'Aufgaben', gruppe: 'Start', alle: true, render: (c) => <Aufgaben objekte={c.modus === 'projekt' ? [] : c.objekte} /> },
   { id: 'steckbrief', label: 'Steckbrief', gruppe: 'Stammdaten', objekt: true, render: (c) => <Steckbrief key={c.objekt.id} objekt={c.objekt} oeffne={c.oeffne} modus={c.modus} /> },
-  { id: 'objekte', label: 'Objekte', gruppe: 'Stammdaten', render: (c) => <Objekte modus={c.modus} objekte={c.objekte} reload={c.ladeObjekte} onOpen={(id) => c.oeffne('steckbrief', id)} /> },
+  { id: 'objekte', label: 'Objekte', gruppe: 'Stammdaten', render: (c) => <Objekte modus={c.modus} objekte={c.objekte} reload={c.ladeObjekte} onOpen={(id: number) => c.oeffne('steckbrief', id)} /> },
   { id: 'einheiten', label: 'Einheiten', gruppe: 'Stammdaten', objekt: true, render: (c) => <Einheiten key={c.objekt.id} modus={c.modus} objekt={c.objekt} /> },
   { id: 'vertraege', label: (m) => (m === 'weg' ? 'Eigentümer' : 'Mieter'), gruppe: 'Stammdaten', objekt: true, render: (c) => <Vertraege key={c.objekt.id + c.modus} modus={c.modus} objekt={c.objekt} /> },
   { id: 'zaehler', label: 'Zähler', gruppe: 'Stammdaten', objekt: true, render: (c) => <Zaehler key={c.objekt.id} objekt={c.objekt} /> },
@@ -287,6 +345,8 @@ export default function App(props: { benutzer?: Row | null }) {
     window.addEventListener('contextmenu', menue);
     return () => window.removeEventListener('contextmenu', menue);
   }, [navi]);
+  // The most used pages in the background, once the first one is shown.
+  useEffect(() => { const t = setTimeout(vorladen, 1500); return () => clearTimeout(t); }, []);
   // Mac app: the server's notes as macOS notifications.
   useEffect(() => desktopMitteilungen(props.benutzer?.id ?? null), [props.benutzer?.id]);
   // Messages from dialogs outside the pages (e.g. a mail sent).
@@ -310,6 +370,15 @@ export default function App(props: { benutzer?: Row | null }) {
     const neu = r.filter((x) => !x.doppelt).length;
     melden(`${neu} Dokument(e) ins Postfach gelegt – bitte dort prüfen und ablegen.${r.length - neu ? ` ${r.length - neu} waren schon vorhanden.` : ''}`, 6000);
     gehe({ seite: 'postfach', param: undefined });
+  }
+
+  // Phone camera button: filed at the house the photo was taken at (its location saved), else in the inbox.
+  async function fotoMachen() {
+    try {
+      const r = await window.hv.fotoMitStandort();
+      if (!r.length) return;
+      melden(r[0].doppelt ? 'Dieses Foto ist schon vorhanden.' : r[0].objekt ? `Foto bei ${r[0].objekt} abgelegt.` : 'Foto ins Postfach gelegt – kein Objekt mit gespeichertem Standort in der Nähe.', 6000);
+    } catch (e) { melden(String((e as Error)?.message ?? e)); }
   }
 
   // ---------- drag & drop: onto a person, unit, contract or posting = filed there; anywhere else = inbox ----------
@@ -409,6 +478,7 @@ export default function App(props: { benutzer?: Row | null }) {
       { label: 'Mahnlauf / offene Posten', stichworte: 'mahnung rückstand', icon: I.BadgeEuro, run: () => zu({ seite: 'op' }) },
       { label: 'Kontoauszug importieren', stichworte: 'bank camt mt940 csv', icon: I.Wallet, run: () => zu({ seite: 'bank' }) },
       { label: 'Neuer Vorgang', stichworte: 'aufgabe schaden anfrage', icon: I.ListChecks, run: () => zu({ seite: 'vorgaenge', aktion: 'neuer-vorgang' }) },
+      { label: 'Neue Aufgabe', stichworte: 'aufgabe zuweisen board', icon: I.SquareKanban, run: () => zu({ seite: 'aufgaben', aktion: 'neue-aufgabe' }) },
       { label: 'Neues Objekt', stichworte: 'haus anlegen', icon: I.Building2, run: () => zu({ seite: 'objekte', aktion: 'neues-objekt' }) },
       { label: 'Prüfbericht', stichworte: 'prüfen fehler vollständig', icon: I.ShieldCheck, run: () => zu({ seite: 'pruefung' }) },
     ] : []),
@@ -544,13 +614,23 @@ export default function App(props: { benutzer?: Row | null }) {
             </select>
           </label>
           <button className="rund ring" title="Dokumente ablegen – sie landen zur Prüfung im Postfach" onClick={schnellAblegen}><I.FilePlus2 size={16} /></button>
+          <Glocke />
           <Ampel benutzer={props.benutzer?.name ?? null} />
         </header>
-        <main><Fehlergrenze key={`${modus}:${seite}:${ort.param ?? ''}:${objektId ?? ''}`}>{inhalt()}</Fehlergrenze></main>
+        <main><Fehlergrenze key={`${modus}:${seite}:${ort.param ?? ''}:${objektId ?? ''}`}><Suspense fallback={<div className="laedt" aria-busy="true" />}>{inhalt()}</Suspense></Fehlergrenze></main>
+        {/* Phone: the things done on the way, at the thumb. */}
+        <nav className="handyleiste" aria-label="Schnellzugriff">
+          <button aria-current={seite === 'postfach' ? 'page' : undefined} onClick={() => zu({ seite: 'postfach' })}>
+            <I.Inbox size={21} /><span>Postfach</span>{!!postfach && <b className="handy-zahl">{postfach}</b>}</button>
+          <button aria-current={seite === 'aufgaben' ? 'page' : undefined} onClick={() => zu({ seite: 'aufgaben' })}><I.SquareKanban size={21} /><span>Aufgaben</span></button>
+          <button className="handy-foto" aria-label="Foto aufnehmen" onClick={fotoMachen}><I.Camera size={24} /></button>
+          <Glocke klein />
+          <button onClick={() => setMenueOffen(true)} aria-expanded={menueOffen}><I.Menu size={21} /><span>Mehr</span></button>
+        </nav>
         <footer>{meldung ? <b>{meldung}</b> : objekt ? (modus === 'projekt' ? `Projekt: ${objekt.titel}${objekt.objekt ? ` · ${objekt.objekt}` : ''}` : `${objekt.bezeichnung} · ${OBJEKT_ART[objekt.art]}`) : ''}</footer>
         {ziehen && <div className="dropzone">Dateien loslassen – sie landen im Postfach. Auf eine Person, Einheit oder Buchung ziehen, um sie dort abzulegen.</div>}
         <Vorschaukarte />
-        {dokOffen && <DokumentDialog id={dokOffen.id} datei={dokOffen.datei} onClose={() => setDokOffen(null)} />}
+        {dokOffen && <Suspense fallback={null}><DokumentDialog id={dokOffen.id} datei={dokOffen.datei} onClose={() => setDokOffen(null)} /></Suspense>}
         <FrageHost />
         <MailHost />
       </div>

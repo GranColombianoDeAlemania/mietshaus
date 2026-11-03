@@ -58,7 +58,7 @@ app.whenReady().then(async () => {
   const zu = async (ziel) => { await js(`window.dispatchEvent(new CustomEvent('hv-zu', { detail: ${JSON.stringify(ziel)} }))`); await wait(500); };
   const titel = () => js(`document.querySelector('main h1')?.textContent ?? ''`);
   const klick = (text, im = 'document') => js(`(() => { const r = ${im}; if (!r) return false; const b = [...r.querySelectorAll('button')].find((b) => b.textContent.trim() === ${JSON.stringify(text)} && !b.disabled); b?.click(); return !!b; })()`);
-  const dialogZu = () => js(`(() => { const o = document.querySelector('.overlay'); if (!o) return false;
+  const dialogZu = () => js(`(() => { const o = [...document.querySelectorAll('.overlay')].pop(); if (!o) return false;
     const b = [...o.querySelectorAll('button')].reverse().find((b) => /^(Schließen|Abbrechen)$/.test(b.textContent.trim())); if (b) b.click();
     else document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); return true; })()`);
   const eingabe = (sel, wert) => js(`(() => { const i = document.querySelector(${JSON.stringify(sel)}); if (!i) return false;
@@ -161,7 +161,7 @@ app.whenReady().then(async () => {
     const pruef = await js(`[...document.querySelectorAll('.overlay .pruefliste li')].map((l) => l.className + ': ' + l.textContent)`);
     console.log(`Brief ${k}:`, (pruef ?? []).map((x) => x.slice(0, 110)).join('\n   '));
     await shot(`brief-anpassung-${k}`);
-    await klick('Brief erstellen und ablegen', "document.querySelector('.overlay')"); await wait(2000);
+    await klick('Brief erstellen und ablegen', "[...document.querySelectorAll('.overlay')].pop()"); await wait(2000);
     await dialogZu(); await wait(200); await dialogZu();
   }
   // Service-charge statement 2025, owners' statement, budget plan.

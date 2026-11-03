@@ -1,6 +1,7 @@
 // Invoice details in the document form: who sent it (letterhead and imprint), VAT per rate, the line items and the
 // labour and travel share for § 35a. Recognised by electron/belege.cjs, always editable here.
 import { euro, parseCent, zahl, type Row } from '../api';
+import { SYMBOL } from '../icons';
 
 export const ctText = (ct: number | null | undefined) => (ct == null ? '' : (ct / 100).toFixed(2).replace('.', ','));
 const ctAus = (s: string) => (s && s.trim() ? parseCent(s) : null);
@@ -105,7 +106,7 @@ export function BetraegeUndPositionen(props: { w: BelegWerte; set: (w: BelegWert
               <td><input className="num" inputMode="decimal" value={t.netto} onChange={(e) => setSteuer(i, 'netto', e.target.value)} /></td>
               <td><input className="num" inputMode="decimal" value={t.ust} onChange={(e) => setSteuer(i, 'ust', e.target.value)} /></td>
               <td className="num">{euro((ctAus(t.netto) ?? 0) + (ctAus(t.ust) ?? 0))}</td>
-              <td><button className="link klein" title="Zeile entfernen" onClick={() => set({ ...w, steuer: w.steuer.filter((_, j) => j !== i) })}>✕</button></td>
+              <td><button className="link klein" title="Zeile entfernen" aria-label="Zeile entfernen" onClick={() => set({ ...w, steuer: w.steuer.filter((_, j) => j !== i) })}><SYMBOL.entfernen size={14} /></button></td>
             </tr>
           ))}
         </tbody>
@@ -131,7 +132,7 @@ export function BetraegeUndPositionen(props: { w: BelegWerte; set: (w: BelegWert
           <input aria-label="Einheit" value={p.einheit} onChange={(e) => setPos(i, 'einheit', e.target.value)} />
           <input className="num" inputMode="decimal" aria-label="Betrag" value={p.betrag} onChange={(e) => setPos(i, 'betrag', e.target.value)} />
           <select aria-label="Art" value={p.art} onChange={(e) => setPos(i, 'art', e.target.value)}>{ARTEN.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
-          <button className="link klein" title="Position entfernen" onClick={() => set({ ...w, positionen: w.positionen.filter((_, j) => j !== i) })}>✕</button>
+          <button className="link klein" title="Position entfernen" aria-label="Position entfernen" onClick={() => set({ ...w, positionen: w.positionen.filter((_, j) => j !== i) })}><SYMBOL.entfernen size={14} /></button>
         </div>
       ))}
       <p className="buttons klein">

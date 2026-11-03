@@ -1,6 +1,7 @@
 // Bank access of an object account via FinTS (electron/fints.cjs): set up once, then fetch the transactions into the
 // bank import. The PIN is typed each time and only passes through to the bank; approval by pushTAN in the banking app
 // (waited for here) or by entering a TAN.
+import { Fenster, FensterTitel } from '../ui';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { call, fehler, fehlerText, type Row } from '../api';
 import { anfrage } from '../bruecke';
@@ -144,12 +145,12 @@ function Dialog(props: { objekt: Row; status: Row; art: 'einrichten' | 'abrufen'
 
 function Rahmen(props: { titel: string; onClose: () => void; children: ReactNode }) {
   return (
-    <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && props.onClose()}>
+    <Fenster onClose={props.onClose}>
       <div className="dialog">
-        <h2>{props.titel}</h2>
+        <FensterTitel>{props.titel}</FensterTitel>
         {props.children}
         <div className="buttons"><span className="spacer" /><button onClick={props.onClose}>Schließen</button></div>
       </div>
-    </div>
+    </Fenster>
   );
 }

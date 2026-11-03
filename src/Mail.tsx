@@ -1,6 +1,7 @@
 // Writing an e-mail from Mietshaus: recipient, subject, text and documents of the archive as attachments. With a
 // sending server set up (Einstellungen → E-Mail-Versand) the server sends it and files it in the archive; otherwise
 // the mail program opens (mailto, without attachments).
+import { Fenster, FensterTitel } from './ui';
 import { useEffect, useState } from 'react';
 import { call, fehler, type Row } from './api';
 import { anfrage } from './bruecke';
@@ -36,9 +37,9 @@ export function MailHost() {
     } catch (e) { fehler(e); } finally { setLaeuft(false); }
   };
   return (
-    <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && !laeuft && setV(null)}>
+    <Fenster onClose={() => setV(null)} schliessbar={!laeuft}>
       <div className="dialog">
-        <h2>E-Mail schreiben</h2>
+        <FensterTitel>E-Mail schreiben</FensterTitel>
         <div className="maske">
           <label className="breit">An<input autoFocus value={f.an} onChange={(e) => setF({ ...f, an: e.target.value })} placeholder="name@beispiel.de" /></label>
           <label className="breit">Betreff<input value={f.betreff} onChange={(e) => setF({ ...f, betreff: e.target.value })} /></label>
@@ -55,6 +56,6 @@ export function MailHost() {
           <button className="primary" onClick={senden} disabled={laeuft || !f.an || !f.betreff}>{laeuft ? 'Sendet …' : 'Senden'}</button>
         </div>
       </div>
-    </div>
+    </Fenster>
   );
 }

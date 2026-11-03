@@ -207,6 +207,20 @@ From the pick of 28.10.2026 („Paket 1 – ich will nichts bezahlen; Paket 2 so
 | 0.16.1 Firmenname | Name cut after the legal form and at imprint words (Sitz, Registergericht, Tel. …); order: sender line above the window, letterhead with legal form, largest writing at the top (OCR line heights), imprint, first line; checked against the e-mail/web domain, else marked „unsicher“; learnt from the matching contact or the newest filed document with the same VAT id/IBAN/e-mail | done |
 | 0.16.2 Kontakte & Duplikate | Filing or booking an invoice makes its sender a contact (found first by VAT id, IBAN, e-mail or name without legal form – never twice); the same invoice twice (same number, amount, date if known, sender by name/contact/VAT id) is marked in the inbox and refused when filing, batch filing, drag & drop and booking (app and Claude) once a copy is filed or booked | done |
 
+## Version 0.17 – work basket, tasks, bell, faster on every device
+
+| Area | Contents | Status |
+|------|----------|--------|
+| Architektur | Pages load on first use (`React.lazy`, main bundle 846 → 385 kB, frequent pages preloaded); `useLoad` on a TanStack Query cache (instant on revisit, refreshed in the background, cleared on sign-out) | done |
+| Bausteine | Radix dialogs for every window (`Fenster` in `ui.tsx`: focus kept, Escape, stacked windows), Radix popover for the bell; Lucide symbols instead of emoji (`icons.ts`); `Tabelle.tsx` with TanStack Table + Virtual (sorting, quick filter, arrow keys, virtual from 200 rows) for the journal and all simple lists | done |
+| Arbeitskorb | `Arbeitskorb.tsx`: queue left, work right, J/K, the next item opens after filing/booking; phone: list ↔ item; inbox rebuilt on it („Ablegen und weiter“) | done |
+| Aufgaben | New page across all houses: board (drag, status menu on phones) and work basket; filters mine/house/person/due; comments and status history with names; assignments logged; daily reminder (due tomorrow/overdue) | done |
+| Glocke | `mitteilungen` table per user, every notification also kept there; bell with unread count, mark read, jump to target; new kinds `faellig`, `kommentar` | done |
+| Fotos | Photos uploaded at a house/unit/case/project are filed at once as „Foto“; EXIF time → date and title; house location saved on the spot, phone camera button files at the house within 150 m, else inbox | done |
+| Wiederkehrende Rechnungen | `rechnungWieBisher` (sender booked ≥ 2× alike) → „So buchen und weiter“; „n bekannte Rechnungen buchen“ in the inbox | done |
+| Fehlersperren | Server questions (409 + `bestaetigen`, resent with `X-Bestaetigt`): posting date > 400 days back / > 60 days ahead, tenant account outside the lease, lower meter reading, IBAN change, invoice > 5× the sender's maximum | done |
+| Handy | Bottom bar (Postfach, Aufgaben, camera, bell, more), 42 px touch targets, tablet sidebar narrower | done |
+
 ## Development
 
 ```

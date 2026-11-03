@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
+import { Fenster, FensterTitel } from './ui';
 import { call, parseZahl, type Row } from './api';
 import { strasseTeilen, strasseVerbinden } from './adresse';
 import { orteZurPlz } from './plz';
@@ -93,7 +94,7 @@ export function FormDialog(props: {
 
   let section: string | undefined;
   return (
-    <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && props.onClose()}>
+    <Fenster onClose={props.onClose}>
       <form
         className="dialog"
         onSubmit={(e) => {
@@ -101,7 +102,7 @@ export function FormDialog(props: {
           if (!missing.length) run(() => props.onSave({ ...(props.row.id ? { id: props.row.id } : {}), ...fromForm(fields, f) }));
         }}
       >
-        <h2>{props.title}</h2>
+        <FensterTitel>{props.title}</FensterTitel>
         <div className="grid">
           {fields.flatMap((d) => {
             const out = [];
@@ -181,6 +182,6 @@ export function FormDialog(props: {
           </button>
         </div>
       </form>
-    </div>
+    </Fenster>
   );
 }

@@ -9,6 +9,7 @@ import { Jahreswechsel, jahreswechselZeit } from './Jahreswechsel';
 import { CockpitKpis, CockpitRadar, CockpitVorschau } from './Kennzahlen';
 import { Kennzahl } from '../zeiger';
 import { BelegFoto } from '../Foto';
+import { SYMBOL } from '../icons';
 
 const STUFE: Record<string, [string, string]> = { rot: ['●', 'Jetzt handeln'], orange: ['●', 'Bald / prüfen'], gelb: ['●', 'Chance / Hinweis'] };
 
@@ -84,7 +85,7 @@ export function Uebersicht(props: { modus: Modus; objekte: Row[]; oeffne: (seite
         <div>
           {!!aufgaben?.length && (
             <div className="panel">
-              <div className="panelkopf"><h3>Meine Aufgaben</h3></div>
+              <div className="panelkopf"><h3>Meine Aufgaben</h3><span className="spacer" /><L zu={{ seite: 'aufgaben' }}>Zum Board</L></div>
               <ul className="hinweisliste">
                 {aufgaben.map((v) => (
                   <li key={'m' + v.id}>
@@ -143,7 +144,7 @@ function Hinweis(props: { h: Row; oeffne: (seite: string, objektId?: number) => 
       <div className="aktionen">
         {h.ziel && <button onClick={() => props.oeffne(h.ziel, h.objekt_id)}>Öffnen</button>}
         {!h.dauerhaft && <button title="30 Tage ausblenden" onClick={() => setzen('ignoriert', 30)}>Später</button>}
-        {!h.dauerhaft && <button title="Als erledigt markieren" onClick={() => setzen('erledigt')}>✓</button>}
+        {!h.dauerhaft && <button title="Als erledigt markieren" aria-label="Als erledigt markieren" onClick={() => setzen('erledigt')}><SYMBOL.erledigt size={15} /></button>}
       </div>
     </li>
   );
