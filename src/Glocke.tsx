@@ -4,11 +4,12 @@ import { useEffect, useState } from 'react';
 import * as Popover from '@radix-ui/react-popover';
 import { AlertTriangle, Bell, CalendarClock, CheckCheck, Inbox, ListChecks, MessageSquare, Server, type LucideIcon } from 'lucide-react';
 import { call, type Row } from './api';
+import { Bild, type SymbolName } from './Symbol';
 import { useLoad } from './useLoad';
 import { useNavi } from './navi';
 
-const SYMBOLE: Record<string, LucideIcon> = { postfach: Inbox, aufgaben: ListChecks, faellig: CalendarClock, kommentar: MessageSquare,
-  sicherung: AlertTriangle, server: Server };
+const SYMBOLE: Record<string, [SymbolName, LucideIcon]> = { postfach: ['postfach', Inbox], aufgaben: ['aufgaben', ListChecks], faellig: ['kalender', CalendarClock],
+  kommentar: ['briefe', MessageSquare], sicherung: ['status', AlertTriangle], server: ['status', Server] };
 
 const wann = (iso: string) => {
   const min = Math.round((Date.now() - Date.parse(iso)) / 60000);
@@ -34,7 +35,7 @@ export function Glocke(props: { klein?: boolean }) {
     <Popover.Root open={offen} onOpenChange={setOffen}>
       <Popover.Trigger asChild>
         <button className={`rund glocke${props.klein ? ' klein' : ''}`} aria-label={zahl ? `Mitteilungen, ${zahl} ungelesen` : 'Mitteilungen'} title="Mitteilungen">
-          <Bell size={17} />{!!zahl && <span className="glocke-zahl" aria-hidden="true">{zahl > 99 ? '99+' : zahl}</span>}
+          <Bild name="glocke" groesse={props.klein ? 28 : 24} ersatz={Bell} />{props.klein && <span>Mitteilungen</span>}{!!zahl && <span className="glocke-zahl" aria-hidden="true">{zahl > 99 ? '99+' : zahl}</span>}
         </button>
       </Popover.Trigger>
       <Popover.Portal>
@@ -48,11 +49,11 @@ export function Glocke(props: { klein?: boolean }) {
           {liste && !liste.length && <p className="hinweis klein glocke-leer">Keine Mitteilungen. Neue Dokumente, zugewiesene und fällige Aufgaben erscheinen hier.</p>}
           <ul>
             {liste?.map((m) => {
-              const S = SYMBOLE[m.art] ?? Bell;
+              const [bild, S] = SYMBOLE[m.art] ?? (['glocke', Bell] as [SymbolName, LucideIcon]);
               return (
                 <li key={m.id}>
                   <button className={m.gelesen ? '' : 'ungelesen'} onClick={() => oeffnen(m)}>
-                    <S size={16} aria-hidden="true" />
+                    <Bild name={bild} groesse={26} ersatz={S} />
                     <span className="glocke-text"><b>{m.titel}</b>{m.text && <span className="klein">{m.text}</span>}</span>
                     <span className="klein hinweis glocke-zeit">{wann(m.erstellt)}</span>
                   </button>

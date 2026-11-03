@@ -17,6 +17,7 @@ for i in $(seq 1 60); do curl -fsS "$URL/api/status" >/dev/null 2>&1 && break; s
 curl -fsS "$URL/api/status" | grep -q '"einrichtung":true'
 echo "Status ok"
 test "$(curl -fsS -o /dev/null -w '%{content_type}' "$URL/logo.svg")" = "image/svg+xml"
+test "$(curl -fsS -o /dev/null -w '%{content_type}' "$URL/symbole/cockpit.svg")" = "image/svg+xml"
 echo "Logo ok"
 
 PW="rauch-$(date +%s)-test"

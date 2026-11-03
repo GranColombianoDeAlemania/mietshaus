@@ -61,6 +61,8 @@ function client(url) {
   {
     const logo = await fremd.anfrage('/logo.svg');
     pruefe('Logo wird ausgeliefert', logo.ok && logo.headers.get('content-type') === 'image/svg+xml' && (await logo.text()).includes('<svg'));
+    const sym = await fremd.anfrage('/symbole/postfach.svg');
+    pruefe('Symbole werden ausgeliefert', sym.ok && sym.headers.get('content-type') === 'image/svg+xml' && (await sym.text()).includes('<svg'));
     pruefe('Manifest und Service-Worker da', (await fremd.anfrage('/manifest.webmanifest')).ok && (await fremd.anfrage('/sw.js')).ok);
     pruefe('Fehlende Datei 404', (await fremd.anfrage('/gibt-es-nicht.png')).status === 404);
     pruefe('Seitenadresse liefert die App', (await (await fremd.anfrage('/objekte')).text()).includes('<div id="root">'));

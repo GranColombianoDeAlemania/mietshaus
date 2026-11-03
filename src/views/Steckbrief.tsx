@@ -95,7 +95,7 @@ export function Steckbrief(props: { objekt: Row; oeffne: (seite: string, id?: nu
       <div className="panel">
         <div className="panelkopf"><h3>Hausansicht</h3><L zu={{ seite: 'einheiten', objektId: o.id }}>Alle Einheiten →</L></div>
         {haus && haus.length > 0 && <Hausansicht etagen={haus} weg={props.modus === 'weg'} />}
-        {einheiten && !einheiten.length && <Leer text="Noch keine Einheiten." aktion={<button onClick={() => navi.zu({ seite: 'einheiten', objektId: o.id })}>Einheiten anlegen</button>} />}
+        {einheiten && !einheiten.length && <Leer symbol="einheiten" text="Noch keine Einheiten." aktion={<button onClick={() => navi.zu({ seite: 'einheiten', objektId: o.id })}>Einheiten anlegen</button>} />}
       </div>
       <div className="raster2">
         <div className="spalte">

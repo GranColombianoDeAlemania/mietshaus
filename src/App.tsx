@@ -4,6 +4,7 @@ import { useLoad } from './useLoad';
 import { Fehlergrenze } from './ui';
 import { Ampel } from './Ampel';
 import { Glocke } from './Glocke';
+import { Bild, MODUS_SYMBOL, SEITEN_SYMBOL } from './Symbol';
 import { MailHost } from './Mail';
 import { desktopMitteilungen } from './mitteilungen';
 import { Suche, type Befehl } from './Suche';
@@ -113,7 +114,7 @@ const ICON: Record<string, I.LucideIcon> = {
   nk: I.Calculator, wegabr: I.Calculator, wipl: I.ClipboardList, ruecklagen: I.PiggyBank, auswertung: I.ChartColumn,
   kaution: I.Shield, anpassung: I.TrendingUp, vermietung: I.UserPlus, uebergabe: I.ClipboardCheck, versammlungen: I.Gavel, beschluesse: I.ScrollText,
   kontakte: I.Phone, schluesselv: I.KeyRound, versicherungen: I.Umbrella,
-  briefe: I.Mail, vorgaenge: I.ListChecks, termine: I.CalendarDays,
+  briefe: I.Mail, vorgaenge: I.ListChecks, termine: I.CalendarDays, kalender: I.CalendarDays,
   pruefung: I.ShieldCheck, status: I.Activity, protokoll: I.History, export: I.Download, einstellungen: I.Settings,
 };
 
@@ -490,6 +491,8 @@ export default function App(props: { benutzer?: Row | null }) {
     { label: 'Zurück', stichworte: 'verlauf', icon: I.ChevronLeft, run: zurueck },
     { label: 'Hell / Dunkel umschalten', stichworte: 'dunkelmodus farbschema', icon: I.Moon,
       run: () => anzeige.setzeThema(document.documentElement.dataset.thema === 'dunkel' ? 'hell' : 'dunkel') },
+    { label: 'Glas-Effekt an / aus', stichworte: 'liquid glass transparenz darstellung', icon: I.Sparkles,
+      run: () => anzeige.setzeGlas(document.documentElement.dataset.glas === 'an' ? 'aus' : 'an') },
     { label: 'Datensicherung erstellen', stichworte: 'backup', icon: I.Download, run: () => { window.hv.sicherung(); } },
     ...sichtbar.map((x) => ({ label: `Gehe zu: ${labelVon(x, modus)}`, stichworte: x.gruppe, icon: ICON[x.id], run: () => zu({ seite: x.id }) })),
   ];
@@ -529,7 +532,7 @@ export default function App(props: { benutzer?: Row | null }) {
           <div className="marke"><img src="/logo.svg" alt="" width={26} height={26} /><span>Mietshaus</span></div>
           <div className="modi" role="tablist">
             {([['miete', 'Miete', I.KeyRound], ['weg', 'WEG', I.Building2], ['projekt', 'Projekte', I.Hammer]] as [Modus, string, I.LucideIcon][]).map(([m, l, Icon]) => (
-              <button key={m} role="tab" className={`modus-${m}`} aria-selected={modus === m} onClick={() => wechsle(m)}><Icon size={18} strokeWidth={1.8} /><span>{l}</span></button>
+              <button key={m} role="tab" className={`modus-${m}`} aria-selected={modus === m} onClick={() => wechsle(m)}><Bild name={MODUS_SYMBOL[m]} groesse={26} ersatz={Icon} /><span>{l}</span></button>
             ))}
           </div>
           <nav>
@@ -540,7 +543,7 @@ export default function App(props: { benutzer?: Row | null }) {
                   const Icon = ICON[s.id] ?? I.Dot;
                   return (
                     <button key={s.id} className={`eintrag${markiert === s.id ? ' active' : ''}`} onClick={() => zu({ seite: s.id })} onContextMenu={(e) => eintragMenue(e, s.id)}>
-                      <Icon size={16} strokeWidth={1.9} /><span className="text">{labelVon(s, modus)}</span>
+                      {SEITEN_SYMBOL[s.id] ? <Bild name={SEITEN_SYMBOL[s.id]} groesse={22} ersatz={Icon} /> : <Icon size={16} strokeWidth={1.9} />}<span className="text">{labelVon(s, modus)}</span>
                       {s.id === 'postfach' && !!postfach && <span className="zaehler">{postfach}</span>}
                       {s.id === 'vorschlaege' && !!vorschlagZahl && <span className="zaehler">{vorschlagZahl}</span>}
                     </button>
@@ -558,7 +561,7 @@ export default function App(props: { benutzer?: Row | null }) {
                     return (
                       <div key={s.id}>
                         <button className={`eintrag${markiert === s.id ? ' active' : ''}`} onClick={() => zu({ seite: s.id })} onContextMenu={(e) => eintragMenue(e, s.id)}>
-                          <Icon size={16} strokeWidth={1.9} /><span className="text">{labelVon(s, modus)}</span>
+                          {SEITEN_SYMBOL[s.id] ? <Bild name={SEITEN_SYMBOL[s.id]} groesse={22} ersatz={Icon} /> : <Icon size={16} strokeWidth={1.9} />}<span className="text">{labelVon(s, modus)}</span>
                           {s.id === 'postfach' && !!postfach && <span className="zaehler">{postfach}</span>}
                       {s.id === 'vorschlaege' && !!vorschlagZahl && <span className="zaehler">{vorschlagZahl}</span>}
                           {s.id === 'einheiten' && !!baumEinheiten?.length && (
@@ -621,11 +624,11 @@ export default function App(props: { benutzer?: Row | null }) {
         {/* Phone: the things done on the way, at the thumb. */}
         <nav className="handyleiste" aria-label="Schnellzugriff">
           <button aria-current={seite === 'postfach' ? 'page' : undefined} onClick={() => zu({ seite: 'postfach' })}>
-            <I.Inbox size={21} /><span>Postfach</span>{!!postfach && <b className="handy-zahl">{postfach}</b>}</button>
-          <button aria-current={seite === 'aufgaben' ? 'page' : undefined} onClick={() => zu({ seite: 'aufgaben' })}><I.SquareKanban size={21} /><span>Aufgaben</span></button>
-          <button className="handy-foto" aria-label="Foto aufnehmen" onClick={fotoMachen}><I.Camera size={24} /></button>
+            <Bild name="postfach" groesse={28} ersatz={I.Inbox} /><span>Postfach</span>{!!postfach && <b className="handy-zahl">{postfach}</b>}</button>
+          <button aria-current={seite === 'aufgaben' ? 'page' : undefined} onClick={() => zu({ seite: 'aufgaben' })}><Bild name="aufgaben" groesse={28} ersatz={I.SquareKanban} /><span>Aufgaben</span></button>
+          <button className="handy-foto" aria-label="Foto aufnehmen" onClick={fotoMachen}><Bild name="kamera" groesse={34} ersatz={I.Camera} /></button>
           <Glocke klein />
-          <button onClick={() => setMenueOffen(true)} aria-expanded={menueOffen}><I.Menu size={21} /><span>Mehr</span></button>
+          <button onClick={() => setMenueOffen(true)} aria-expanded={menueOffen}><Bild name="mehr" groesse={28} ersatz={I.Menu} /><span>Mehr</span></button>
         </nav>
         <footer>{meldung ? <b>{meldung}</b> : objekt ? (modus === 'projekt' ? `Projekt: ${objekt.titel}${objekt.objekt ? ` · ${objekt.objekt}` : ''}` : `${objekt.bezeichnung} · ${OBJEKT_ART[objekt.art]}`) : ''}</footer>
         {ziehen && <div className="dropzone">Dateien loslassen – sie landen im Postfach. Auf eine Person, Einheit oder Buchung ziehen, um sie dort abzulegen.</div>}

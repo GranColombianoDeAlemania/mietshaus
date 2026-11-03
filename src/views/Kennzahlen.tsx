@@ -31,7 +31,7 @@ export function CockpitKpis(props: { c: Row; weg: boolean }) {
   const ohnePreis = (v?.luecken ?? []).filter((l: Row) => l.tage > 0 && !l.ct);
   return (
     <div className="kz-raster">
-      <Kennzahl titel={`${props.weg ? 'Hausgeld' : 'Mieteingang'} ${monat}`} breite={props.weg ? 4 : 3} fuss={<Weiter zu={{ seite: 'op' }}>Offene Posten</Weiter>}>
+      <Kennzahl symbol="op" titel={`${props.weg ? 'Hausgeld' : 'Mieteingang'} ${monat}`} breite={props.weg ? 4 : 3} fuss={<Weiter zu={{ seite: 'op' }}>Offene Posten</Weiter>}>
         {e.soll_ct > 0 ? (
           <RingZeile ring={<Ring wert={e.quote * 100} zonen={ZONEN_QUOTE} text={prozent(Math.floor(e.quote * 100))} titel={`${prozent(e.quote * 100, 1)} des Solls bezahlt`} />}
             wert={<>{euro0(e.ist_ct)}<small>von {euro0(e.soll_ct)}</small></>}>
@@ -42,7 +42,7 @@ export function CockpitKpis(props: { c: Row; weg: boolean }) {
         ) : <p className="kz-text">Für {monat} ist noch nichts gefordert.</p>}
       </Kennzahl>
       {v && (
-        <Kennzahl titel="Vermietet (12 Monate)" breite={3} fuss={<Weiter zu={{ seite: 'vermietung' }}>Vermietung</Weiter>}>
+        <Kennzahl symbol="einheiten" titel="Vermietet (12 Monate)" breite={3} fuss={<Weiter zu={{ seite: 'vermietung' }}>Vermietung</Weiter>}>
           <RingZeile ring={<Ring wert={v.quote == null ? null : v.quote * 100} zonen={ZONEN_BELEGUNG} text={v.quote == null ? '–' : prozent(Math.floor(v.quote * 1000) / 10, v.quote < 1 ? 1 : 0)}
             titel="Vermietete Fläche über die letzten 12 Monate, tagegenau; selbst genutzte Flächen zählen nicht mit" />}
             wert={<>{v.vermietet}<small>von {v.einheiten} vermietet</small></>}>
@@ -55,7 +55,7 @@ export function CockpitKpis(props: { c: Row; weg: boolean }) {
               : 'Kein Leerstand in den letzten 12 Monaten.'}{v.selbst ? ' Selbst genutzt zählt nicht als Leerstand.' : ''}</div>
         </Kennzahl>
       )}
-      <Kennzahl titel="Rückstände nach Alter" breite={props.weg ? 4 : 3} fuss={r.summe_ct > 0 ? <Weiter zu={{ seite: 'op' }}>Offene Posten</Weiter> : undefined}>
+      <Kennzahl symbol="darlehen" titel="Rückstände nach Alter" breite={props.weg ? 4 : 3} fuss={r.summe_ct > 0 ? <Weiter zu={{ seite: 'op' }}>Offene Posten</Weiter> : undefined}>
         <div className="kz-wert">{euro0(r.summe_ct)}{r.konten.length ? <small>{r.konten.length} {r.konten.length === 1 ? 'Konto' : 'Konten'}</small> : null}</div>
         {r.summe_ct > 0 ? <Stapel teile={r.stufen.map((s: Row, i: number) => ({ label: s.label, ct: s.ct, farbe: ALTER_FARBEN[i] }))} />
           : <p className="kz-text">Keine Rückstände – alle fälligen Forderungen sind bezahlt.</p>}
@@ -65,7 +65,7 @@ export function CockpitKpis(props: { c: Row; weg: boolean }) {
           </div>
         ))}
       </Kennzahl>
-      <Kennzahl titel={`Jan–${MONAT_LANG[Number(j.bis.slice(5, 7)) - 1].slice(0, 3)} gegen Vorjahr`} breite={props.weg ? 4 : 3}>
+      <Kennzahl symbol="rendite" titel={`Jan–${MONAT_LANG[Number(j.bis.slice(5, 7)) - 1].slice(0, 3)} gegen Vorjahr`} breite={props.weg ? 4 : 3}>
         <KzListe zeilen={j.zeilen.map((x: Row, i: number) => [x.label, <>{euro0(x.ct)} {aenderung(x.aenderung, x.gut)}</>, i === 2 ? 'summe' : undefined])} />
         <div className="kz-text">bis {datum(j.bis)}, nach Zahlungseingang und Buchungsdatum</div>
       </Kennzahl>
@@ -78,7 +78,7 @@ export function CockpitVorschau(props: { c: Row }) {
   const f = props.c.fristen;
   return (
     <div className="kz-raster">
-      <Kennzahl titel="Kontostand – Vorschau 90 Tage" breite={7}>
+      <Kennzahl symbol="konten" titel="Kontostand – Vorschau 90 Tage" breite={7}>
         <div className="kz-zeile">
           <span className="kz-wert">{euro0(v.start_ct)}<small>heute</small></span>
           <span className="kz-text">tiefster Stand <b className={v.tief.ct < 0 ? 'negativ' : ''}>{euro0(v.tief.ct)}</b> am {datum(v.tief.datum)}{v.tief.gruende.length ? ` (${v.tief.gruende.join(', ')})` : ''}</span>
@@ -89,7 +89,7 @@ export function CockpitVorschau(props: { c: Row }) {
           <KzListe zeilen={v.ereignisse.map((x: Row) => [<><span className="datumchip">{datum(x.datum).slice(0, 6)}</span>{x.text}</>, <span className={x.ct < 0 ? 'minus' : 'plus'}>{x.ct < 0 ? '−' : '+'}{euro0(Math.abs(x.ct))}</span>])} />
         </details>
       </Kennzahl>
-      <Kennzahl titel="Fristen in den nächsten 90 Tagen" breite={5}>
+      <Kennzahl symbol="kalender" titel="Fristen in den nächsten 90 Tagen" breite={5}>
         {f.length ? (
           <ul className="kz-liste">{f.map((x: Row, i: number) => (
             <li key={i}><span><span className="datumchip">{datum(x.datum).slice(0, 6)}</span>{x.ziel ? <L zu={x.ziel}>{x.text}</L> : x.text}</span>
@@ -113,7 +113,7 @@ export function CockpitRadar(props: { c: Row; children?: ReactNode }) {
   return (
     <div className="kz-raster">
       {r ? (
-        <Kennzahl titel="Mieterhöhungs-Radar" breite={7} fuss={<Weiter zu={{ seite: 'anpassung' }}>Mietanpassungen</Weiter>}>
+        <Kennzahl symbol="anpassung" titel="Mieterhöhungs-Radar" breite={7} fuss={<Weiter zu={{ seite: 'anpassung' }}>Mietanpassungen</Weiter>}>
           <div className="kz-zeile"><span className="kz-wert">+{euro0(r.summe_ct)}<small>pro Monat möglich</small></span>
             {r.eintraege.length > 0 && <span className="chip akzent">{r.eintraege.length} {r.eintraege.length === 1 ? 'Mietverhältnis' : 'Mietverhältnisse'}</span>}</div>
           {r.eintraege.length > 0 && <ul className="kz-liste">{r.eintraege.map((x: Row) => (
@@ -127,7 +127,7 @@ export function CockpitRadar(props: { c: Row; children?: ReactNode }) {
             : 'Mit Sperrfristen, Kappungsgrenze und Zugang in drei Tagen gerechnet; der Brief wird vor dem Versand geprüft.'}</div>
         </Kennzahl>
       ) : props.children}
-      <Kennzahl titel={`Kosten ${k.jahr} nach Art`} breite={5}>
+      <Kennzahl symbol="betriebskosten" titel={`Kosten ${k.jahr} nach Art`} breite={5}>
         <div className="kz-wert">{euro0(k.summe_ct)}<small>bis {datum(k.bis)}</small></div>
         <Ringdiagramm teile={teile} />
         {k.summe_ct > 0 && <div className="kz-text">Umlagefähig {prozent((k.umlagefaehig_anteil ?? 0) * 100)}{k.nicht_umlagefaehig_qm_ct != null ? ` · nicht umlagefähig ${qm(k.nicht_umlagefaehig_qm_ct)} bisher` : ''}</div>}

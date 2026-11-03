@@ -2,6 +2,7 @@
 import { Component, useEffect, useRef, useState, type ReactElement, type ReactNode } from 'react';
 import * as RD from '@radix-ui/react-dialog';
 import { KLASSEN, kontoLabel, type Row } from './api';
+import { Bild, type SymbolName } from './Symbol';
 
 // Folds case and umlauts, so "uberw" finds "Überweisung".
 const falten = (t: string) => t.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/ß/g, 'ss');
@@ -180,8 +181,8 @@ export const Chip = (props: { art?: 'rot' | 'gelb' | 'gruen' | 'akzent' | 'miete
   <span className={`chip${props.art ? ' ' + props.art : ''}`} title={props.title}>{props.children}</span>;
 
 // Empty state: says what is missing and offers the next step.
-export function Leer(props: { text: ReactNode; aktion?: ReactNode }) {
-  return <div className="leerzustand"><p>{props.text}</p>{props.aktion}</div>;
+export function Leer(props: { text: ReactNode; aktion?: ReactNode; symbol?: SymbolName }) {
+  return <div className="leerzustand">{props.symbol && <Bild name={props.symbol} groesse={88} className="leer-bild" />}<p>{props.text}</p>{props.aktion}</div>;
 }
 
 // ---------- Sortable tables ----------

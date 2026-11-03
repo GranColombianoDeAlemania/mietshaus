@@ -4,7 +4,7 @@ import { abmelden, anfrage, dateienWaehlen, passkeyHinzufuegen, passkeyMoeglich 
 import { anleitungHtml, einladungsLink, verbindenLink, type Einladung } from '../einladung';
 import { ARTEN, homeBildschirmNoetig, pushAbo, pushAusschalten, pushEinschalten, pushMoeglich } from '../mitteilungen';
 import { useLoad } from '../useLoad';
-import { anzeige, SCHRIFTGROESSEN, type Thema } from '../anzeige';
+import { anzeige, SCHRIFTGROESSEN, type Glas, type SymbolStil, type Thema } from '../anzeige';
 import { strasseTeilen, strasseVerbinden } from '../adresse';
 import { orteZurPlz } from '../plz';
 import { Tabs } from '../ui';
@@ -265,6 +265,8 @@ function Automatik() {
 function Darstellung() {
   const [thema, setThema] = useState<Thema>(anzeige.thema());
   const [schrift, setSchrift] = useState(anzeige.schrift());
+  const [glas, setGlas] = useState<Glas>(anzeige.glas());
+  const [symbole, setSymbole] = useState<SymbolStil>(anzeige.symbole());
   return (
     <div className="block">
       <h3>Darstellung</h3>
@@ -275,7 +277,14 @@ function Darstellung() {
         <Tabs tabs={SCHRIFTGROESSEN.map(([f, l]) => [String(f), l] as [string, string])} value={String(schrift)}
           onChange={(f) => { anzeige.setzeSchrift(Number(f)); setSchrift(Number(f)); }} />
       </div>
-      <p className="klein hinweis">Gilt für diesen Computer. Die Schrift lässt sich auch jederzeit mit ⌘+ und ⌘− anpassen.</p>
+      <div className="toolbar">
+        <span>Glas-Effekt</span>
+        <Tabs tabs={[['auto', 'Automatisch'], ['an', 'An'], ['aus', 'Aus']]} value={glas} onChange={(g) => { anzeige.setzeGlas(g); setGlas(g); }} />
+        <span style={{ marginLeft: 20 }}>Symbole</span>
+        <Tabs tabs={[['illustriert', 'Illustriert'], ['schlicht', 'Schlicht']]} value={symbole} onChange={(x) => { anzeige.setzeSymbole(x); setSymbole(x); }} />
+      </div>
+      <p className="klein hinweis">Gilt für dieses Gerät. Die Schrift lässt sich auch jederzeit mit ⌘+ und ⌘− anpassen. „Automatisch“ verzichtet auf das Glas,
+        wenn am Gerät „Transparenz reduzieren“ eingeschaltet ist.</p>
     </div>
   );
 }

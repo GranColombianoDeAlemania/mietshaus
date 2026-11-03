@@ -4,6 +4,7 @@
 import { useState, type ReactNode } from 'react';
 import { datum, euro, type Row } from './api';
 import { L, type Ziel } from './navi';
+import { Bild, type SymbolName } from './Symbol';
 
 export const euro0 = (ct: number | null | undefined) =>
   new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(Math.round((ct ?? 0) / 100) || 0);
@@ -46,10 +47,10 @@ export function MiniRing(props: { wert: number | null; zonen?: Zonen; text?: str
 
 // A key figure tile; breite = columns of 12. Links to the list behind a figure sit at the bottom right (fuss),
 // so titles always have their full width; aktion is for a small edit button next to the title.
-export function Kennzahl(props: { titel: ReactNode; breite?: number; aktion?: ReactNode; fuss?: ReactNode; children: ReactNode; className?: string }) {
+export function Kennzahl(props: { titel: ReactNode; breite?: number; aktion?: ReactNode; fuss?: ReactNode; children: ReactNode; className?: string; symbol?: SymbolName }) {
   return (
     <section className={`kz b${props.breite ?? 3}${props.className ? ' ' + props.className : ''}`}>
-      <div className="kz-kopf"><h3>{props.titel}</h3>{props.aktion}</div>
+      <div className="kz-kopf">{props.symbol && <Bild name={props.symbol} groesse={26} className="kz-bild" />}<h3>{props.titel}</h3>{props.aktion}</div>
       {props.children}
       {props.fuss && <div className="kz-fuss">{props.fuss}</div>}
     </section>

@@ -56,7 +56,7 @@ export function Personen() {
         <button className="primary" onClick={() => setEdit({ land: 'Deutschland' })}>Neue Person</button>
       </div>
       <p className="hinweis klein">Das Adressbuch ist für Miet- und WEG-Verwaltung gemeinsam – eine Person kann Mieter und Eigentümer zugleich sein.</p>
-      {rows && !rows.length && <Leer text="Noch keine Personen. Mieter, Eigentümer, Handwerker und Ansprechpartner stehen alle hier." aktion={<button className="primary" onClick={() => setEdit({ land: 'Deutschland' })}>Erste Person anlegen</button>} />}
+      {rows && !rows.length && <Leer symbol="adressbuch" text="Noch keine Personen. Mieter, Eigentümer, Handwerker und Ansprechpartner stehen alle hier." aktion={<button className="primary" onClick={() => setEdit({ land: 'Deutschland' })}>Erste Person anlegen</button>} />}
       {!!rows?.length && <table>
         <thead>
           <tr><SortTh k="name" s={sort} set={setSort}>Name</SortTh><SortTh k="anschrift" s={sort} set={setSort}>Anschrift</SortTh><th>Telefon</th><SortTh k="email" s={sort} set={setSort}>E-Mail</SortTh><th>Rolle</th><th /></tr>

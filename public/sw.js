@@ -15,6 +15,13 @@ self.addEventListener('fetch', (e) => {
   // Built files carry a hash in their name: once kept, always right.
   if (u.pathname.startsWith('/assets/')) {
     e.respondWith(caches.open(OBERFLAECHE).then(async (c) => (await c.match(e.request)) ?? fetch(e.request).then((r) => { if (r.ok) c.put(e.request, r.clone()); return r; })));
+  } else if (u.pathname.startsWith('/symbole/')) {
+    // The illustrated symbols: shown from the store at once, refreshed in the background (they can change with an update).
+    e.respondWith(caches.open(OBERFLAECHE).then(async (c) => {
+      const alt = await c.match(e.request);
+      const neu = fetch(e.request).then((r) => { if (r.ok) c.put(e.request, r.clone()); return r; }).catch(() => alt ?? Response.error());
+      return alt ?? neu;
+    }));
   } else if (e.request.mode === 'navigate' || BILDER.includes(u.pathname)) {
     // The page and the icons: always fresh from the server, the kept copy only without a connection.
     const schluessel = e.request.mode === 'navigate' ? '/' : u.pathname;

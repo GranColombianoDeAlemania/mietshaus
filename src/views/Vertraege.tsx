@@ -126,10 +126,10 @@ export function Vertraege(props: { modus: Modus; objekt: Row }) {
           {a.neu}
         </button>
       </div>
-      {!personen?.length && <Leer text="Lege zuerst die Personen im Adressbuch an; hier ordnest du sie dann einer Einheit zu." aktion={<button onClick={() => navi.zu({ seite: 'personen' })}>Zum Adressbuch</button>} />}
+      {!personen?.length && <Leer symbol="adressbuch" text="Lege zuerst die Personen im Adressbuch an; hier ordnest du sie dann einer Einheit zu." aktion={<button onClick={() => navi.zu({ seite: 'personen' })}>Zum Adressbuch</button>} />}
       {!!personen?.length && !einheiten?.length && <Leer text="Dieses Objekt hat noch keine Einheiten." aktion={<button onClick={() => navi.zu({ seite: 'einheiten', objektId: props.objekt.id })}>Einheiten anlegen</button>} />}
       {rows && !!personen?.length && !!einheiten?.length && sichtbar.length === 0 && (
-        <Leer text={`Noch keine ${nurAktuell ? 'aktuellen ' : ''}${a.titel} für dieses Objekt.`} aktion={<button className="primary" onClick={neu}>{a.neu}</button>} />
+        <Leer symbol="mieter" text={`Noch keine ${nurAktuell ? 'aktuellen ' : ''}${a.titel} für dieses Objekt.`} aktion={<button className="primary" onClick={neu}>{a.neu}</button>} />
       )}
       {sichtbar.length > 0 && (
         <table>

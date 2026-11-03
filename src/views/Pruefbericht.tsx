@@ -32,7 +32,7 @@ export function Pruefbericht(props: { modus: Modus }) {
           <div className="kachel"><div className="wert">{r.geprueft}</div><div className="label">Prüfungen durchgeführt</div></div>
         </div>
       )}
-      {tab === 'pruefung' && r && !r.punkte.length && <Leer text="Alles in Ordnung – keine Auffälligkeiten gefunden." />}
+      {tab === 'pruefung' && r && !r.punkte.length && <Leer symbol="pruefung" text="Alles in Ordnung – keine Auffälligkeiten gefunden." />}
       {tab === 'pruefung' && gruppen.map((g) => (
         <div key={g} className="panel">
           <div className="panelkopf"><h3>{g}</h3></div>

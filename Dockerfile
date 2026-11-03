@@ -12,7 +12,7 @@ COPY public ./public
 COPY src ./src
 COPY electron ./electron
 # Logo, icons, manifest and service worker come from public/; without them the page shows no logo and push stays off.
-RUN npx vite build && test -f dist/logo.svg && test -f dist/sw.js && test -f dist/manifest.webmanifest
+RUN npx vite build && test -f dist/logo.svg && test -f dist/symbole/cockpit.svg && test -f dist/sw.js && test -f dist/manifest.webmanifest
 
 # ---- server ----
 FROM node:24-bookworm-slim

@@ -1,12 +1,13 @@
 // Tasks across all houses: a board (Offen → In Arbeit → Wartet → Erledigt, cards dragged between columns or moved with
 // the status menu on a phone) or a work basket to go through them one by one. Filters: mine, a house, a person.
 import { useState, type DragEvent } from 'react';
-import { CalendarClock, Columns3, ImageIcon, List, MessageSquare } from 'lucide-react';
+import { CalendarClock, Check, Columns3, ImageIcon, List, MessageSquare } from 'lucide-react';
 import { call, datum, fehler, heute, type Row } from '../api';
 import { useLoad } from '../useLoad';
 import { useAktion } from '../aktion';
 import { FormDialog } from '../Form';
 import { Arbeitskorb } from '../Arbeitskorb';
+import { Bild } from '../Symbol';
 import { STATUS, Vorgang, vorgangFelder } from './Kommunikation';
 
 const SPALTEN: [string, string][] = [['offen', 'Offen'], ['in_arbeit', 'In Arbeit'], ['wartet', 'Wartet'], ['erledigt', 'Erledigt']];
@@ -32,8 +33,14 @@ export function Aufgaben(props: { objekte: Row[] }) {
   useAktion('neue-aufgabe', neu);
   const liste = (rows ?? []).filter((v) => !nurFaellig || (v.status !== 'erledigt' && v.faellig && v.faellig <= heute()));
 
+  // Done: a short check pops up (src/styles.css .geschafft; not with "reduce motion").
+  const [geschafft, setGeschafft] = useState(0);
   const setzeStatus = async (v: Row, status: string) => {
-    try { await call('vorgangStatus', v.id, status); reload(); } catch (e) { fehler(e); }
+    try {
+      await call('vorgangStatus', v.id, status);
+      reload();
+      if (status === 'erledigt') { const t = Date.now(); setGeschafft(t); setTimeout(() => setGeschafft((x) => (x === t ? 0 : x)), 1200); }
+    } catch (e) { fehler(e); }
   };
   const ablegen = (e: DragEvent, status: string) => {
     e.preventDefault();
@@ -103,11 +110,12 @@ export function Aufgaben(props: { objekte: Row[] }) {
         </div>
       ) : (
         <Arbeitskorb eintraege={liste.filter((v) => v.status !== 'erledigt')} id={(v) => v.id} zeile={karte} zeilenKlasse={(v) => `prio${v.prioritaet}`}
-          leer="Keine offenen Aufgaben."
+          leer={<div className="alles-erledigt"><Bild name="aufgaben" groesse={88} className="leer-bild" /><p><b>Alles erledigt.</b> Keine offenen Aufgaben.</p></div>}
           detail={(v) => <Vorgang key={v.id} v={v} eingebettet onClose={reload}
             aktionen={<select value={v.status} aria-label="Status" onChange={(e) => setzeStatus(v, e.target.value)}>{STATUS.map(([k, t]) => <option key={k} value={k}>{t}</option>)}</select>} />} />
       )}
 
+      {!!geschafft && <div key={geschafft} className="geschafft" aria-hidden="true"><Check size={48} strokeWidth={3} /></div>}
       {offen && <Vorgang v={offen} onClose={() => { setOffen(null); reload(); }}
         aktionen={<button onClick={() => { setEdit(offen); setOffen(null); }}>Bearbeiten</button>} />}
       {edit && <FormDialog title={edit.id ? 'Aufgabe bearbeiten' : 'Neue Aufgabe'} row={edit}

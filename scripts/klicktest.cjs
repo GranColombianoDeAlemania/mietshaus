@@ -80,6 +80,13 @@ app.whenReady().then(async () => {
   let seitenZahl = 0, knopfZahl = 0, dialogZahl = 0;
   for (const [modus, objektId] of process.env.KLICK === '0' ? [] : [['miete', o], ['weg', w], ['projekt', null]]) {
     await zu({ seite: modus === 'projekt' ? 'pcockpit' : 'uebersicht', modus, ...(objektId ? { objektId } : {}) });
+    // The click round may have chosen "Schlicht" or glass "Aus" in the settings: back to the defaults for each mode.
+    await js(`localStorage.removeItem('symbole'); localStorage.removeItem('glas'); Object.assign(document.documentElement.dataset, { symbole: 'illustriert', glas: 'an' }); window.dispatchEvent(new Event('hv-anzeige'))`);
+    // Every illustrated symbol (sidebar, modes, cockpit tiles) loads.
+    await wait(700);
+    const kaputt = await js(`[...document.querySelectorAll('img.bild')].filter((i) => !i.complete || !i.naturalWidth).map((i) => i.getAttribute('src'))`);
+    if (kaputt?.length) meldeFehler(`Symbole fehlen (${modus}): ${kaputt.join(', ')}`);
+    if (!(await js(`document.querySelectorAll('nav img.bild').length`))) meldeFehler(`Keine Symbole in der Seitenleiste (${modus})`);
     const eintraege = await js(`[...document.querySelectorAll('nav .eintrag:not(.kind)')].map((b) => b.textContent.trim())`);
     for (const [ei, eintrag] of (eintraege ?? []).entries()) {
       const hin = async () => { await js(`document.querySelectorAll('nav .eintrag:not(.kind)')[${ei}]?.click()`); await wait(450); await js(stubs); };
@@ -104,6 +111,13 @@ app.whenReady().then(async () => {
     }
   }
   console.log(`Klickrunde: ${seitenZahl} Seiten, ${knopfZahl} Knöpfe, ${dialogZahl} Dialoge.`);
+  // Display settings: "schlicht" shows line icons instead of the drawings, glass can be switched off and on.
+  await js(`document.documentElement.dataset.symbole = 'schlicht'; window.dispatchEvent(new Event('hv-anzeige'))`); await wait(400);
+  if (await js(`document.querySelectorAll('nav img.bild').length`)) meldeFehler('Symbole „schlicht“ zeigt noch Zeichnungen');
+  if (!(await js(`document.querySelectorAll('nav .eintrag svg').length`))) meldeFehler('Symbole „schlicht“ zeigt keine Linien-Symbole');
+  await js(`document.documentElement.dataset.symbole = 'illustriert'; document.documentElement.dataset.glas = 'aus'; window.dispatchEvent(new Event('hv-anzeige'))`); await wait(300);
+  await shot('ohne-glas');
+  await js(`document.documentElement.dataset.glas = 'an'; window.dispatchEvent(new Event('hv-anzeige'))`); await wait(300);
 
   // ---------- 2. Detail pages ----------
   for (const z of [{ person: db.get('mietverhaeltnisse', V.v1.id).person_id }, { einheit: db.get('mietverhaeltnisse', V.v3b.id).einheit_id }, { vertrag: V.v2.id, typ: 'miete' },

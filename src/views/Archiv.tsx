@@ -10,6 +10,7 @@ import { emailSchreiben } from '../Mail';
 import { BelegFoto } from '../Foto';
 import { SYMBOL } from '../icons';
 import { Arbeitskorb } from '../Arbeitskorb';
+import { Bild } from '../Symbol';
 import { belegDaten, belegWerte, BetraegeUndPositionen, Rechnungssteller, type BelegWerte } from './Beleg';
 
 const RECHNUNGSARTEN = ['Rechnung', 'Gutschrift', 'Mahnung', 'Angebot'];
@@ -304,8 +305,9 @@ export function Postfach() {
         einzeln rechts, oder mehrere links anhaken und gemeinsam zuordnen. Alternativ in Claude Desktop: „Arbeite das Postfach im Mietshaus ab“.
       </p>
       {liste && !liste.length ? (
-        <div className="leer ablagezone">
-          <p><b>Das Postfach ist leer.</b></p>
+        <div className="leer ablagezone alles-erledigt">
+          <Bild name="postfach" groesse={96} className="leer-bild" />
+          <p><b>Alles erledigt – das Postfach ist leer.</b></p>
           <p className="hinweis">Rechnungen, Bescheide und Scans einfach hierher ziehen – oder einen Eingangsordner bzw. ein E-Mail-Postfach
             unter Einstellungen → Dokumenteneingang verbinden, dann landen neue Dokumente von selbst hier.</p>
         </div>
@@ -455,7 +457,7 @@ export function Archiv(props: { objekt?: Row }) {
         </tbody>
       </table>
       {liste?.length === 0 && (
-        <Leer text={q || typ || jahr ? 'Nichts gefunden. Anderen Suchbegriff versuchen oder die Filter lockern.'
+        <Leer symbol="archiv" text={q || typ || jahr ? 'Nichts gefunden. Anderen Suchbegriff versuchen oder die Filter lockern.'
           : 'Noch keine Dokumente abgelegt. Dateien einfach ins Fenster ziehen – auf eine Person, eine Einheit oder eine Buchung gezogen, landen sie gleich dort.'} />
       )}
       {offen && <DokumentDialog id={offen.id} datei={offen.datei} onClose={() => { setOffen(null); reload(); }} />}

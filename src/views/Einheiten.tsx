@@ -47,7 +47,7 @@ export function Einheiten(props: { modus: Modus; objekt: Row }) {
         <button className="primary" onClick={neu}>Neue Einheit</button>
       </div>
       {rows && rows.length === 0 ? (
-        <Leer text="Dieses Objekt hat noch keine Einheiten. Lege Wohnungen, Gewerbe, Garagen oder Stellplätze an – mit Fläche und (bei WEG) Miteigentumsanteilen." aktion={<button className="primary" onClick={neu}>Erste Einheit anlegen</button>} />
+        <Leer symbol="einheiten" text="Dieses Objekt hat noch keine Einheiten. Lege Wohnungen, Gewerbe, Garagen oder Stellplätze an – mit Fläche und (bei WEG) Miteigentumsanteilen." aktion={<button className="primary" onClick={neu}>Erste Einheit anlegen</button>} />
       ) : (
         <table>
           <thead>

@@ -221,6 +221,19 @@ From the pick of 28.10.2026 („Paket 1 – ich will nichts bezahlen; Paket 2 so
 | Fehlersperren | Server questions (409 + `bestaetigen`, resent with `X-Bestaetigt`): posting date > 400 days back / > 60 days ahead, tenant account outside the lease, lower meter reading, IBAN change, invoice > 5× the sender's maximum | done |
 | Handy | Bottom bar (Postfach, Aufgaben, camera, bell, more), 42 px touch targets, tablet sidebar narrower | done |
 
+## Version 0.18 – liquid glass and cel-shaded symbols
+
+| Area | Contents | Status |
+|------|----------|--------|
+| Symbole | 50 illustrated symbols in a cel-shading style (two tones per colour, ink outline, hatching in deep shadow, a hand-drawn wobble), drawn by `scripts/symbole/` into `public/symbole/`; `Bild` (`Symbol.tsx`) in the sidebar, mode buttons, phone bar, bell, cockpit tiles and empty lists; buttons, tables and toolbars keep the Lucide lines | done |
+| Logo | The house with the capybara in the door redrawn in the same style (`scripts/symbole/logo.py` → `resources/logo.svg`; Mac, browser and home-screen icons from `scripts/icons.cjs`) | done |
+| Glas | Floating parts as glass (sidebar, top bar, phone bar, bell, menus, dialogs, cockpit tiles, board columns) over soft fields in the mode colour; tables, forms and fields stay almost solid; blur only on a few large surfaces | done |
+| Darstellung | Settings per device: glass automatic/on/off (automatic follows „Transparenz reduzieren“), symbols illustrated/plain (Lucide); browsers without blur get solid surfaces | done |
+| Extras | „Alles erledigt“ with a large symbol for an empty inbox or task list; a short check when a task is done (off with „Bewegung reduzieren“); the bell in the phone bar with its label | done |
+| Offline & Tests | Service worker keeps `/symbole/` (shown at once, refreshed in the background); server test, smoke test and image build check the symbols; the click test checks that every sidebar symbol loads, also with glass off and plain symbols | done |
+
+Next, 0.19: image search (local), workflow templates, inspection on the phone, voice notes.
+
 ## Development
 
 ```
