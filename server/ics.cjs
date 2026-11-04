@@ -20,10 +20,16 @@ const tag = (iso) => iso.replaceAll('-', '');
 const naechsterTag = (iso) => new Date(Date.parse(`${iso}T12:00:00Z`) + 864e5).toISOString().slice(0, 10);
 const ARTEN = { termin: 'Termin', frist: 'Frist', vorgang: 'Vorgang', projekt: 'Projekt', umzug: 'Ein-/Auszug' };
 
+// RFC 5545 wants the definition of every TZID used; strict clients otherwise read the times as UTC.
+const ZEITZONE = ['BEGIN:VTIMEZONE', 'TZID:Europe/Berlin',
+  'BEGIN:DAYLIGHT', 'TZOFFSETFROM:+0100', 'TZOFFSETTO:+0200', 'TZNAME:CEST', 'DTSTART:19700329T020000', 'RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU', 'END:DAYLIGHT',
+  'BEGIN:STANDARD', 'TZOFFSETFROM:+0200', 'TZOFFSETTO:+0100', 'TZNAME:CET', 'DTSTART:19701025T030000', 'RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU', 'END:STANDARD',
+  'END:VTIMEZONE'];
+
 function ics(eintraege, { name = 'Mietshaus', jetzt = new Date() } = {}) {
   const stempel = jetzt.toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
   const zeilen = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Mietshaus//Kalender//DE', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH',
-    `X-WR-CALNAME:${text(name)}`, 'X-WR-TIMEZONE:Europe/Berlin', 'REFRESH-INTERVAL;VALUE=DURATION:PT1H', 'X-PUBLISHED-TTL:PT1H'];
+    `X-WR-CALNAME:${text(name)}`, 'X-WR-TIMEZONE:Europe/Berlin', 'REFRESH-INTERVAL;VALUE=DURATION:PT1H', 'X-PUBLISHED-TTL:PT1H', ...ZEITZONE];
   for (const e of eintraege) {
     // Amounts in brackets („Grundsteuer (462,00 €)“) stay in the app.
     const titel = (e.kurz ?? e.titel).replace(/\s*\([^)]*€[^)]*\)/g, '');

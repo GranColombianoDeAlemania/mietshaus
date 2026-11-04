@@ -77,12 +77,13 @@ export const inTagen = (n: number) => {
 export const lokalZeit = (d = new Date()) => `${lokalDatum(d)}T${zwei(d.getHours())}:${zwei(d.getMinutes())}:${zwei(d.getSeconds())}`;
 export const diesesJahr = () => new Date().getFullYear();
 
-// Parses German input such as "1.234,56" or "1234.5".
+// Parses German input such as "1.234,56", "8.000" (dots between groups of three digits are thousands) or "1234.5".
 export const parseZahl = (s: string | number | null | undefined): number | null => {
   if (typeof s === 'number') return s;
-  const t = (s ?? '').trim();
+  const t = (s ?? '').replace(/[\s€]/g, '');
   if (!t) return null;
-  const n = Number(t.includes(',') ? t.replace(/\./g, '').replace(',', '.') : t);
+  const tausender = /^-?\d{1,3}(\.\d{3})+$/.test(t);
+  const n = Number(t.includes(',') || tausender ? t.replace(/\./g, '').replace(',', '.') : t);
   return Number.isFinite(n) ? n : null;
 };
 export const parseCent = (s: string | number | null | undefined) => Math.round((parseZahl(s) ?? 0) * 100);

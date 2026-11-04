@@ -59,10 +59,11 @@ a { color: var(--accent-text); }
 .marke { display: flex; align-items: center; gap: 8px; height: 52px; padding: 0 18px; font-weight: 600; font-size: 14px; letter-spacing: 0.2px; color: var(--seite-ink); -webkit-app-region: drag; flex-shrink: 0; }
 .marke svg { color: var(--accent); }
 .marke img { display: block; border-radius: 7px; flex-shrink: 0; }
-:root[data-plattform='darwin'] .marke { padding-left: 84px; }
-:root[data-plattform='darwin'] .marke span { display: none; }
-/* Mac app: the window buttons sit left, the logo moves to the right end of the bar. */
-:root[data-plattform='darwin'] .marke { justify-content: flex-end; padding-right: 16px; }
+.marke img { width: 30px; height: 30px; }
+/* Mac app: the logo sits top left, right after the window buttons. */
+:root[data-plattform='darwin'] .marke { padding-left: 82px; gap: 7px; }
+/* Narrow screens: the sidebar is a menu, so the logo goes into the top bar's corner. */
+.kopf-logo { display: none; }
 
 /* Mode switch: three tabs with the icon above the label; the active one is a solid block in its colour. */
 .modi { display: grid; grid-template-columns: repeat(3, 1fr); margin: 0 12px 8px; border: 1px solid var(--seite-line); border-radius: 9px; overflow: hidden; flex-shrink: 0; }
@@ -206,6 +207,8 @@ tr.inaktiv td, tr.vergangen td { font-style: italic; }
 tr.zwischen td { background: var(--hover); font-weight: 600; }
 tr.split td:first-child { box-shadow: inset 2px 0 var(--accent); }
 tr.klickbar, .klickbar { cursor: pointer; }
+tr.klickbar:hover .linktext, .linktext:hover { text-decoration: underline; }
+.linktext { color: var(--accent-text, var(--accent)); font-weight: 600; }
 th.sortierbar { cursor: pointer; user-select: none; }
 th.sortierbar:hover, th.sortierbar.aktiv { color: var(--ink); }
 th .pfeil { margin-left: 4px; color: var(--accent); }
@@ -316,7 +319,7 @@ button.kachel:hover:not(:disabled) { border-color: var(--accent); color: var(--i
 
 /* ---------- Dialogs and forms ---------- */
 .overlay.frage { z-index: 50; } /* questions open on top of a form dialog */
-.overlay { position: fixed; inset: 0; background: rgba(20, 26, 27, 0.45); display: flex; align-items: flex-start; justify-content: center; padding: 44px 16px; overflow: auto; z-index: 20; }
+.overlay { position: fixed; inset: 0; background: rgba(20, 26, 27, 0.45); display: flex; align-items: flex-start; justify-content: center; padding: 44px 16px; overflow: auto; z-index: 40; } /* above the phone bar */
 .dialog { background: var(--panel); border-radius: 12px; border: 1px solid var(--line); padding: 22px 26px; width: min(720px, 100%); box-shadow: var(--schatten-gross); }
 .dialog.breit { width: min(1100px, 100%); }
 .dialog.sehrbreit { width: min(1400px, 100%); }
@@ -651,6 +654,7 @@ textarea.brieftext { width: 100%; padding: 10px 12px; border: 1px solid var(--li
 .kontowahl-liste .option.markiert { background: var(--accent-soft); }
 .kontowahl-liste .option.gewaehlt { font-weight: 600; }
 .kontowahl-liste .option.leer { color: var(--muted); }
+.kontowahl-liste .option.neu { color: var(--accent-text, var(--accent)); font-weight: 600; border-top: 1px solid var(--line); }
 .leer.ablagezone { border: 1.5px dashed var(--line-stark); border-radius: var(--radius); padding: 28px 24px; text-align: center; max-width: 620px; margin: 24px auto; }
 .vorschlagliste { list-style: none; margin: 12px 0 0; padding: 0; }
 .vorschlagliste pre { white-space: pre-wrap; font-size: 12px; margin: 6px 0 0; }
@@ -679,6 +683,7 @@ textarea.brieftext { width: 100%; padding: 10px 12px; border: 1px solid var(--li
   .seitenleiste.offen { transform: none; box-shadow: var(--schatten-gross); }
   .menuehintergrund { display: block; position: fixed; inset: 0; z-index: 44; background: rgba(20, 26, 27, 0.45); }
   .kopfleiste .menueknopf { display: inline-flex; }
+  .kopf-logo { display: block; border-radius: 7px; flex-shrink: 0; }
   .kopfleiste { padding: 0 10px; gap: 8px; }
   .kopfleiste .navknoepfe { display: none; }
   .kopfleiste .pfad { display: none; }

@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { Fenster, FensterTitel } from './ui';
+import { Auswahl, Fenster, FensterTitel } from './ui';
 import { call, parseZahl, type Row } from './api';
 import { strasseTeilen, strasseVerbinden } from './adresse';
 import { orteZurPlz } from './plz';
@@ -16,6 +16,8 @@ export type Field = {
   required?: boolean;
   wide?: boolean;
   section?: string;
+  // select: an entry at the end of the list that creates a missing record (e.g. a new tenant) without leaving the form.
+  neu?: { label: string; onClick: (text: string) => void };
 };
 
 // Converts a stored row into editable strings; money is stored in cents and edited in euros.
@@ -83,12 +85,18 @@ export function FormDialog(props: {
 
   const missing = fields.filter((d) => d.required && (f[d.key] === '' || f[d.key] == null));
 
+  // Saving only once at a time: a second click while the first is on its way would create the record twice.
+  const [laeuft, setLaeuft] = useState(false);
   async function run(action: () => Promise<unknown>) {
+    if (laeuft) return;
+    setLaeuft(true);
     try {
       await action();
       props.onClose();
     } catch (e: any) {
       setFehler(String(e?.message ?? e).replace(/^Error invoking remote method 'db': (Error: )?/, ''));
+    } finally {
+      setLaeuft(false);
     }
   }
 
@@ -122,7 +130,10 @@ export function FormDialog(props: {
             };
             const label = d.label + (d.required ? ' *' : '');
             let input;
-            if (d.type === 'select')
+            // Longer lists get a search; short ones (yes/no, a few kinds) stay a plain list.
+            if (d.type === 'select' && (d.neu || d.options!.length > 6))
+              input = <Auswahl value={f[d.key]} options={d.options!} onChange={set} pflicht={d.required} neu={d.neu} />;
+            else if (d.type === 'select')
               input = (
                 <select value={f[d.key] ?? ''} onChange={(e) => set(e.target.value)}>
                   <option value="" disabled={d.required}>{d.required ? '– bitte wählen –' : '–'}</option>
@@ -166,7 +177,7 @@ export function FormDialog(props: {
             )];
           })}
         </div>
-        {typeof props.extra === 'function' ? props.extra({ ...props.row, ...f }, (werte) => setF({ ...f, ...werte })) : props.extra}
+        {typeof props.extra === 'function' ? props.extra({ ...props.row, ...f }, (werte) => setF((alt) => ({ ...alt, ...werte }))) : props.extra}
         {fehler && <p className="fehler">{fehler}</p>}
         <div className="buttons">
           <Geaendert row={props.row} />
@@ -177,7 +188,7 @@ export function FormDialog(props: {
           )}
           <span className="spacer" />
           <button type="button" onClick={props.onClose}>Abbrechen</button>
-          <button type="submit" className="primary" disabled={missing.length > 0} title={missing.length ? 'Pflichtfelder fehlen' : ''}>
+          <button type="submit" className="primary" disabled={missing.length > 0 || laeuft} title={missing.length ? 'Pflichtfelder fehlen' : ''}>
             Speichern
           </button>
         </div>

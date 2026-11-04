@@ -93,7 +93,7 @@ export function WegAbrechnung(props: { objekt: Row }) {
                     <td><L zu={{ einheit: e.segment.einheit.id }}>{e.segment.einheit.bezeichnung}</L></td><td><L zu={{ vertrag: e.segment.vertrag.id, typ: 'weg' }}>{e.segment.vertrag.name}</L></td>
                     <td>{datum(e.segment.von)} – {datum(e.segment.bis)}</td>
                     <td className="num">{euro(e.kosten_ct)}</td><td className="num">{euro(e.umlagefaehig_ct)}</td>
-                    <td className="num">{euro(e.hausgeld_soll_ct)}</td><td className="num">{euro(e.ruecklage_soll_ct)}</td>
+                    <td className="num">{euro(e.hausgeld_soll_ct)}{e.sonderumlage_ct ? <div className="klein hinweis">+ Sonderumlage {euro(e.sonderumlage_ct)}</div> : null}</td><td className="num">{euro(e.ruecklage_soll_ct)}</td>
                     <td className="num"><b className={e.ergebnis_ct > 0 ? 'negativ' : ''}>{e.ergebnis_ct > 0 ? 'Nachschuss ' : 'Guthaben '}{euro(Math.abs(e.ergebnis_ct))}</b></td>
                   </tr>
                 ))}

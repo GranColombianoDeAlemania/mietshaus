@@ -83,6 +83,7 @@ export function wegEinzel(a: Row, e: Row, absender: Absender, objekt: Row, eigen
     ${tabelle(['Abrechnung', '#rBetrag'], [
       ['Ihr Kostenanteil', `#r${euro(e.kosten_ct)}`],
       ['abzüglich Hausgeld-Vorschüsse lt. Wirtschaftsplan (ohne Rücklage)', `#r${euro(-e.hausgeld_soll_ct)}`],
+      ...(e.sonderumlage_ct ? [['abzüglich Sonderumlagen', `#r${euro(-e.sonderumlage_ct)}`]] : []),
     ], { summe: [e.ergebnis_ct > 0 ? 'Nachschuss (Abrechnungsspitze)' : 'Guthaben', `#r${euro(Math.abs(e.ergebnis_ct))}`] })}
     <h2>Erhaltungsrücklage</h2>
     ${tabelle(['', '#rBetrag'], [['Ihre Soll-Zuführung im Abrechnungsjahr', `#r${euro(e.ruecklage_soll_ct)}`],

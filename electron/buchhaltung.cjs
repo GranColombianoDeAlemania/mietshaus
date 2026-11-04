@@ -103,7 +103,34 @@ const einheitVonSql = (b) => `coalesce(${b}.einheit_id,
   (SELECT pj.einheit_id FROM projektposten pp JOIN projekte pj ON pj.id = pp.projekt_id WHERE pp.buchung_id IN (${b}.id, coalesce(${b}.gruppe, -1))
     AND pj.einheit_id IS NOT NULL LIMIT 1))`;
 
+// The next service-charge statement an object owes (§ 556 Abs. 3 BGB): the period after the last saved statement
+// (any period, e.g. 01.07.–30.06.), or last calendar year if there is none; due at the end of the twelfth month after
+// the period. null if the period has not ended yet or had no tenancy.
+function nkFaellig(get, objektId, t) {
+  const tag = (iso, monate, tage = 0) => {
+    const d = new Date(iso + 'T00:00:00Z');
+    const z = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + monate, 1));
+    z.setUTCDate(Math.min(d.getUTCDate(), new Date(Date.UTC(z.getUTCFullYear(), z.getUTCMonth() + 1, 0)).getUTCDate()) + tage);
+    return z.toISOString().slice(0, 10);
+  };
+  const letzte = get(`SELECT max(bis) AS bis FROM abrechnungen WHERE objekt_id = ? AND typ = 'nk'`, objektId).bis;
+  const jahr = Number(t.slice(0, 4));
+  const von = letzte ? tag(letzte, 0, 1) : `${jahr - 1}-01-01`;
+  const bis = letzte ? tag(von, 12, -1) : `${jahr - 1}-12-31`;
+  if (bis >= t) return null;
+  if (!get(`SELECT 1 FROM mietverhaeltnisse m JOIN einheiten e ON e.id = m.einheit_id WHERE e.objekt_id = ? AND m.beginn <= ?
+      AND (m.ende IS NULL OR m.ende = '' OR m.ende >= ?)`, objektId, bis, von)) return null;
+  const ende = tag(bis, 12);
+  const frist = new Date(Date.UTC(Number(ende.slice(0, 4)), Number(ende.slice(5, 7)), 0)).toISOString().slice(0, 10);
+  const name = von.slice(5) === '01-01' && bis.slice(5) === '12-31' ? von.slice(0, 4) : `${von.slice(0, 4)}/${bis.slice(2, 4)}`;
+  return { von, bis, frist, name, nach_zwei_monaten: tag(bis, 2), drei_monate_vorher: tag(frist, -3) };
+}
+
 module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_NAME }) {
+  // A bank line is booked already under its reference – CAMT lines known only by their end-to-end id were imported
+  // without the direction suffix before (":C"/":D").
+  const schonGebucht = (ref) => !!get('SELECT 1 FROM buchungen WHERE import_ref = ?', ref) ||
+    (/^camt:.+:[CD]$/.test(ref ?? '') && !!get('SELECT 1 FROM buchungen WHERE import_ref = ?', ref.slice(0, -2)));
   const vertragTabelle = (typ) => (typ === 'weg' ? 'eigentum' : 'mietverhaeltnisse');
   // State for public holidays (affects working-day due dates); empty = nationwide holidays only.
   const land = () => get(`SELECT wert FROM einstellungen WHERE schluessel = 'bundesland'`)?.wert || null;
@@ -802,6 +829,8 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
     }),
 
     // Suggests a counter account for each bank transaction: returned debits, open invoices, learned rules, then the payer's IBAN.
+    schonGebucht,
+
     bankVorschlaege: (objektId, umsaetze) => {
       const regeln = all('SELECT * FROM bankregeln WHERE objekt_id = ? ORDER BY length(muster) DESC', objektId);
       const personKonten = all(`SELECT k.id, k.vertrag_typ, k.vertrag_id, k.bezeichnung, p.iban, p.nachname FROM konten k
@@ -815,10 +844,23 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
         JOIN projekte p ON p.id = pp.projekt_id WHERE p.objekt_id = ? AND pp.art = 'rechnung' AND pp.buchung_id IS NULL AND pp.status <> 'bezahlt'`, objektId);
       const norm = (s) => (s ?? '').replace(/\s/g, '').toUpperCase();
       const RUECKLAST = /r(ü|ue|u)ck(lastschrift|buchung|ueberweisung|überweisung)|retoure|r-transaktion|(^|\W)(AC04|AC06|AM04|MD01|MD06|MS02|MS03)(\W|$)/i;
+      // The same transaction from another source (CAMT file, then FinTS, MT940, CSV) carries another reference: a bank
+      // booking of another source with the same amount and direction within two days is probably it. Each booking
+      // matches one line only, so two equal payments on one day still need two bookings.
+      const vergeben = new Set();
+      const quelle = (ref) => String(ref ?? '').split(':')[0];
+      const QUELLEN = { camt: 'CAMT-Datei', mt940: 'MT940-Datei', csv: 'CSV-Datei', fints: 'Online-Abruf' };
+      const aehnlich = (u) => all(`SELECT b.id, b.datum, b.import_ref FROM buchungen b JOIN konten g ON g.id = ${u.betrag_ct > 0 ? 'b.soll_id' : 'b.haben_id'}
+          WHERE b.objekt_id = ? AND b.art = 'bank' AND g.klasse = 'geld' AND b.betrag_ct = ? AND b.import_ref IS NOT NULL
+            AND b.datum BETWEEN date(?, '-2 days') AND date(?, '+2 days') ORDER BY abs(julianday(b.datum) - julianday(?))`,
+        objektId, Math.abs(u.betrag_ct), u.datum, u.datum, u.datum).find((b) => quelle(b.import_ref) !== quelle(u.ref) && !vergeben.has(b.id));
       return umsaetze.map((u) => {
-        const doppelt = !!get('SELECT 1 FROM buchungen WHERE import_ref = ?', u.ref);
+        const doppelt = schonGebucht(u.ref);
+        const gleich = doppelt ? null : aehnlich(u);
+        if (gleich) vergeben.add(gleich.id);
         const text = `${u.name ?? ''} ${u.zweck ?? ''} ${u.iban ?? ''}`.toLowerCase();
-        const r = { ...u, konto_id: null, doppelt, hinweis: null, ruecklast: false, dokument_id: null, projektposten_id: null };
+        const r = { ...u, konto_id: null, doppelt, hinweis: null, ruecklast: false, dokument_id: null, projektposten_id: null,
+          vermutlich_doppelt: gleich ? `Vermutlich schon gebucht: gleicher Betrag am ${gleich.datum.split('-').reverse().join('.')} aus ${QUELLEN[quelle(gleich.import_ref)] ?? 'einem anderen Import'}` : null };
         // A returned direct debit re-opens the tenant's or owner's charge: book it back onto their account.
         if (u.betrag_ct < 0 && RUECKLAST.test(`${u.name} ${u.zweck}`)) {
           const k = (u.iban && personKonten.find((p) => norm(p.iban) && norm(p.iban) === norm(u.iban))) ||
@@ -856,7 +898,7 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
     bankBuchen: (objektId, geldKontoId, zeilen, lernen) => tx(() => {
       let n = 0;
       for (const z of zeilen) {
-        if (!z.konto_id || get('SELECT 1 FROM buchungen WHERE import_ref = ?', z.ref)) continue;
+        if (!z.konto_id || schonGebucht(z.ref)) continue;
         const ein = z.betrag_ct > 0;
         const text = `${z.ruecklast ? 'Rücklastschrift: ' : ''}${[z.name, z.zweck].filter(Boolean).join(' – ')}`.slice(0, 300);
         const id = Number(db.prepare(`INSERT INTO buchungen (objekt_id, datum, text, betrag_ct, soll_id, haben_id, art, import_ref)
@@ -909,4 +951,5 @@ module.exports.tageImMonat = tageImMonat;
 module.exports.tageZwischen = tageZwischen;
 module.exports.monatsliste = monatsliste;
 module.exports.selbstSql = selbstSql;
+module.exports.nkFaellig = nkFaellig;
 module.exports.einheitVonSql = einheitVonSql;

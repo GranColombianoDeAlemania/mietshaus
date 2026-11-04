@@ -123,7 +123,7 @@ async function starten(o) {
     passwort,
   });
   const eingangsordner = () => o.eingang ?? dbSystem.einstellungen().eingangsordner ?? null;
-  const versand = versandModul({ db: () => roh, passwort, dokumentOrdner, importieren: (p2, opt) => ana.importieren(p2, opt) });
+  const versand = versandModul({ db: () => roh, passwort, dokumentOrdner, importieren: (p2, opt) => ana.importieren(p2, { ...opt, alsBenutzer: roh }) });
   ein.ordnerSetzen(eingangsordner());
   ein.mailPlanen();
   if (dbSystem.einstellungen().mail_aktiv === '1') setTimeout(() => ein.mailAbrufen().catch(() => {}), 20_000).unref();
@@ -531,7 +531,7 @@ async function starten(o) {
         kontext(req, w);
         // A photo from the phone's camera button: the house nearby (if its location is saved), else the inbox.
         const o = !opt.objekt_id && standort && Number.isFinite(standort.lat) && Number.isFinite(standort.lon) ? roh.objektBeiStandort(standort.lat, standort.lon) : null;
-        const r = ana.importieren([t.p], { ...opt, ...(o ? { objekt_id: o.id } : {}), quelle: opt.quelle ?? 'upload' });
+        const r = ana.importieren([t.p], { ...opt, ...(o ? { objekt_id: o.id } : {}), quelle: opt.quelle ?? 'upload', alsBenutzer: roh });
         if (o) r.forEach((x) => { x.objekt = o.bezeichnung; });
         senden('aktualisiert', null, req.headers['x-client'] ?? null);
         pulsSenden();
@@ -558,7 +558,7 @@ async function starten(o) {
       const t = temporaer(u.searchParams.get('name') || 'Zaehler.jpg', await lesen(req));
       try {
         kontext(req, w);
-        const [r] = ana.importieren([t.p], { objekt_id: z.objekt_id, einheit_id: z.einheit_id, status: 'abgelegt', typ: 'Foto' });
+        const [r] = ana.importieren([t.p], { objekt_id: z.objekt_id, einheit_id: z.einheit_id, status: 'abgelegt', typ: 'Foto', alsBenutzer: roh });
         roh.dokumentSpeichern({ id: r.id, titel: `Zählerfoto ${z.nummer ?? z.art} ${ortszeit.heute().split('-').reverse().join('.')}`, typ: 'Foto', datum: ortszeit.heute() });
         const d = roh.dokument(r.id);
         const letzter = raw.prepare('SELECT stand FROM zaehlerstaende WHERE zaehler_id = ? ORDER BY datum DESC LIMIT 1').get(z.id)?.stand ?? null;
@@ -601,7 +601,7 @@ async function starten(o) {
       try {
         kontext(req, w);
         const [r] = ana.importieren([t.p], { objekt_id: meta.objekt_id ?? null, einheit_id: meta.einheit_id ?? null, projekt_id: meta.projekt_id ?? null,
-          typ: meta.typ ?? null, status: 'abgelegt', quelle: 'programm' });
+          typ: meta.typ ?? null, status: 'abgelegt', quelle: 'programm', alsBenutzer: roh });
         roh.dokumentSpeichern({ id: r.id, titel: meta.titel ?? name.replace(/\.(pdf|html?)$/i, ''), person_id: meta.person_id ?? null, datum: meta.datum ?? null });
         senden('aktualisiert');
         return json(res, 200, { id: r.id, datei: roh.dokument(r.id).datei });

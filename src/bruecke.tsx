@@ -98,9 +98,11 @@ export async function anfrage(pfad: string, opt: { methode?: string; json?: unkn
     body: opt.json !== undefined ? JSON.stringify(opt.json) : opt.roh,
     });
   } catch {
-    // The server cannot be reached: the light turns red, nothing pretends to be saved.
+    // The server cannot be reached: the light turns red. If the connection broke after sending, the server may have
+    // saved it all the same – a blind second try would then create it twice.
     zustand.wegSeit ??= Date.now();
-    throw new HttpFehler(0, 'Keine Verbindung zum Mietshaus-Server. Die Änderung wurde nicht gespeichert.');
+    throw new HttpFehler(0, methode === 'GET' ? 'Keine Verbindung zum Mietshaus-Server.'
+      : 'Keine Verbindung zum Mietshaus-Server. Ob die Änderung gespeichert wurde, ist nicht sicher – bitte nach dem Wiederverbinden prüfen, bevor du es erneut versuchst.');
   } finally {
     zustand.offen--;
     melden();

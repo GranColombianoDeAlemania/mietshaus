@@ -837,6 +837,17 @@ const MIGRATIONS = [
   // Where a house is (saved on the spot from a phone): photos taken there find their house.
   `ALTER TABLE objekte ADD COLUMN breite REAL;
    ALTER TABLE objekte ADD COLUMN laenge REAL;`,
+  // SEPA files created (direct debits, transfers) with what went into them: until the money shows up on the statement,
+  // the same items are not offered again by default – a second file would collect or pay twice.
+  `CREATE TABLE sepa_dateien (
+    id INTEGER PRIMARY KEY,
+    objekt_id INTEGER REFERENCES objekte(id) ON DELETE CASCADE,
+    art TEXT NOT NULL CHECK (art IN ('lastschrift', 'ueberweisung')),
+    faellig TEXT,
+    posten TEXT NOT NULL,
+    erstellt TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+  );
+  CREATE INDEX sepa_dateien_objekt ON sepa_dateien (objekt_id, art, erstellt);`,
 ];
 
 // Tables without change time: the log itself, settings of this installation and page state.
@@ -1587,11 +1598,22 @@ function api(db) {
       const istDarlehen = (z) => z.konto_id && z.betrag_ct < 0 && dl.darlehenZuKonto(z.konto_id);
       let n = 0;
       for (const z of zeilen.filter(istDarlehen)) {
-        if (get('SELECT 1 FROM buchungen WHERE import_ref = ?', z.ref)) continue;
+        if (bh.schonGebucht(z.ref)) continue;
         dl.darlehenRateBuchen(dl.darlehenZuKonto(z.konto_id).id, geldKontoId, z.datum, -z.betrag_ct, z.ref);
         n++;
       }
       return n + bh.bankBuchen(objektId, geldKontoId, zeilen.filter((z) => !istDarlehen(z)), lernen);
+    },
+    // SEPA files: posten = [{ schluessel, betrag_ct }] (person account or document); the items of the files since a date.
+    sepaVermerken: (objektId, art, faellig, posten) => {
+      db.prepare('INSERT INTO sepa_dateien (objekt_id, art, faellig, posten) VALUES (?, ?, ?, ?)').run(objektId, art, faellig ?? null, JSON.stringify(posten ?? []));
+    },
+    sepaVermerke: (objektId, art, seit) => {
+      const out = {};
+      for (const r of all('SELECT erstellt, faellig, posten FROM sepa_dateien WHERE objekt_id = ? AND art = ? AND erstellt >= ? ORDER BY erstellt', objektId, art, seit)) {
+        for (const p of JSON.parse(r.posten)) out[p.schluessel] = { erstellt: r.erstellt, faellig: r.faellig, betrag_ct: p.betrag_ct };
+      }
+      return out;
     },
     // Changes made elsewhere (e.g. by Claude through the MCP connection) bump this number.
     datenVersion: () => db.prepare('PRAGMA data_version').get().data_version,

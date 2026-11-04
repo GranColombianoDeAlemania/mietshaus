@@ -74,7 +74,7 @@ export function Wirtschaftsplan(props: { objekt: Row }) {
         <tbody>
           {vorschlag?.map((v) => (
             <tr key={v.konto_id}>
-              <td className="num">{v.nr}</td><td>{v.bezeichnung}</td><td className="num">{euro(v.vorjahr_ct)}</td>
+              <td className="num">{v.nr}</td><td><L zu={{ konto: v.konto_id }}>{v.bezeichnung}</L></td><td className="num">{euro(v.vorjahr_ct)}</td>
               <td className="num"><input className="num zelle" value={plan[v.konto_id] ?? ''} onChange={(e) => setPlan({ ...plan, [v.konto_id]: e.target.value })} /></td>
             </tr>
           ))}
@@ -88,6 +88,7 @@ export function Wirtschaftsplan(props: { objekt: Row }) {
       {w && (
         <div className="block">
           <h3>Hausgeld je Eigentümer</h3>
+          {w.hinweise?.map((h: string) => <p key={h} className="hinweis klein">{h}</p>)}
           <table>
             <thead><tr><th>Einheit</th><th>Eigentümer</th><th className="num">Kostenanteil</th><th className="num">Rücklage</th><th className="num">Hausgeld monatlich</th><th className="num">davon Rücklage</th></tr></thead>
             <tbody>

@@ -136,10 +136,11 @@ module.exports = function abrechnung({ db, all, get, tx, PERSON_NAME, bh }) {
     .map((k) => ({ ...k, p35a_quote: k.p35a ? Math.max(0, Math.min(1, k.p35a_basis_ct / k.betrag_ct)) : 0 }));
   const p35aTeil = (posten, ct) => Math.round(ct * (posten.konto?.p35a_quote ?? 1));
 
-  // Charged advance payments of a contract in the period, by income category.
+  // Charged advance payments of a contract in the period, by income category; a cancelled charge no longer counts.
   const vorauszahlungen = (kontoId, kategorien, von, bis) => kategorien.map((kat) => get(`SELECT coalesce(sum(b.betrag_ct), 0) AS s
       FROM buchungen b JOIN konten e ON e.id = b.haben_id
-      WHERE b.soll_id = ? AND e.kategorie = ? AND b.art = 'soll' AND b.datum BETWEEN ? AND ?`, kontoId, kat, von, bis).s);
+      WHERE b.soll_id = ? AND e.kategorie = ? AND b.art = 'soll' AND b.datum BETWEEN ? AND ?
+        AND NOT EXISTS (SELECT 1 FROM buchungen x WHERE x.storno_von = b.id)`, kontoId, kat, von, bis).s);
 
   // ---------- Service-charge statement (tenants) ----------
   function nkAbrechnung(objektId, von, bis, opt = {}) {
@@ -170,7 +171,7 @@ module.exports = function abrechnung({ db, all, get, tx, PERSON_NAME, bh }) {
     };
 
     const heizkonten = konten.filter((k) => k.heizkosten);
-    for (const k of konten.filter((k) => !k.heizkosten || o.heizung === 'ohne')) verteile(k.bezeichnung, k, k.betrag_ct, k.schluessel_id ?? flaecheKey, { kategorie: k.kategorie, p35a: k.p35a });
+    for (const k of konten.filter((k) => !k.heizkosten || o.heizung === 'ohne')) verteile(k.bezeichnung, k, k.betrag_ct, k.schluessel_id ?? flaecheKey, { kategorie: k.kategorie, p35a: k.p35a, heizkosten: !!k.heizkosten });
 
     let heizung = null;
     if (heizkonten.length && o.heizung === 'intern') {
@@ -200,7 +201,9 @@ module.exports = function abrechnung({ db, all, get, tx, PERSON_NAME, bh }) {
       const flaeche = get('SELECT coalesce(sum(wohnflaeche), 0) AS f FROM einheiten WHERE objekt_id = ?', objektId).f || 1;
       const kgProQm = o.co2_kg / flaeche * (365 / tage(von, bis));
       const prozent = co2Vermieteranteil(kgProQm);
-      const heizIdx = posten.map((p, i) => (p.heizung ? i : -1)).filter((i) => i >= 0);
+      // The landlord's share is credited in proportion to each tenant's heating costs – also when heating is settled like
+      // the other operating costs (mode "ohne", e.g. a two-family house outside the HeizkostenV).
+      const heizIdx = posten.map((p, i) => (p.heizung || p.heizkosten ? i : -1)).filter((i) => i >= 0);
       const heizGesamt = heizIdx.reduce((s, i) => s + posten[i].gesamt_ct, 0) || 1;
       const p = posten.length;
       posten.push({ label: `CO₂-Kostenanteil Vermieter (${prozent} %, ${kgProQm.toFixed(1).replace('.', ',')} kg CO₂/m²·a)`, gesamt_ct: -Math.round(o.co2_kosten_ct * prozent / 100), schluessel: 'Heizkostenanteil', einheit: '', gesamt_einheiten: 0, co2: true });
@@ -411,16 +414,17 @@ module.exports = function abrechnung({ db, all, get, tx, PERSON_NAME, bh }) {
         return { ct: Math.round(p.gesamt_ct * w / p.r.gesamt), einheiten: w };
       });
       const konto = bh.kontoVon('weg', s.vertrag.id);
-      const [hgSoll, rlSoll] = konto ? vorauszahlungen(konto.id, ['hausgeld', 'ruecklage'], s.von, s.bis) : [0, 0];
+      const [hgSoll, rlSoll, suSoll] = konto ? vorauszahlungen(konto.id, ['hausgeld', 'ruecklage', 'sonderumlage'], s.von, s.bis) : [0, 0, 0];
       const kosten = anteile.reduce((sum, a) => sum + a.ct, 0);
       const umlagefaehig = anteile.reduce((sum, a, i) => sum + (posten[i].umlagefaehig ? a.ct : 0), 0);
       const p35a = { dienstleistung: 0, handwerker: 0 };
       anteile.forEach((a, i) => { if (posten[i].p35a) p35a[posten[i].p35a] += p35aTeil(posten[i], a.ct); });
       return {
         segment: { von: s.von, bis: s.bis, tage: s.tage, einheit: s.einheit, vertrag: s.vertrag, konto_id: konto?.id ?? null },
-        anteile, kosten_ct: kosten, umlagefaehig_ct: umlagefaehig, hausgeld_soll_ct: hgSoll, ruecklage_soll_ct: rlSoll,
-        // Abrechnungsspitze: costs minus the house-money advances due (reserve contributions are settled separately).
-        ergebnis_ct: kosten - hgSoll, p35a,
+        anteile, kosten_ct: kosten, umlagefaehig_ct: umlagefaehig, hausgeld_soll_ct: hgSoll, ruecklage_soll_ct: rlSoll, sonderumlage_ct: suSoll,
+        // Abrechnungsspitze: costs minus the house-money advances and special levies due (reserve contributions are settled
+        // separately); the costs a special levy pays are booked as ordinary costs, so the levy counts like an advance.
+        ergebnis_ct: kosten - hgSoll - suSoll, p35a,
       };
     });
     const summe = posten.reduce((s, p) => s + p.gesamt_ct, 0);
@@ -488,12 +492,30 @@ module.exports = function abrechnung({ db, all, get, tx, PERSON_NAME, bh }) {
     const meaKey = get(`SELECT id FROM umlageschluessel WHERE objekt_id = ? AND typ = 'mea' ORDER BY id LIMIT 1`, objektId)?.id;
     // Plan per unit for the full year: every unit is treated as owned for 365 days.
     const einheiten = [...new Map(segmente.map((s) => [s.einheit.id, s])).values()].map((s) => ({ ...s, von, bis, tage: tage(von, bis) }));
+    // A consumption key has no readings for the plan year yet: it uses last year's consumption, and the units' shares
+    // by MEA if there is none either – costs on such a key would otherwise be planned for nobody.
+    const vjVon = `${jahr - 1}-01-01`, vjBis = `${jahr - 1}-12-31`;
+    const rechnerVorjahr = schluesselRechner(objektId, vjVon, vjBis);
+    const vorjahr = einheiten.map((s) => ({ ...s, von: vjVon, bis: vjBis, tage: tage(vjVon, vjBis) }));
+    const hinweise = [];
+    const schluessel = (id) => {
+      const r = rechner(id, einheiten);
+      if (!r || r.gesamt || r.k.typ !== 'zaehler') return r;
+      const vj = rechnerVorjahr(id, vorjahr);
+      if (vj && vj.gesamt) {
+        hinweise.push(`„${r.k.bezeichnung}“ nach dem Verbrauch ${jahr - 1} verteilt.`);
+        const nachEinheit = new Map(vorjahr.map((s) => [s.einheit.id, vj.wert(s)]));
+        return { k: r.k, gesamt: vj.gesamt, wert: (s) => nachEinheit.get(s.einheit.id) ?? 0 };
+      }
+      hinweise.push(`„${r.k.bezeichnung}“ hat noch keine Ablesungen – nach Miteigentumsanteilen verteilt.`);
+      return meaKey ? rechner(meaKey, einheiten) : r;
+    };
     const posten = plan.filter((p) => p.betrag_ct).map((p) => {
       const k = get('SELECT * FROM konten WHERE id = ?', p.konto_id);
-      const r = rechner(p.schluessel_id ?? k.weg_schluessel_id ?? meaKey, einheiten);
+      const r = schluessel(p.schluessel_id ?? k.weg_schluessel_id ?? meaKey);
       return { konto_id: k.id, label: k.bezeichnung, gesamt_ct: p.betrag_ct, schluessel: r?.k?.bezeichnung ?? '–', r };
     });
-    const rl = ruecklageCt ? rechner(ruecklageSchluesselId ?? meaKey, einheiten) : null;
+    const rl = ruecklageCt ? schluessel(ruecklageSchluesselId ?? meaKey) : null;
     const zeilen = einheiten.map((s) => {
       const anteile = posten.map((p) => (p.r && p.r.gesamt ? Math.round(p.gesamt_ct * p.r.wert(s) / p.r.gesamt) : 0));
       const kosten = anteile.reduce((a, b) => a + b, 0);
@@ -507,7 +529,7 @@ module.exports = function abrechnung({ db, all, get, tx, PERSON_NAME, bh }) {
         monat_ruecklage_ct: Math.ceil(rlAnteil / 12 / 100) * 100,
       };
     });
-    return { jahr, posten: posten.map(({ r, ...p }) => p), ruecklage_ct: ruecklageCt, zeilen,
+    return { jahr, posten: posten.map(({ r, ...p }) => p), ruecklage_ct: ruecklageCt, zeilen, hinweise: [...new Set(hinweise)],
       summe_ct: posten.reduce((s, p) => s + p.gesamt_ct, 0) };
   }
 

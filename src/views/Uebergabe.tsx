@@ -172,7 +172,7 @@ export function Uebergaben(props: { objekt: Row }) {
       {wechsel && wechsel.length > 0 && (
         <table><thead><tr><th>Einheit</th><th>Mieter</th><th>Auszug</th><th>Fortschritt</th><th /></tr></thead>
           <tbody>{wechsel.map((w) => (
-            <tr key={w.vertrag_id}><td>{w.einheit}</td><td>{w.name}</td><td>{datum(w.ende)}</td>
+            <tr key={w.vertrag_id}><td>{w.einheit_id ? <L zu={{ einheit: w.einheit_id }}>{w.einheit}</L> : w.einheit}</td><td><L zu={{ vertrag: w.vertrag_id, typ: 'miete' }}>{w.name}</L></td><td>{datum(w.ende)}</td>
               <td>{Object.keys(w.schritte).length} von {SCHRITTE.length} Schritten</td>
               <td className="aktionen"><button onClick={() => setAssistent(w.vertrag_id)}>Öffnen</button></td></tr>
           ))}</tbody></table>

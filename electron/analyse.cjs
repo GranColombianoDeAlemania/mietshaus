@@ -113,8 +113,10 @@ module.exports = function analyse({ db, dokumentOrdner, vorschauOrdner, onFertig
     }
   }
 
-  // Copies files into the archive; identical files (same SHA-256) are only stored once.
-  function importieren(pfade, { objekt_id = null, einheit_id = null, projekt_id = null, person_id = null, buchung_id = null, vorgang_id = null, typ = null, quelle = 'upload', status = 'postfach' } = {}) {
+  // Copies files into the archive; identical files (same SHA-256) are only stored once. alsBenutzer: the data access of a
+  // request (with its user), so the new document is logged under whoever uploaded it instead of the system.
+  function importieren(pfade, { objekt_id = null, einheit_id = null, projekt_id = null, person_id = null, buchung_id = null, vorgang_id = null, typ = null, quelle = 'upload', status = 'postfach', alsBenutzer = null } = {}) {
+    const dbA = alsBenutzer ?? db;
     fs.mkdirSync(dokumentOrdner(), { recursive: true });
     const out = [];
     for (const p of pfade) {
@@ -130,9 +132,23 @@ module.exports = function analyse({ db, dokumentOrdner, vorschauOrdner, onFertig
       const name = path.basename(p);
       // A photo taken for a house, a unit, a case or a project is filed there at once – no inbox, no questions.
       const foto = BILDER.has(ext) && !typ && !!(objekt_id || einheit_id || vorgang_id || projekt_id) && quelle === 'upload';
-      const r = db.dokumentNeu({ objekt_id, einheit_id, projekt_id, person_id, buchung_id, vorgang_id, typ: foto ? 'Foto' : typ, titel: name.replace(/\.[^.]+$/, ''), datei, name,
-        groesse: daten.length, sha256, quelle, status: foto ? 'abgelegt' : status });
-      if (!r.doppelt) fs.writeFileSync(path.join(dokumentOrdner(), datei), daten);
+      // The file first, written completely under a temporary name, then the record: a failed write (disk full) leaves no
+      // record without its file, which would make every new upload of the same file a "duplicate" of a broken entry.
+      const ziel = path.join(dokumentOrdner(), datei);
+      const tmp = `${ziel}.${process.pid}.tmp`;
+      try { fs.writeFileSync(tmp, daten); fs.renameSync(tmp, ziel); } catch (err) { fs.rmSync(tmp, { force: true }); throw err; }
+      let r;
+      try {
+        r = dbA.dokumentNeu({ objekt_id, einheit_id, projekt_id, person_id, buchung_id, vorgang_id, typ: foto ? 'Foto' : typ, titel: name.replace(/\.[^.]+$/, ''), datei, name,
+          groesse: daten.length, sha256, quelle, status: foto ? 'abgelegt' : status });
+      } catch (err) { fs.rmSync(ziel, { force: true }); throw err; }
+      if (r.doppelt || r.wiederhergestellt) {
+        // The archive has this file already: its copy stays – and is repaired if it went missing.
+        const alt = dbA.dokument(r.id)?.datei;
+        const altPfad = alt ? path.join(dokumentOrdner(), path.basename(alt)) : null;
+        if (altPfad && altPfad !== ziel && !fs.existsSync(altPfad)) fs.renameSync(ziel, altPfad);
+        else if (altPfad !== ziel) fs.rmSync(ziel, { force: true });
+      }
       out.push({ ...r, name });
     }
     setImmediate(warteschlange);

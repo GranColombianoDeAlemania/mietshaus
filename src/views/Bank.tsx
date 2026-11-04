@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { betrag, call, datum, euro, fehler, fehlerText, heute, inTagen, personName, type Modus, type Row } from '../api';
 import { useLoad } from '../useLoad';
+import { L } from '../navi';
 import { KontoSelect, Tabs } from '../ui';
 import { ibanGueltig, leseKontoauszug, painLastschrift, type Umsatz } from '../bankformate';
 import { BankAbruf } from './Bankzugang';
 
-type Zeile = Umsatz & { konto_id: number | '' | null; doppelt: boolean; an: boolean; lernen: boolean };
+type Zeile = Umsatz & { konto_id: number | '' | null; doppelt: boolean; vermutlich_doppelt?: string | null; an: boolean; lernen: boolean };
 
 export function Bank(props: { objekt: Row; modus: Modus }) {
   const [tab, setTab] = useState<'import' | 'lastschrift' | 'regeln'>('import');
@@ -35,9 +36,9 @@ function Import(props: { objekt: Row }) {
   // Transactions from a file or from the bank (FinTS) go the same way: proposals, already booked ones marked.
   async function vorschlagen(umsaetze: Umsatz[], quelle: string) {
     const v: Row[] = await call('bankVorschlaege', props.objekt.id, umsaetze);
-    setZeilen(v.map((u) => ({ ...(u as Zeile), an: !u.doppelt && !!u.konto_id, lernen: true })));
+    setZeilen(v.map((u) => ({ ...(u as Zeile), an: !u.doppelt && !u.vermutlich_doppelt && !!u.konto_id, lernen: true })));
     setDatei(quelle);
-    setMeldung(`${umsaetze.length} Umsätze gelesen, ${v.filter((u) => u.doppelt).length} davon bereits gebucht.`);
+    setMeldung(`${umsaetze.length} Umsätze gelesen, ${v.filter((u) => u.doppelt).length} davon bereits gebucht${v.some((u) => u.vermutlich_doppelt) ? `, ${v.filter((u) => u.vermutlich_doppelt).length} vermutlich schon über einen anderen Import (nicht angekreuzt)` : ''}.`);
   }
 
   async function laden() {
@@ -89,7 +90,7 @@ function Import(props: { objekt: Row }) {
               <tr key={z.ref} className={z.doppelt ? 'inaktiv' : ''}>
                 <td><input type="checkbox" disabled={z.doppelt} checked={z.an} onChange={(e) => set(i, { an: e.target.checked })} /></td>
                 <td>{datum(z.datum)}</td>
-                <td><b>{z.name}</b><div className="klein">{z.zweck}</div>{z.doppelt && <span className="tag">bereits gebucht</span>}
+                <td><b>{z.name}</b><div className="klein">{z.zweck}</div>{z.doppelt && <span className="tag">bereits gebucht</span>}{z.vermutlich_doppelt && <span className="tag" title="Nur ankreuzen, wenn es wirklich eine zweite Zahlung ist.">{z.vermutlich_doppelt}</span>}
                   {(z as Row).hinweis && <div className={`klein ${(z as Row).ruecklast ? 'fehlertext' : 'meldung'}`}>{(z as Row).hinweis}</div>}</td>
                 <td className="num"><span className={z.betrag_ct < 0 ? 'negativ' : ''}>{betrag(z.betrag_ct)}</span></td>
                 <td>
@@ -111,13 +112,17 @@ function Lastschriften(props: { objekt: Row; modus: Modus }) {
   const [faellig, setFaellig] = useState(() => inTagen(5));
   const [einst] = useLoad<Row>(() => call('einstellungen'), []);
   const [rows] = useLoad<Row[]>(() => call('lastschriften', props.objekt.id, stichtag, [props.modus]), [props.objekt.id, stichtag, props.modus]);
+  // Items already in a file of the last 45 days: not ticked by default, with a note (the money may not be booked yet).
+  const [vermerke, ladeVermerke] = useLoad<Record<string, Row>>(() => call('sepaVermerke', props.objekt.id, 'lastschrift', inTagen(-45)), [props.objekt.id]);
   const [aus, setAus] = useState<Record<number, boolean>>({});
+  const schonDrin = (r: Row) => vermerke?.[`konto:${r.konto_id}`];
+  const abgewaehlt = (r: Row) => aus[r.konto_id] ?? !!schonDrin(r);
 
   const probleme = (r: Row) => [
     !r.vertrag.iban ? 'IBAN fehlt' : !ibanGueltig(r.vertrag.iban) ? 'IBAN ungültig' : '',
     !r.vertrag.sepa_mandat ? 'Mandatsreferenz fehlt' : '',
   ].filter(Boolean);
-  const ok = (rows ?? []).filter((r) => !aus[r.konto_id] && !probleme(r).length);
+  const ok = (rows ?? []).filter((r) => !abgewaehlt(r) && !probleme(r).length);
   const objektFehlt = [!props.objekt.iban && 'IBAN des Objektkontos', !props.objekt.sepa_glaeubiger_id && 'Gläubiger-ID'].filter(Boolean);
 
   async function erzeugen() {
@@ -138,7 +143,10 @@ function Lastschriften(props: { objekt: Row; modus: Modus }) {
         e2e: `HV-${r.konto_id}-${faellig.replace(/-/g, '')}`,
       })),
     });
-    await window.hv.speichern(xml, `Lastschrift ${props.objekt.bezeichnung} ${faellig}.xml`, { name: 'SEPA-XML', extensions: ['xml'] });
+    if (!await window.hv.speichern(xml, `Lastschrift ${props.objekt.bezeichnung} ${faellig}.xml`, { name: 'SEPA-XML', extensions: ['xml'] })) return;
+    await call('sepaVermerken', props.objekt.id, 'lastschrift', faellig, ok.map((r) => ({ schluessel: `konto:${r.konto_id}`, betrag_ct: r.betrag_ct })));
+    setAus({});
+    ladeVermerke();
   }
 
   return (
@@ -160,10 +168,10 @@ function Lastschriften(props: { objekt: Row; modus: Modus }) {
         <tbody>
           {rows?.map((r) => (
             <tr key={r.konto_id} className={probleme(r).length ? 'inaktiv' : ''}>
-              <td><input type="checkbox" disabled={!!probleme(r).length} checked={!aus[r.konto_id] && !probleme(r).length} onChange={(e) => setAus({ ...aus, [r.konto_id]: !e.target.checked })} /></td>
-              <td>{personName(r.vertrag)}</td><td>{r.vertrag.einheit}</td><td>{r.vertrag.iban}</td><td>{r.vertrag.sepa_mandat}</td>
+              <td><input type="checkbox" disabled={!!probleme(r).length} checked={!abgewaehlt(r) && !probleme(r).length} onChange={(e) => setAus({ ...aus, [r.konto_id]: !e.target.checked })} /></td>
+              <td><L zu={{ vertrag: r.vertrag.id, typ: r.typ }}>{personName(r.vertrag)}</L></td><td><L zu={{ einheit: r.vertrag.einheit_id }}>{r.vertrag.einheit}</L></td><td>{r.vertrag.iban}</td><td>{r.vertrag.sepa_mandat}</td>
               <td className="num">{euro(r.betrag_ct)}</td>
-              <td className="fehlertext">{probleme(r).join(', ')}</td>
+              <td className="fehlertext">{probleme(r).join(', ')}{schonDrin(r) && <span className="tag" title="Nur ankreuzen, wenn der Einzug nicht durchging.">schon in der Datei vom {datum(schonDrin(r)!.erstellt.slice(0, 10))} (Einzug {datum(schonDrin(r)!.faellig)})</span>}</td>
             </tr>
           ))}
           {!rows?.length && <tr><td colSpan={7} className="hinweis">Keine offenen Beträge bei Verträgen mit Lastschrift.</td></tr>}

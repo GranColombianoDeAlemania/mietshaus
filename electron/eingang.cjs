@@ -14,32 +14,52 @@ module.exports = function eingang({ db, importieren, melden, passwort }) {
   let ordner = null;
   let watcher = null;
   let timer = null;
-  const groessen = new Map();
+  const groessen = new Map(); // file → { size, seit }: when it was first seen with this size
+  const gescheitert = new Map(); // file → its size when the import failed (not retried until it changes)
+  const RUHE_MS = 4000;
 
   function ordnerScan() {
+    // Runs from timers: an error here must never end the server process (it would crash again on every restart).
+    try { scannen(); } catch (err) { melden(`Eingangsordner: ${err.message}`); }
+  }
+
+  function scannen() {
     if (!ordner || !fs.existsSync(ordner)) return;
+    const jetzt = Date.now();
     const neu = [];
     for (const name of fs.readdirSync(ordner)) {
       if (name.startsWith('.') || !ERLAUBT.test(name)) continue;
       const p = path.join(ordner, name);
       let st;
       try { st = fs.statSync(p); } catch { continue; }
-      if (!st.isFile()) continue;
-      // Only take files whose size did not change since the last scan (still being written otherwise).
-      if (groessen.get(p) !== st.size) { groessen.set(p, st.size); continue; }
+      if (!st.isFile() || gescheitert.get(p) === st.size) continue;
+      // Only take files that kept their size for a few seconds and were not written to meanwhile (still being copied
+      // otherwise – several change events of one copy come in the same moment, so two scans alone prove nothing).
+      const g = groessen.get(p);
+      if (!g || g.size !== st.size) { groessen.set(p, { size: st.size, seit: jetzt }); continue; }
+      if (jetzt - g.seit < RUHE_MS || jetzt - st.mtimeMs < RUHE_MS) continue;
       groessen.delete(p);
-      neu.push(p);
+      neu.push({ p, size: st.size });
     }
     if (!neu.length) return;
-    const r = importieren(neu, { quelle: 'ordner' });
     const ziel = path.join(ordner, 'eingelesen', ortszeit.monatJetzt());
     fs.mkdirSync(ziel, { recursive: true });
-    for (const p of neu) {
+    let uebernommen = 0;
+    for (const { p, size } of neu) {
+      // One file at a time: an unreadable file (rights, disk full) is reported and skipped, the others still come in.
+      try {
+        const [r] = importieren([p], { quelle: 'ordner' });
+        if (!r.doppelt) uebernommen++;
+      } catch (err) {
+        gescheitert.set(p, size);
+        melden(`„${path.basename(p)}“ aus dem Eingangsordner konnte nicht übernommen werden: ${err.message}`);
+        continue;
+      }
       let dest = path.join(ziel, path.basename(p));
       if (fs.existsSync(dest)) dest = path.join(ziel, `${Date.now()}-${path.basename(p)}`);
       try { fs.renameSync(p, dest); } catch { try { fs.copyFileSync(p, dest); fs.rmSync(p); } catch {} }
     }
-    melden(`${r.filter((x) => !x.doppelt).length} Dokument(e) aus dem Eingangsordner ins Postfach übernommen.`);
+    if (uebernommen) melden(`${uebernommen} Dokument(e) aus dem Eingangsordner ins Postfach übernommen.`);
   }
 
   function ordnerSetzen(pfad) {
@@ -49,7 +69,7 @@ module.exports = function eingang({ db, importieren, melden, passwort }) {
     ordner = pfad || null;
     if (!ordner) return;
     fs.mkdirSync(ordner, { recursive: true });
-    try { watcher = fs.watch(ordner, () => setTimeout(ordnerScan, 1500)); } catch {}
+    try { watcher = fs.watch(ordner, () => setTimeout(ordnerScan, RUHE_MS + 500)); } catch {}
     // Network shares do not always send change events, so scan regularly as well.
     timer = setInterval(ordnerScan, 30_000);
     setTimeout(ordnerScan, 2000);

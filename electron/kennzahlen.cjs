@@ -1,7 +1,7 @@
 // Key figures for the cockpit and the tenant, unit and house pages: payment behaviour, account history, occupancy,
 // arrears by age, cash forecast, year comparison, rent increase radar, deadlines, costs by type and what the
 // landlord's own flat costs. Amounts in cents; every figure comes from postings, contracts or meter readings.
-const { tageZwischen, tageImMonat, einheitVonSql } = require('./buchhaltung.cjs');
+const { tageZwischen, tageImMonat, einheitVonSql, nkFaellig } = require('./buchhaltung.cjs');
 const ortszeit = require('./zeit.cjs');
 
 const pad = (n) => String(n).padStart(2, '0');
@@ -746,7 +746,8 @@ module.exports = function kennzahlen({ all, get, PERSON_NAME, bh, aw, ab, vw, dl
   }
 
   // K7: deadlines and dates of the next days (no calibration, legionella, smoke detector or boiler service dates).
-  function fristen(objekte, typ, t, tage = 90) {
+  // max: the cockpit shows the next 14; the calendar and its subscription need all of them.
+  function fristen(objekte, typ, t, tage = 90, max = 14) {
     const ids = idListe(objekte);
     const bisD = plusTage(t, tage);
     const out = [];
@@ -754,9 +755,8 @@ module.exports = function kennzahlen({ all, get, PERSON_NAME, bh, aw, ab, vw, dl
     const jahr = Number(t.slice(0, 4));
     if (typ === 'miete') {
       for (const o of objekte.filter((o) => o.art !== 'weg')) {
-        const hatte = get('SELECT 1 FROM mietverhaeltnisse m JOIN einheiten e ON e.id = m.einheit_id WHERE e.objekt_id = ? AND m.beginn <= ?', o.id, `${jahr - 1}-12-31`);
-        const fertig = get(`SELECT 1 FROM abrechnungen WHERE objekt_id = ? AND typ = 'nk' AND substr(von, 1, 4) = ?`, o.id, String(jahr - 1));
-        if (hatte && !fertig) add(`${jahr}-12-31`, `Betriebskostenabrechnung ${jahr - 1} muss beim Mieter sein (${o.bezeichnung})`, { wichtig: true, ziel: { seite: 'nk', objektId: o.id } });
+        const nkf = nkFaellig(get, o.id, t);
+        if (nkf) add(nkf.frist, `Betriebskostenabrechnung ${nkf.name} muss beim Mieter sein (${o.bezeichnung})`, { wichtig: true, ziel: { seite: 'nk', objektId: o.id } });
       }
       for (const a of all(`SELECT a.*, e.bezeichnung AS einheit, e.objekt_id, ${PERSON_NAME} AS name FROM anpassungen a JOIN mietverhaeltnisse m ON a.vertrag_typ = 'miete' AND m.id = a.vertrag_id
           JOIN einheiten e ON e.id = m.einheit_id JOIN personen p ON p.id = m.person_id WHERE e.objekt_id IN (${ids}) AND a.gueltig_ab > ? AND a.gueltig_ab <= ? ORDER BY a.gueltig_ab`, t, bisD)) {
@@ -792,7 +792,7 @@ module.exports = function kennzahlen({ all, get, PERSON_NAME, bh, aw, ab, vw, dl
         WHERE k.objekt_id IN (${ids}) AND k.kategorie = 'bk01' AND g.klasse = 'geld' AND b.datum BETWEEN ? AND ? GROUP BY b.datum`, plusJahre(nachTag(t), -1), plusJahre(bisD, -1))) {
       add(plusJahre(b.datum, 1), `Grundsteuer (${euro(b.ct)})`, { ziel: { seite: 'buchen' } });
     }
-    return out.sort((a, b) => a.datum.localeCompare(b.datum)).slice(0, 14);
+    return out.sort((a, b) => a.datum.localeCompare(b.datum)).slice(0, max);
   }
 
   // K9: costs of the year by type, allocable share and non-allocable costs per m².
@@ -821,7 +821,7 @@ module.exports = function kennzahlen({ all, get, PERSON_NAME, bh, aw, ab, vw, dl
       if (!gesehen.has(k)) { gesehen.add(k); out.push(x); }
     };
     for (const typ of ['miete', 'weg']) {
-      for (const f of fristen(objekteFuer(typ), typ, vorTag(von), tageZwischen(von, bis) + 1)) {
+      for (const f of fristen(objekteFuer(typ), typ, vorTag(von), tageZwischen(von, bis) + 1, Infinity)) {
         add({ datum: f.datum, titel: f.text, kurz: f.kurz ?? null, art: /^(Einzug|Auszug)/.test(f.text) ? 'umzug' : /Versammlung$|^Eigentümerversammlung/.test(f.text) ? 'termin' : 'frist',
           wichtig: !!f.wichtig, ziel: f.ziel ?? null });
       }

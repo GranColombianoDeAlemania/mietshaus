@@ -1,6 +1,6 @@
 // Document inbox, archive with full-text search and the invoice overview.
 import { useEffect, useState } from 'react';
-import { betrag, call, datum, diesesJahr, euro, fehler, heute, parseCent, personName, zahl, type Row } from '../api';
+import { betrag, call, datum, diesesJahr, euro, fehler, heute, inTagen, parseCent, personName, zahl, type Row } from '../api';
 import { useLoad } from '../useLoad';
 import { Dialog, Fenster, FensterTitel, KontoSelect, Leer } from '../ui';
 import { L } from '../navi';
@@ -498,9 +498,14 @@ export function Rechnungen(props: { objekt?: Row }) {
   async function sepa() {
     const o = props.objekt;
     if (!o?.iban) return hinweis('Für Überweisungen bitte im Objekt die IBAN des Objektkontos hinterlegen.');
+    // An invoice already in a transfer file (not booked as paid yet) would be paid twice.
+    const vermerke: Record<string, Row> = await call('sepaVermerke', o.id, 'ueberweisung', inTagen(-60));
+    const schon = fuerSepa.filter((r) => vermerke[`dokument:${r.id}`]);
+    if (schon.length && !await bestaetigen(`${schon.length === 1 ? `„${schon[0].titel}“ ist` : `${schon.length} Rechnungen sind`} schon in einer Überweisungsdatei (${schon.map((r) => datum(vermerke[`dokument:${r.id}`].erstellt.slice(0, 10))).join(', ')}). Trotzdem noch einmal überweisen?`)) return;
     const xml = painUeberweisung({ auftraggeber: o.bezeichnung, iban: o.iban, bic: o.bic, ausfuehrung: heute(),
       posten: fuerSepa.map((r) => ({ name: r.absender ?? 'Empfänger', iban: r.iban, betrag_ct: r.betrag_ct, zweck: `Rechnung ${r.rechnungsnr ?? r.titel}`, e2e: `RE-${r.id}` })) });
-    await window.hv.speichern(xml, `Ueberweisungen ${o.bezeichnung} ${heute()}.xml`, { name: 'SEPA-XML', extensions: ['xml'] });
+    if (!await window.hv.speichern(xml, `Ueberweisungen ${o.bezeichnung} ${heute()}.xml`, { name: 'SEPA-XML', extensions: ['xml'] })) return;
+    await call('sepaVermerken', o.id, 'ueberweisung', heute(), fuerSepa.map((r) => ({ schluessel: `dokument:${r.id}`, betrag_ct: r.betrag_ct })));
   }
 
   return (

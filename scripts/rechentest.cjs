@@ -1369,6 +1369,84 @@ Stadtsparkasse München | IBAN DE02 7015 0000 0000 1234 56 | BIC SSKMDEMMXXX`;
   gleich('Foto: Aufnahmetag, Titel, Objekt aus dem Standort', [fd.datum, fd.titel, fd.objekt_id], ['2026-10-12', 'Foto vom 12.10.2026, 11:30', ob]);
 }
 
+// ---------- code review of 0.18: statements, deadlines, bank imports ----------
+{
+  const { nkFaellig } = require('../electron/buchhaltung.cjs');
+  const raw2 = open(':memory:');
+  const t = api(raw2);
+  const get = (sql, ...p) => raw2.prepare(sql).get(...p);
+  t.setzeEinstellungen({ bundesland: 'BE', auto_soll: '0' });
+  const ob = t.neuesObjekt({ bezeichnung: 'Prüfhaus', art: 'miete', strasse: 'Prüfweg 1', plz: '10115', ort: 'Berlin' });
+  const konten = t.konten(ob);
+  const bank = konten.find((k) => k.nr === 1200).id;
+  const [e1, e2] = [1, 2].map((nr) => t.save('einheiten', { objekt_id: ob, nr, bezeichnung: `WE${nr}`, art: 'Wohnung', wohnflaeche: 100 }));
+  const vertrag = (eh, name) => t.save('mietverhaeltnisse', { einheit_id: eh, person_id: t.save('personen', { nachname: name }), beginn: '2020-01-01',
+    kaltmiete_ct: 50000, bk_vz_ct: 10000, hk_vz_ct: 0, personen_anzahl: 1, faelligkeitstag: 0, ust_satz: 0 });
+  const v1 = vertrag(e1, 'Eins'), v2 = vertrag(e2, 'Zwei');
+  t.sollstellung(ob, '2025-01', '2025-12');
+  const kostenKonto = konten.find((k) => k.klasse === 'kosten' && k.umlagefaehig && !k.heizkosten).id;
+  const heizKonto = konten.find((k) => k.klasse === 'kosten' && k.heizkosten).id;
+  t.buchen({ objekt_id: ob, datum: '2025-06-30', text: 'Müllabfuhr', positionen: [{ soll_id: kostenKonto, haben_id: bank, betrag_ct: 240000 }] });
+  t.buchen({ objekt_id: ob, datum: '2025-12-31', text: 'Gas', positionen: [{ soll_id: heizKonto, haben_id: bank, betrag_ct: 400000 }] });
+  // A cancelled advance payment no longer counts as paid in the statement.
+  const k1 = t.kontoVon('miete', v1).id;
+  const bkKonten = new Set(konten.filter((k) => k.kategorie === 'bk').map((k) => k.id));
+  const maerz = t.buchungen(ob, {}).find((b) => b.art === 'soll' && b.soll_id === k1 && b.monat === '2025-03' && bkKonten.has(b.haben_id));
+  t.buchungStornieren(maerz.id, '2025-04-10');
+  const nk = t.nkAbrechnung(ob, '2025-01-01', '2025-12-31', { heizung: 'ohne', co2_kg: 8000, co2_kosten_ct: 50000 });
+  const n1 = nk.ergebnisse.find((x) => x.segment.vertrag?.id === v1), n2 = nk.ergebnisse.find((x) => x.segment.vertrag?.id === v2);
+  gleich('Stornierte BK-Vorauszahlung März: nur 11 Monate abgezogen', [n1.bk_vz_ct, n2.bk_vz_ct], [110000, 120000]);
+  // CO2 in mode "ohne": the landlord's share is credited to the tenants by their heating costs, nothing gets lost.
+  const ci = nk.posten.findIndex((p) => p.co2);
+  gleich('CO₂-Anteil im Modus „ohne“ vollständig gutgeschrieben', nk.ergebnisse.reduce((s, x) => s + x.anteile[ci].ct, 0), nk.posten[ci].gesamt_ct);
+  gleich('CO₂-Gutschrift gleich verteilt (gleiche Fläche)', n1.anteile[ci].ct, n2.anteile[ci].ct);
+
+  // Statement deadline for a period that is not a calendar year (§ 556 Abs. 3 BGB).
+  t.abrechnungSpeichern(ob, 'nk', '2024-07-01', '2025-06-30', 'BK 2024/25', {});
+  const f = nkFaellig(get, ob, '2026-09-01');
+  gleich('BK-Frist 07–06: nächster Zeitraum und Frist', [f.von, f.bis, f.frist, f.name], ['2025-07-01', '2026-06-30', '2027-06-30', '2025/26']);
+  gleich('BK-Frist: Zeitraum noch nicht vorbei → nichts fällig', nkFaellig(get, ob, '2026-06-15'), null);
+
+  // Bank import: the same payment from another source (CAMT, then online fetch) is recognised; two equal payments still need two bookings.
+  t.bankBuchen(ob, bank, [{ ref: 'camt:ABC123', datum: '2025-11-03', betrag_ct: 60000, name: 'Eins', zweck: 'Miete 11', konto_id: k1 }], false);
+  const vs = t.bankVorschlaege(ob, [
+    { ref: 'fints:x1', datum: '2025-11-03', betrag_ct: 60000, name: 'Eins', iban: '', zweck: 'Miete 11' },
+    { ref: 'fints:x2', datum: '2025-11-03', betrag_ct: 60000, name: 'Eins', iban: '', zweck: 'Miete 11' },
+  ]);
+  gleich('Bankimport: derselbe Umsatz aus anderer Quelle vermutlich doppelt, der zweite nicht', vs.map((x) => !!x.vermutlich_doppelt), [true, false]);
+  gleich('Bankimport: alte CAMT-Referenz ohne Richtung gilt als gebucht', t.bankVorschlaege(ob, [{ ref: 'camt:ABC123:C', datum: '2025-11-03', betrag_ct: 60000, name: '', iban: '', zweck: '' }])[0].doppelt, true);
+
+  // AfA ends when the building is written off (§ 7 Abs. 4 EStG): purchase 03/1970, 2 % of 240.000 €.
+  const alt = t.neuesObjekt({ bezeichnung: 'Altbau', art: 'miete', strasse: 'Altweg 1', plz: '10115', ort: 'Berlin', kaufpreis_ct: 30000000, kaufdatum: '1970-03-01', gebaeudeanteil: 80, afa_satz: 2 });
+  const afaAus = (x) => { if (Array.isArray(x) && typeof x[0] === 'string' && x[0].startsWith('Absetzung für Abnutzung')) return x[1];
+    if (x && typeof x === 'object') for (const v of Object.values(x)) { const r = afaAus(v); if (r !== undefined) return r; } return undefined; };
+  gleich('AfA: 1971 voll, 2020 Rest, 2025 nichts mehr', [1971, 2020, 2025].map((j) => afaAus(t.anlageV(alt, j)) ?? 0), [480000, 80000, 0]);
+
+  // WEG: a special levy counts like an advance in the statement; the costs it paid are not charged a second time.
+  const w2 = t.neuesObjekt({ bezeichnung: 'WEG Prüfstraße', art: 'weg', strasse: 'Prüfstraße 2', plz: '10115', ort: 'Berlin' });
+  const [u1, u2] = [1, 2].map((nr) => t.save('einheiten', { objekt_id: w2, nr, bezeichnung: `W${nr}`, art: 'Wohnung', wohnflaeche: 50, mea: 500 }));
+  for (const [u, n] of [[u1, 'Erste'], [u2, 'Zweite']]) t.save('eigentum', { einheit_id: u, person_id: t.save('personen', { nachname: n }), beginn: '2020-01-01', hausgeld_ct: 10000, ruecklage_ct: 0, faelligkeitstag: 1 });
+  t.sollstellung(w2, '2025-01', '2025-12');
+  const wk2 = t.konten(w2).filter((k) => k.klasse === 'kosten' && !k.aus_ruecklage);
+  const wbank = t.konten(w2).find((k) => k.nr === 1200).id;
+  const mea2 = t.schluessel(w2).find((x) => x.typ === 'mea').id;
+  t.sonderumlage(w2, { betrag_ct: 1000000, schluessel_id: mea2, datum: '2025-03-01', text: 'Sonderumlage Dach' });
+  t.buchen({ objekt_id: w2, datum: '2025-09-01', text: 'Dach', positionen: [{ soll_id: wk2[0].id, haben_id: wbank, betrag_ct: 1000000 }] });
+  t.buchen({ objekt_id: w2, datum: '2025-12-31', text: 'Versicherung', positionen: [{ soll_id: wk2[1].id, haben_id: wbank, betrag_ct: 240000 }] });
+  const wa2 = t.wegAbrechnung(w2, '2025-01-01', '2025-12-31');
+  gleich('WEG: Sonderumlage angerechnet (Kosten 6.200 − Hausgeld 1.200 − Sonderumlage 5.000 = 0)', wa2.ergebnisse.map((x) => [x.kosten_ct, x.hausgeld_soll_ct, x.sonderumlage_ct, x.ergebnis_ct]),
+    [[620000, 120000, 500000, 0], [620000, 120000, 500000, 0]]);
+
+  // Budget plan: a consumption key without readings for the plan year uses last year's consumption.
+  const kw = t.save('umlageschluessel', { objekt_id: w2, bezeichnung: 'Kaltwasser', einheit: 'm³', typ: 'zaehler', zaehler_art: 'kaltwasser' });
+  const [z1, z2] = [u1, u2].map((u, i) => t.save('zaehler', { objekt_id: w2, einheit_id: u, art: 'kaltwasser', nummer: `KW${i + 1}` }));
+  t.ablesung('2024-12-31', { [z1]: 100, [z2]: 100 });
+  t.ablesung('2025-12-31', { [z1]: 130, [z2]: 190 });
+  const plan = t.wirtschaftsplanBerechnen(w2, 2026, [{ konto_id: wk2[0].id, betrag_ct: 300000, schluessel_id: kw }], 0, null);
+  gleich('Wirtschaftsplan: Wasser nach Verbrauch 2025 (30 : 90)', plan.zeilen.map((z) => z.anteile[0]), [75000, 225000]);
+  gleich('Wirtschaftsplan: Hinweis zur Verteilung', plan.hinweise.length, 1);
+}
+
 console.log(`\nRechentest: ${ok} Prüfungen richtig, ${falsch} falsch.`);
 if (falsch) process.exitCode = 1;
 // The click test reuses the sample data.

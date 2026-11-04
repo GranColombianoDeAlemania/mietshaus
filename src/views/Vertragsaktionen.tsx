@@ -15,6 +15,15 @@ const plusMonate = (iso: string, n: number) => {
   z.setUTCDate(Math.min(tag, letzter));
   return z.toISOString().slice(0, 10);
 };
+// § 574b Abs. 2 BGB: two months before the end, counted back from the moment it ends (the day after the last day) –
+// a tenancy ending on 28.02. needs the objection by 31.12., not by 28.12.
+const zweiMonateVorEnde = (ende: string) => {
+  const d = new Date(ende + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + 1);
+  const z = new Date(plusMonate(d.toISOString().slice(0, 10), -2) + 'T00:00:00Z');
+  z.setUTCDate(z.getUTCDate() - 1);
+  return z.toISOString().slice(0, 10);
+};
 // Signature lines for agreements both sides sign: the landlord and every tenant of the contract (p.mit).
 const feld = (wer: string) => `<td>______________________________<br>Ort, Datum<br><br><br>______________________________<br>${esc(wer)}</td>`;
 export const unterschriften = (p: Row) => `<table class="unterschriften"><tr>${feld('Vermieter')}${feld(`Mieter${p.mit ? ': ' + (briefName(p) || p.firma) : ''}`)}</tr>${
@@ -62,7 +71,7 @@ export function Kuendigung(props: { vertrag: Row; einheit: Row; onClose: () => v
       const p = await empfaengerVon(v);
       const objekt = await call('get', 'objekte', props.einheit.objekt_id);
       const lage = `${props.einheit.bezeichnung}, ${[objekt.strasse, [objekt.plz, objekt.ort].filter(Boolean).join(' ')].filter(Boolean).join(', ')}`;
-      const widerspruch = (ende: string) => `Hinweis zu Ihrem Widerspruchsrecht (§ 568 Abs. 2, §§ 574 bis 574b BGB): Sie können der ${art === 'fristlos' ? 'hilfsweise erklärten ordentlichen ' : ''}Kündigung widersprechen und die Fortsetzung des Mietverhältnisses verlangen, wenn die Beendigung für Sie, Ihre Familie oder einen anderen Angehörigen Ihres Haushalts eine Härte bedeuten würde, die auch unter Würdigung unserer berechtigten Interessen nicht zu rechtfertigen ist. Der Widerspruch ist schriftlich zu erklären und muss uns spätestens zwei Monate vor der Beendigung des Mietverhältnisses zugehen, also bis zum ${datum(plusMonate(ende, -2))}.`;
+      const widerspruch = (ende: string) => `Hinweis zu Ihrem Widerspruchsrecht (§ 568 Abs. 2, §§ 574 bis 574b BGB): Sie können der ${art === 'fristlos' ? 'hilfsweise erklärten ordentlichen ' : ''}Kündigung widersprechen und die Fortsetzung des Mietverhältnisses verlangen, wenn die Beendigung für Sie, Ihre Familie oder einen anderen Angehörigen Ihres Haushalts eine Härte bedeuten würde, die auch unter Würdigung unserer berechtigten Interessen nicht zu rechtfertigen ist. Der Widerspruch ist schriftlich zu erklären und muss uns spätestens zwei Monate vor der Beendigung des Mietverhältnisses zugehen, also bis zum ${datum(zweiMonateVorEnde(ende))}.`;
       let titel: string, betreff: string, inhalt: string;
       if (durch === 'mieter') {
         titel = 'Kündigungsbestätigung';

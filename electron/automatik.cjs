@@ -1,7 +1,8 @@
 // Automation and checks: runs routine work by itself (monthly charges) and reports what needs a decision
 // or is missing. Each hint has a stable key so it can be snoozed or marked as done.
-const { tageZwischen, selbstSql } = require('./buchhaltung.cjs');
+const { tageZwischen, selbstSql, nkFaellig } = require('./buchhaltung.cjs');
 const ortszeit = require('./zeit.cjs');
+const { NICHT_ZAEHLEND } = require('./verwaltung.cjs');
 
 const heute = () => ortszeit.heute();
 const plusTage = (iso, n) => new Date(Date.parse(iso) + n * 864e5).toISOString().slice(0, 10);
@@ -9,6 +10,13 @@ const plusMonate = (iso, n) => {
   const d = new Date(iso.slice(0, 7) + '-01T00:00:00Z');
   d.setUTCMonth(d.getUTCMonth() + n);
   return d.toISOString().slice(0, 10);
+};
+// Day-exact months: 20.08. + 15 months = 20.11.; the 31st becomes the last day of a shorter month.
+const plusMonateTag = (iso, n) => {
+  const d = new Date(iso + 'T00:00:00Z');
+  const z = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + n, 1));
+  z.setUTCDate(Math.min(d.getUTCDate(), new Date(Date.UTC(z.getUTCFullYear(), z.getUTCMonth() + 1, 0)).getUTCDate()));
+  return z.toISOString().slice(0, 10);
 };
 const euro = (ct) => new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format((ct ?? 0) / 100);
 const datumDe = (iso) => (iso ? iso.split('-').reverse().join('.') : '');
@@ -132,18 +140,19 @@ module.exports = function automatik({ db, all, get, tx, PERSON_NAME, bh, ab, vw,
           links: b.vertrag_id ? [{ text: b.bezeichnung, ziel: { vertrag: b.vertrag_id, typ: b.vertrag_typ } }] : [] });
       }
 
-      // Service-charge statement for last year: deadline 31.12. of this year (§ 556 Abs. 3 BGB).
-      if (miete && get('SELECT count(*) AS n FROM mietverhaeltnisse m JOIN einheiten e ON e.id = m.einheit_id WHERE e.objekt_id = ? AND m.beginn <= ?', o.id, `${jahr - 1}-12-31`).n) {
-        const fertig = get(`SELECT 1 FROM abrechnungen WHERE objekt_id = ? AND typ = 'nk' AND substr(von, 1, 4) = ?`, o.id, String(jahr - 1));
-        if (!fertig && monat >= 3) {
-          add({ modus: 'miete', schluessel: `nk:${o.id}:${jahr - 1}`, stufe: monat >= 10 ? 'rot' : 'orange', kategorie: 'Abrechnung', ...ziel('nk'),
-            text: `Betriebskostenabrechnung ${jahr - 1} erstellen – Frist 31.12.${jahr} (danach keine Nachforderung mehr).` });
-          // Cost types that had postings two years ago but none last year: an invoice may be missing.
+      // Service-charge statement: due 12 months after the end of the period (§ 556 Abs. 3 BGB), also for periods that are not calendar years.
+      const nkf = miete ? nkFaellig(get, o.id, t) : null;
+      if (nkf) {
+        if (t >= nkf.nach_zwei_monaten) {
+          add({ modus: 'miete', schluessel: `nk:${o.id}:${nkf.bis}`, stufe: t >= nkf.drei_monate_vorher ? 'rot' : 'orange', kategorie: 'Abrechnung', ...ziel('nk'),
+            text: `Betriebskostenabrechnung ${nkf.name} (${datumDe(nkf.von)} – ${datumDe(nkf.bis)}) erstellen – Frist ${datumDe(nkf.frist)} (danach keine Nachforderung mehr).` });
+          // Cost types that had postings in the period before but none in this one: an invoice may be missing.
+          const vj = (iso) => `${Number(iso.slice(0, 4)) - 1}${iso.slice(4)}`;
           for (const k of all(`SELECT k.id, k.bezeichnung FROM konten k WHERE k.objekt_id = ? AND k.klasse = 'kosten' AND k.umlagefaehig = 1
-              AND EXISTS (SELECT 1 FROM buchungen b WHERE b.soll_id = k.id AND substr(b.datum, 1, 4) = ?)
-              AND NOT EXISTS (SELECT 1 FROM buchungen b WHERE b.soll_id = k.id AND substr(b.datum, 1, 4) = ?)`, o.id, String(jahr - 2), String(jahr - 1))) {
-            add({ modus: 'miete', schluessel: `nkfehlt:${k.id}:${jahr - 1}`, stufe: 'orange', kategorie: 'Abrechnung', ...ziel('archiv'),
-              text: `Für „${k.bezeichnung}“ fehlt ${jahr - 1} eine Rechnung (${jahr - 2} war gebucht) – für die Betriebskostenabrechnung nachreichen.`,
+              AND EXISTS (SELECT 1 FROM buchungen b WHERE b.soll_id = k.id AND b.datum BETWEEN ? AND ?)
+              AND NOT EXISTS (SELECT 1 FROM buchungen b WHERE b.soll_id = k.id AND b.datum BETWEEN ? AND ?)`, o.id, vj(nkf.von), vj(nkf.bis), nkf.von, nkf.bis)) {
+            add({ modus: 'miete', schluessel: `nkfehlt:${k.id}:${nkf.bis}`, stufe: 'orange', kategorie: 'Abrechnung', ...ziel('archiv'),
+              text: `Für „${k.bezeichnung}“ fehlt im Zeitraum ${nkf.name} eine Rechnung (im Zeitraum davor war gebucht) – für die Betriebskostenabrechnung nachreichen.`,
               links: [{ text: k.bezeichnung, ziel: { konto: k.id } }] });
           }
         }
@@ -182,8 +191,10 @@ module.exports = function automatik({ db, all, get, tx, PERSON_NAME, bh, ab, vw,
               add({ modus: 'miete', schluessel: `idxfehlt:${v.id}`, stufe: 'gelb', kategorie: 'Stammdaten', ...ziel('anpassung'), links, text: `Indexmiete ${v.name}: ${err.message}` });
             }
           } else if (!modell) {
-            const letzte = get(`SELECT max(gueltig_ab) AS d FROM anpassungen WHERE vertrag_typ = 'miete' AND vertrag_id = ? AND kaltmiete_ct IS NOT NULL`, v.id).d ?? v.beginn;
-            if (plusMonate(letzte, 15) <= t) add({ modus: 'miete', schluessel: `mh:${v.id}:${jahr}`, stufe: 'gelb', kategorie: 'Chance', ...ziel('anpassung'), links,
+            // § 558 Abs. 1 BGB: 15 months since the last increase; increases for modernisation or operating costs don't count.
+            const letzte = get(`SELECT max(gueltig_ab) AS d FROM anpassungen WHERE vertrag_typ = 'miete' AND vertrag_id = ? AND kaltmiete_ct IS NOT NULL
+              AND coalesce(grund, '') NOT IN ${NICHT_ZAEHLEND}`, v.id).d ?? v.beginn;
+            if (plusMonateTag(letzte, 15) <= t) add({ modus: 'miete', schluessel: `mh:${v.id}:${jahr}`, stufe: 'gelb', kategorie: 'Chance', ...ziel('anpassung'), links,
               text: `Mieterhöhung prüfen bei ${v.name} (${v.einheit}): Miete seit ${datumDe(letzte)} unverändert.` });
           }
           // Deposit not fully paid three months after move-in.
@@ -212,7 +223,8 @@ module.exports = function automatik({ db, all, get, tx, PERSON_NAME, bh, ab, vw,
           }
         }
         const leer = all(`SELECT e.id, e.bezeichnung FROM einheiten e WHERE e.objekt_id = ?1 AND NOT EXISTS (SELECT 1 FROM mietverhaeltnisse m WHERE m.einheit_id = e.id
-          AND m.beginn <= ?2 AND (m.ende IS NULL OR m.ende = '' OR m.ende >= ?2)) AND NOT EXISTS (SELECT 1 FROM eigentum g WHERE g.einheit_id = e.id AND g.selbstnutzer = 1)
+          AND m.beginn <= ?2 AND (m.ende IS NULL OR m.ende = '' OR m.ende >= ?2)) AND NOT EXISTS (SELECT 1 FROM eigentum g WHERE g.einheit_id = e.id AND g.selbstnutzer = 1
+            AND g.beginn <= ?2 AND (g.ende IS NULL OR g.ende = '' OR g.ende >= ?2))
           AND NOT ${selbstSql('e', '?2')}`, o.id, t);
         if (leer.length) add({ modus: 'miete', schluessel: `leer:${o.id}:${t.slice(0, 7)}`, stufe: 'gelb', kategorie: 'Miete', ...ziel('vermietung'),
           text: `Leerstand: ${leer.map((x) => x.bezeichnung).join(', ')}.`, links: leer.map((x) => ({ text: x.bezeichnung, ziel: { einheit: x.id } })) });

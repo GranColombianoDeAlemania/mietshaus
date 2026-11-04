@@ -75,6 +75,72 @@ export function KontoSelect(props: {
   );
 }
 
+// Choice with search for any list: type part of an entry, choose with the arrow keys and Enter (or the mouse).
+// neu: a last entry that creates what is missing (e.g. a new person) without leaving the form.
+export function Auswahl(props: {
+  value: string | number | '' | null | undefined;
+  options: [value: string | number, label: string][];
+  onChange: (v: string) => void;
+  leer?: string;
+  pflicht?: boolean;
+  neu?: { label: string; onClick: (text: string) => void };
+  disabled?: boolean;
+}) {
+  const [suche, setSuche] = useState<string | null>(null);
+  const [markiert, setMarkiert] = useState(0);
+  const liste = useRef<HTMLDivElement>(null);
+  const gewaehlt = props.options.find(([v]) => String(v) === String(props.value ?? ''));
+  const worte = falten(suche ?? '').split(/\s+/).filter(Boolean);
+  const treffer = props.options.filter(([, l]) => worte.every((w) => falten(l).includes(w)));
+  const anzahl = treffer.length + (props.neu ? 1 : 0);
+  const offen = suche !== null;
+
+  useEffect(() => { liste.current?.querySelector('.markiert')?.scrollIntoView({ block: 'nearest' }); }, [markiert, offen]);
+
+  const waehlen = (v: string | number) => { props.onChange(String(v)); setSuche(null); };
+  const neu = () => { const text = suche ?? ''; setSuche(null); props.neu?.onClick(text); };
+  const taste = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (!offen) { setSuche(''); setMarkiert(0); return; }
+      setMarkiert((m) => Math.max(0, Math.min(anzahl - 1, m + (e.key === 'ArrowDown' ? 1 : -1))));
+    } else if (e.key === 'Enter' && offen) {
+      e.preventDefault();
+      if (treffer[markiert]) waehlen(treffer[markiert][0]);
+      else if (props.neu && markiert === treffer.length) neu();
+    } else if (e.key === 'Escape' && offen) {
+      e.preventDefault();
+      e.stopPropagation();
+      setSuche(null);
+    }
+  };
+
+  return (
+    <div className="kontowahl">
+      <input value={offen ? suche : gewaehlt?.[1] ?? ''} placeholder={props.pflicht ? '– bitte wählen –' : props.leer ?? '–'} disabled={props.disabled}
+        role="combobox" aria-expanded={offen} aria-autocomplete="list" title={gewaehlt?.[1]}
+        onFocus={(e) => { setSuche(''); setMarkiert(Math.max(0, treffer.findIndex(([v]) => String(v) === String(props.value ?? '')))); e.currentTarget.select(); }}
+        onChange={(e) => { setSuche(e.target.value); setMarkiert(0); }}
+        onBlur={() => setSuche(null)} onKeyDown={taste} />
+      {offen && (
+        <div className="kontowahl-liste" ref={liste} role="listbox" onMouseDown={(e) => e.preventDefault()}>
+          {!props.pflicht && gewaehlt && !suche && <div className="option leer" onClick={() => waehlen('')}>{props.leer ?? '–'}</div>}
+          {treffer.length === 0 && <div className="option leer">Nichts passt zu „{suche}“.</div>}
+          {treffer.map(([v, l], i) => (
+            <div key={v} role="option" aria-selected={String(v) === String(props.value ?? '')}
+              className={`option${i === markiert ? ' markiert' : ''}${String(v) === String(props.value ?? '') ? ' gewaehlt' : ''}`}
+              onMouseEnter={() => setMarkiert(i)} onClick={() => waehlen(v)}>{l}</div>
+          ))}
+          {props.neu && (
+            <div role="option" aria-selected={false} className={`option neu${markiert === treffer.length ? ' markiert' : ''}`}
+              onMouseEnter={() => setMarkiert(treffer.length)} onClick={neu}>+ {props.neu.label}{suche ? ` „${suche}“` : ''}</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function Tabs<T extends string>(props: { tabs: [T, string][]; value: T; onChange: (t: T) => void }) {
   return (
     <div className="tabs">

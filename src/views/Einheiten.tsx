@@ -1,11 +1,12 @@
-import { useState } from 'react';
-import { call, zahl, type Modus, type Row } from '../api';
+import { useRef, useState } from 'react';
+import { call, heute, zahl, type Modus, type Row } from '../api';
 import { FormDialog, type Field } from '../Form';
 import { useLoad } from '../useLoad';
 import { Galerie } from '../Galerie';
 import { L, useNavi } from '../navi';
 import { Leer, SortTh, sortiere, type Sortierung } from '../ui';
-import { BelegungMini, QmMini } from './Kennzahlen';
+import { BelegungMini, QmMini, SelbstnutzungDialog } from './Kennzahlen';
+import { VertragDialog, neuerVertrag } from './Vertraege';
 
 const ARTEN = ['Wohnung', 'Gewerbe', 'Garage', 'Stellplatz', 'Keller', 'Sonstiges'];
 
@@ -23,11 +24,19 @@ export const EINHEIT_FELDER: Field[] = [
   { key: 'notiz', label: 'Notiz', type: 'textarea', section: 'Sonstiges' },
 ];
 
+// A new unit asks right away how it is used: let (the tenant is entered next, even if not yet in the address book),
+// used by the owner, or still open.
+const nutzungFeld = (modus: Modus): Field => ({ key: 'nutzung', label: 'Nutzung', type: 'select', section: 'Nutzung',
+  options: modus === 'weg' ? [['eigentuemer', 'Eigentümer gleich erfassen']] : [['mieter', 'Vermietet – Mieter gleich erfassen'], ['eigen', 'Eigennutzung']] });
+
 export function Einheiten(props: { modus: Modus; objekt: Row }) {
   const navi = useNavi();
   const [rows, reload] = useLoad<Row[]>(() => call('einheiten', props.objekt.id), [props.objekt.id]);
   const [kz, ladeKz] = useLoad<Row>(() => call('listenKennzahlen', props.objekt.id), [props.objekt.id]);
   const [edit, setEdit] = useState<Row | null>(null);
+  // After saving a new unit: the contract form or the self-use form for it.
+  const [danach, setDanach] = useState<{ art: string; einheit_id: number } | null>(null);
+  const neueEinheit = useRef<{ id: number; nutzung: string } | null>(null);
   const [sort, setSort] = useState<Sortierung>(null);
   const gemischt = props.objekt.art === 'gemischt';
   // Mixed houses show both sides; otherwise only the side that belongs to the mode.
@@ -98,16 +107,31 @@ export function Einheiten(props: { modus: Modus; objekt: Row }) {
       {edit && (
         <FormDialog
           title={edit.id ? 'Einheit bearbeiten' : 'Neue Einheit'}
-          fields={EINHEIT_FELDER}
+          fields={edit.id ? EINHEIT_FELDER : [...EINHEIT_FELDER, nutzungFeld(props.modus)]}
           row={edit}
-          onSave={(r) => call('save', 'einheiten', { ...r, objekt_id: props.objekt.id })}
+          onSave={async (r) => {
+            const { nutzung, ...zeile } = r;
+            const id = await call('save', 'einheiten', { ...zeile, objekt_id: props.objekt.id });
+            if (!edit.id && nutzung) neueEinheit.current = { id, nutzung };
+            return id;
+          }}
           onDelete={() => call('remove', 'einheiten', edit.id)}
           onClose={() => {
             setEdit(null);
+            const n = neueEinheit.current;
+            neueEinheit.current = null;
+            if (n) setDanach({ art: n.nutzung, einheit_id: n.id });
             reload();
             ladeKz();
           }}
         />
+      )}
+      {(danach?.art === 'mieter' || danach?.art === 'eigentuemer') && (
+        <VertragDialog modus={danach.art === 'eigentuemer' ? 'weg' : 'miete'} objekt={props.objekt} edit={neuerVertrag(danach.art === 'eigentuemer' ? 'weg' : 'miete', { einheit_id: danach.einheit_id })}
+          onClose={() => { setDanach(null); reload(); ladeKz(); }} />
+      )}
+      {danach?.art === 'eigen' && (
+        <SelbstnutzungDialog einheitId={danach.einheit_id} row={{ beginn: heute(), personen: 1 }} onClose={() => { setDanach(null); reload(); ladeKz(); }} />
       )}
     </section>
   );

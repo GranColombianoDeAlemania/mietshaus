@@ -126,6 +126,7 @@ type Seite = {
   objekt?: boolean; // needs a selected object
   modi?: Modus[]; // default: rental and WEG mode
   alle?: boolean; // shown in every mode, including projects
+  imMenue?: false; // reached from another page only (the profile from the list of houses)
   render: (c: Ctx) => ReactNode;
 };
 
@@ -141,10 +142,10 @@ const SEITEN: Seite[] = [
   { id: 'pdok', label: 'Fotos & Dokumente', gruppe: 'Projekte', objekt: true, modi: ['projekt'], render: (c) => <ProjektDokumente key={c.objekt.id} projekt={c.objekt} /> },
   { id: 'uebersicht', label: 'Cockpit', gruppe: 'Start', render: (c) => <Uebersicht modus={c.modus} objekte={c.objekte} oeffne={c.oeffne} /> },
   { id: 'aufgaben', label: 'Aufgaben', gruppe: 'Start', alle: true, render: (c) => <Aufgaben objekte={c.modus === 'projekt' ? [] : c.objekte} /> },
-  { id: 'steckbrief', label: 'Steckbrief', gruppe: 'Stammdaten', objekt: true, render: (c) => <Steckbrief key={c.objekt.id} objekt={c.objekt} oeffne={c.oeffne} modus={c.modus} /> },
-  { id: 'objekte', label: 'Objekte', gruppe: 'Stammdaten', render: (c) => <Objekte modus={c.modus} objekte={c.objekte} reload={c.ladeObjekte} onOpen={(id: number) => c.oeffne('steckbrief', id)} /> },
+  { id: 'steckbrief', label: 'Steckbrief', gruppe: 'Stammdaten', objekt: true, imMenue: false, render: (c) => <Steckbrief key={c.objekt.id} objekt={c.objekt} oeffne={c.oeffne} modus={c.modus} /> },
+  { id: 'objekte', label: 'Objekte', gruppe: 'Stammdaten', render: (c) => <Objekte modus={c.modus} objekte={c.objekte} reload={c.ladeObjekte} onOpen={(id: number) => c.oeffne('steckbrief', id)} onEinheiten={(id: number) => c.oeffne('einheiten', id)} /> },
   { id: 'einheiten', label: 'Einheiten', gruppe: 'Stammdaten', objekt: true, render: (c) => <Einheiten key={c.objekt.id} modus={c.modus} objekt={c.objekt} /> },
-  { id: 'vertraege', label: (m) => (m === 'weg' ? 'Eigentümer' : 'Mieter'), gruppe: 'Stammdaten', objekt: true, render: (c) => <Vertraege key={c.objekt.id + c.modus} modus={c.modus} objekt={c.objekt} /> },
+  { id: 'vertraege', label: (m) => (m === 'weg' ? 'Eigentümer' : 'Mieter'), gruppe: 'Stammdaten', objekt: true, render: (c) => <Vertraege key={c.objekt.id + c.modus} modus={c.modus} objekt={c.objekt} objekte={c.objekte} /> },
   { id: 'zaehler', label: 'Zähler', gruppe: 'Stammdaten', objekt: true, render: (c) => <Zaehler key={c.objekt.id} objekt={c.objekt} /> },
   { id: 'schluessel', label: 'Umlageschlüssel', gruppe: 'Stammdaten', objekt: true, render: (c) => <Schluessel key={c.objekt.id} objekt={c.objekt} /> },
   { id: 'personen', label: 'Adressbuch', gruppe: 'Stammdaten', alle: true, render: () => <Personen /> },
@@ -181,6 +182,8 @@ const SEITEN: Seite[] = [
 const REIHENFOLGE = ['Start', 'Projekte', 'Stammdaten', 'Dokumente', 'Buchhaltung', 'Abrechnung', 'Verwaltung', 'Kommunikation', 'System'];
 // Detail pages highlight the list they belong to.
 const LISTE_ZU_DETAIL: Record<string, string> = { person: 'personen', einheit: 'einheiten', vertrag: 'vertraege', konto: 'konten' };
+// Pages without their own menu entry light up the entry they belong to.
+const MENUE_FUER: Record<string, string> = { steckbrief: 'objekte' };
 
 const lesen = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
 const schreiben = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch {} };
@@ -430,7 +433,7 @@ export default function App(props: { benutzer?: Row | null }) {
   const sichtbar = SEITEN.filter((s) => sichtbarIn(s, modus));
   const detail = DETAILSEITEN.includes(seite);
   const aktiv = detail ? null : sichtbar.find((s) => s.id === seite) ?? sichtbar.find((s) => s.gruppe === 'Start') ?? sichtbar[0];
-  const markiert = detail ? LISTE_ZU_DETAIL[seite] : aktiv?.id;
+  const markiert = detail ? LISTE_ZU_DETAIL[seite] : MENUE_FUER[aktiv?.id ?? ''] ?? aktiv?.id;
   const gruppen = [...new Set(sichtbar.map((s) => s.gruppe))].sort((a, b) => REIHENFOLGE.indexOf(a) - REIHENFOLGE.indexOf(b));
 
   const [menueOffen, setMenueOffen] = useState(false);
@@ -529,7 +532,7 @@ export default function App(props: { benutzer?: Row | null }) {
         onDragLeave={(e) => { if (e.currentTarget === e.target) { setZiehen(false); dropZiel.current?.classList.remove('drop-ziel'); dropZiel.current = null; } }} onDrop={abgelegt}>
         {menueOffen && <div className="menuehintergrund" onClick={() => setMenueOffen(false)} />}
         <aside className={`seitenleiste${menueOffen ? ' offen' : ''}`} onClick={(e) => { if ((e.target as Element).closest('.eintrag')) setMenueOffen(false); }}>
-          <div className="marke"><img src="/logo.svg" alt="" width={26} height={26} /><span>Mietshaus</span></div>
+          <div className="marke"><img src="/logo.svg" alt="" width={30} height={30} /><span>Mietshaus</span></div>
           <div className="modi" role="tablist">
             {([['miete', 'Miete', I.KeyRound], ['weg', 'WEG', I.Building2], ['projekt', 'Projekte', I.Hammer]] as [Modus, string, I.LucideIcon][]).map(([m, l, Icon]) => (
               <button key={m} role="tab" className={`modus-${m}`} aria-selected={modus === m} onClick={() => wechsle(m)}><Bild name={MODUS_SYMBOL[m]} groesse={26} ersatz={Icon} /><span>{l}</span></button>
@@ -556,7 +559,7 @@ export default function App(props: { benutzer?: Row | null }) {
               return (
                 <div key={g} className={`navgruppe${zu_ ? ' zu' : ''}`}>
                   <h4><button onClick={() => klappen(g)} onContextMenu={(e) => gruppeMenue(e, g)} aria-expanded={!zu_} title="Klicken zum Ein- oder Ausklappen">{g}<I.ChevronDown size={13} /></button></h4>
-                  {!zu_ && sichtbar.filter((s) => s.gruppe === g).map((s) => {
+                  {!zu_ && sichtbar.filter((s) => s.gruppe === g && s.imMenue !== false).map((s) => {
                     const Icon = ICON[s.id] ?? I.Dot;
                     return (
                       <div key={s.id}>
@@ -589,6 +592,7 @@ export default function App(props: { benutzer?: Row | null }) {
         </aside>
         <header className="kopfleiste">
           {/* Narrow screens (phone): the sidebar becomes a menu behind this button. */}
+          <img className="kopf-logo" src="/logo.svg" alt="Mietshaus" width={30} height={30} />
           <button className="rund menueknopf" title="Menü" aria-expanded={menueOffen} onClick={() => setMenueOffen(!menueOffen)}><I.Menu size={18} /></button>
           <div className="navknoepfe">
             <button className="rund" title="Zurück (⌘[)" disabled={!navi.kannZurueck} onClick={zurueck}><I.ChevronLeft size={18} /></button>

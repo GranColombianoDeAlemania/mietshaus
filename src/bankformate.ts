@@ -27,17 +27,30 @@ function camt(xml: string): Umsatz[] {
     return cur?.textContent?.trim() ?? '';
   };
   const out: Umsatz[] = [];
+  // References without one from the bank get a running number, so equal transactions on one day stay apart.
+  const ohneRef = zaehler();
+  const kind = (el: Element, name: string) => Array.from(el.childNodes).find((n) => (n as Element).localName === name) as Element | undefined;
   for (const e of Array.from(tag(doc, 'Ntry'))) {
-    const betrag = Math.round(Number(text(e, 'Amt')) * 100);
+    const betrag = Math.round(Number(text(kind(e, 'Amt'))) * 100);
     const ein = text(e, 'CdtDbtInd') === 'CRDT';
     const datum = (text(e, 'BookgDt', 'Dt') || text(e, 'BookgDt', 'DtTm') || text(e, 'ValDt', 'Dt')).slice(0, 10);
     const gegen = ein ? 'Dbtr' : 'Cdtr';
     const gegenKonto = ein ? 'DbtrAcct' : 'CdtrAcct';
-    const name = text(e, 'RltdPties', gegen, 'Nm') || text(e, 'RltdPties', gegen, 'Pty', 'Nm');
-    const iban = text(e, 'RltdPties', gegenKonto, 'IBAN');
-    const zweck = Array.from(tag(e, 'Ustrd')).map((u) => u.textContent?.trim()).join(' ') || text(e, 'AddtlNtryInf');
-    const id = text(e, 'AcctSvcrRef') || text(e, 'NtryRef') || text(e, 'EndToEndId');
-    out.push({ ref: 'camt:' + (id && id !== 'NOTPROVIDED' ? id : hash(`${datum}|${betrag}|${name}|${zweck}`)), datum, betrag_ct: ein ? betrag : -betrag, name, iban, zweck });
+    const eintragRef = text(kind(e, 'AcctSvcrRef')) || text(kind(e, 'NtryRef'));
+    // A batch booking (e.g. the own direct-debit file) carries one TxDtls per payer: each becomes its own line.
+    const details = Array.from(tag(e, 'TxDtls'));
+    const teile = details.length > 1 && details.every((d) => text(d, 'Amt')) ? details : [details[0] ?? e];
+    teile.forEach((d, i) => {
+      const ct = teile.length > 1 ? Math.round(Number(text(d, 'Amt')) * 100) : betrag;
+      const name = text(d, 'RltdPties', gegen, 'Nm') || text(d, 'RltdPties', gegen, 'Pty', 'Nm');
+      const iban = text(d, 'RltdPties', gegenKonto, 'IBAN');
+      const zweck = Array.from(tag(d, 'Ustrd')).map((u) => u.textContent?.trim()).join(' ') || text(e, 'AddtlNtryInf');
+      const e2e = text(d, 'EndToEndId');
+      const bankRef = teile.length > 1 ? (eintragRef ? `${eintragRef}/${i + 1}` : text(d, 'AcctSvcrRef') || text(d, 'TxId')) : eintragRef || text(d, 'AcctSvcrRef');
+      // The end-to-end id alone is shared by a debit and its return: the direction keeps them apart.
+      const id = bankRef || (e2e && e2e !== 'NOTPROVIDED' ? `${e2e}:${ein ? 'C' : 'D'}` : '');
+      out.push({ ref: 'camt:' + (id || ohneRef(`${datum}|${ct}|${name}|${zweck}`)), datum, betrag_ct: ein ? ct : -ct, name, iban, zweck });
+    });
   }
   return out;
 }

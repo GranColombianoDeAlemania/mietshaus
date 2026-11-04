@@ -59,6 +59,7 @@ export function Ruecklagen(props: { objekt: Row }) {
       )}
       <div className="panel">
         <h3>Sonderumlage erheben</h3>
+        <p className="hinweis klein">Die Sonderumlage wird in der Jahresabrechnung wie ein Vorschuss angerechnet. Buche die Rechnungen der Maßnahme deshalb auf das normale Kostenkonto, nicht „aus Rücklage“.</p>
         <div className="maske">
           <label>Gesamtbetrag (€)<input className="num" value={su.betrag} onChange={(e) => setSu({ ...su, betrag: e.target.value })} /></label>
           <label>Verteilen nach

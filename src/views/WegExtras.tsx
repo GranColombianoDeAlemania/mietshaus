@@ -124,7 +124,7 @@ function Abstimmung(props: { top: Row; objekt: Row; datum: string; onClose: () =
         <tbody>
           {liste?.map((e) => (
             <tr key={e.person_id}>
-              <td>{e.name}</td><td className="klein">{e.einheiten.join(', ')}</td><td className="num">{zahl(e.stimmen)}</td>
+              <td><L zu={{ person: e.person_id }}>{e.name}</L></td><td className="klein">{e.einheiten.join(', ')}</td><td className="num">{zahl(e.stimmen)}</td>
               {(['ja', 'nein', 'enthaltung', ''] as const).map((w) => (
                 <td key={w}><input type="radio" name={`s${e.person_id}`} checked={(wahl[e.person_id] ?? '') === w} onChange={() => setWahl({ ...wahl, [e.person_id]: w })} /></td>
               ))}

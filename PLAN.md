@@ -232,7 +232,18 @@ From the pick of 28.10.2026 („Paket 1 – ich will nichts bezahlen; Paket 2 so
 | Extras | „Alles erledigt“ with a large symbol for an empty inbox or task list; a short check when a task is done (off with „Bewegung reduzieren“); the bell in the phone bar with its label | done |
 | Offline & Tests | Service worker keeps `/symbole/` (shown at once, refreshed in the background); server test, smoke test and image build check the symbols; the click test checks that every sidebar symbol loads, also with glass off and plain symbols | done |
 
-Next, 0.19: image search (local), workflow templates, inspection on the phone, voice notes.
+## Version 0.19 – code review fixes, quicker data entry
+
+| Area | Contents | Status |
+|------|----------|--------|
+| Abrechnungen | Cancelled advance payments no longer count; WEG special levies credited like advances; CO₂ landlord share also credited with heating mode „ohne“; budget plan distributes consumption keys by last year's use (MEA without readings) | done |
+| Zahlen & Steuer | „8.000“ is eight thousand (German thousands separators); yield „before financing“ without interest; AfA ends when the building is written off | done |
+| Fristen | Objection deadline (§ 574b) to the month end; statement deadline from the real period (e.g. 07–06, `nkFaellig`); calendar and subscription show every deadline; 15-month hint day-exact without modernisation; vacancy hint only for current self-use; mail archive date local; ICS with VTIMEZONE | done |
+| Eingang & Dokumente | Inbox folder: a failing file is reported and skipped (no server crash), files must rest 4 s before import; file written before the record (atomic), a missing file is repaired by the next upload; uploads logged under the uploading user | done |
+| Bank | Same transaction from CAMT and FinTS/MT940/CSV recognised („vermutlich schon gebucht“); CAMT batch bookings split per payer, own references for equal payments and returns; created SEPA files recorded (`sepa_dateien`), their items not preselected again | done |
+| Bedienung | Save and book buttons locked while saving; honest message when the connection breaks; houses clickable → profile (menu entry „Steckbrief“ gone); logo top left (Mac after the window buttons, phone in the top bar); searchable lists in forms (type to filter); tenants/owners created from the contract form („+ Neuer Mieter“), contract for any house with its units; a new unit asks „vermietet / Eigennutzung“ and opens the form; more names, units and accounts are links | done |
+
+Next, 0.20: image search (local), workflow templates, inspection on the phone, voice notes.
 
 ## Development
 

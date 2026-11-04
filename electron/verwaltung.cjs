@@ -101,7 +101,7 @@ module.exports = function verwaltung({ db, all, get, tx, PERSON_NAME, bh }) {
       const heute = ortszeit.heute();
       // Unchanged since the last change of the base rent (modernisation and operating costs aside).
       const seit = get(`SELECT max(gueltig_ab) AS d FROM anpassungen WHERE vertrag_typ = 'miete' AND vertrag_id = ? AND kaltmiete_ct IS NOT NULL
-        AND grund NOT IN ${NICHT_ZAEHLEND} AND gueltig_ab <= ?`, vertragId, heute).d ?? v.beginn;
+        AND coalesce(grund, '') NOT IN ${NICHT_ZAEHLEND} AND gueltig_ab <= ?`, vertragId, heute).d ?? v.beginn;
       const aktuell = bh.betraege('miete', vertragId, heute);
       const neueMiete = Math.round(aktuell.kaltmiete_ct * neu / alt);
       const z = zugang ?? heute;
@@ -131,7 +131,7 @@ module.exports = function verwaltung({ db, all, get, tx, PERSON_NAME, bh }) {
         AND kaltmiete_ct IS NOT NULL AND gueltig_ab > ? AND gueltig_ab < ?`, vertragId, basisDatum, ab)
         .reduce((s, a) => s + a.kaltmiete_ct - bh.betraege('miete', vertragId, vortag(a.gueltig_ab)).kaltmiete_ct, 0);
       const letzte = get(`SELECT max(gueltig_ab) AS d FROM anpassungen WHERE vertrag_typ = 'miete' AND vertrag_id = ? AND kaltmiete_ct IS NOT NULL
-        AND grund NOT IN ${NICHT_ZAEHLEND} AND gueltig_ab < ?`, vertragId, ab).d ?? v.beginn;
+        AND coalesce(grund, '') NOT IN ${NICHT_ZAEHLEND} AND gueltig_ab < ?`, vertragId, ab).d ?? v.beginn;
       const alt = bh.betraege('miete', vertragId, vortag(ab)).kaltmiete_ct;
       // Integer arithmetic: 50000 × 1.15 would give 57499.99….
       const grenze = Math.floor(basis * (100 + k) / 100) + zuschlaege;
@@ -260,3 +260,4 @@ module.exports = function verwaltung({ db, all, get, tx, PERSON_NAME, bh }) {
     },
   };
 };
+module.exports.NICHT_ZAEHLEND = NICHT_ZAEHLEND;

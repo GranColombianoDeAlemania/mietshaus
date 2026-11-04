@@ -121,6 +121,8 @@ function Buchungsmaske(props: { objekt: Row; konten: Row[]; einheiten: Row[]; on
   const [kopf, setKopf] = useState({ datum: heute(), beleg: '', text: vorlage?.text ?? '', geld_id: geldStandard as number | '', einheit_id: '' as number | '' });
   const [pos, setPos] = useState<Pos[]>([{ ...leerePos(), gegen_id: vorlage?.gegen_id ?? '' }]);
   const [meldung, setMeldung] = useState('');
+  // While a booking is on its way the button stays locked: a second tap (slow connection) would book twice.
+  const [laeuft, setLaeuft] = useState(false);
 
   const setP = (i: number, p: Partial<Pos>) => setPos(pos.map((x, j) => (j === i ? { ...x, ...p } : x)));
   const summe = pos.reduce((s, p) => s + parseCent(p.betrag), 0);
@@ -131,6 +133,8 @@ function Buchungsmaske(props: { objekt: Row; konten: Row[]; einheiten: Row[]; on
   const vorsteuer = art === 'ausgabe' && vst19 ? pos.reduce((s, p) => s + (p.ust ? vorsteuerAnteil(parseCent(p.betrag), Number(p.ust), quote) : 0), 0) : 0;
 
   async function speichern() {
+    if (laeuft) return;
+    setLaeuft(true);
     try {
       const positionen = pos.filter((p) => parseCent(p.betrag)).flatMap((p) => {
         const betrag_ct = parseCent(p.betrag);
@@ -151,6 +155,8 @@ function Buchungsmaske(props: { objekt: Row; konten: Row[]; einheiten: Row[]; on
       props.onDone();
     } catch (e) {
       setMeldung(fehlerText(e));
+    } finally {
+      setLaeuft(false);
     }
   }
 
@@ -220,7 +226,7 @@ function Buchungsmaske(props: { objekt: Row; konten: Row[]; einheiten: Row[]; on
       <div className="buttons">
         {meldung && <span className="meldung">{meldung}</span>}
         <span className="spacer" />
-        <button className="primary" disabled={!summe} onClick={speichern}>Buchen</button>
+        <button className="primary" disabled={!summe || laeuft} onClick={speichern}>{laeuft ? 'Wird gebucht …' : 'Buchen'}</button>
       </div>
     </div>
   );

@@ -116,10 +116,15 @@ module.exports = function auswertung({ db, all, get, tx, bh, ab }) {
     if (!o.kaufpreis_ct || !o.afa_satz) return 0;
     const basis = (o.kaufpreis_ct + (o.kaufnebenkosten_ct ?? 0)) * (o.gebaeudeanteil ?? 100) / 100;
     const voll = Math.round(basis * o.afa_satz / 100);
-    if (!o.kaufdatum || Number(o.kaufdatum.slice(0, 4)) < jahr) return voll;
-    if (Number(o.kaufdatum.slice(0, 4)) > jahr) return 0;
+    if (!o.kaufdatum) return voll;
+    const kaufjahr = Number(o.kaufdatum.slice(0, 4));
+    if (kaufjahr > jahr) return 0;
     // Purchase year: pro rata by month, starting with the month of purchase.
-    return Math.round(voll * (13 - Number(o.kaufdatum.slice(5, 7))) / 12);
+    const erstesJahr = Math.round(voll * (13 - Number(o.kaufdatum.slice(5, 7))) / 12);
+    if (kaufjahr === jahr) return erstesJahr;
+    // Later years: the full rate until the basis is used up, the rest in the last year (§ 7 Abs. 4 EStG).
+    const bisher = erstesJahr + voll * (jahr - 1 - kaufjahr);
+    return Math.max(0, Math.min(voll, basis - bisher));
   }
 
   function anlageV(objektId, jahr) {
@@ -233,7 +238,8 @@ module.exports = function auswertung({ db, all, get, tx, bh, ab }) {
       const soll = get(`SELECT coalesce(sum(b.betrag_ct), 0) AS s FROM buchungen b JOIN konten e ON e.id = b.haben_id JOIN konten p ON p.id = b.soll_id
         WHERE e.objekt_id = ? AND e.kategorie IN ('miete', 'sonst') AND p.klasse = 'person' AND b.datum BETWEEN ? AND ?`, objektId, von, bis).s;
       const ein = einnahmen(objektId, von, bis);
-      const ks = kosten(objektId, von, bis);
+      // Before financing: interest from loan instalments is not a cost here.
+      const ks = kosten(objektId, von, bis).filter((k) => k.kategorie !== 'zinsen');
       const nichtUml = ks.filter((k) => !k.umlagefaehig).reduce((s, k) => s + k.betrag_ct, 0);
       const uml = ks.filter((k) => k.umlagefaehig).reduce((s, k) => s + k.betrag_ct, 0);
       const ist = (ein.miete ?? 0) + (ein.sonst ?? 0);

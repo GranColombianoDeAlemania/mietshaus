@@ -1,5 +1,6 @@
 // Sending e-mails from Mietshaus (SMTP). Every mail sent is kept in the archive as an .eml file with the person or
 // house it concerns, so the letter and its attachments are on file. Attachments are documents of the archive.
+const ortszeit = require('../electron/zeit.cjs');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -50,7 +51,7 @@ module.exports = function versand({ db, passwort, dokumentOrdner, importieren })
       const datei = path.join(ordner, `E-Mail ${String(m.betreff).replace(/[/\\:*?"<>|]/g, '_').slice(0, 60)}.eml`);
       fs.writeFileSync(datei, eml);
       const [r] = importieren([datei], { ...(m.ablage ?? {}), typ: 'E-Mail', status: 'abgelegt', quelle: 'programm' });
-      db().dokumentSpeichern({ id: r.id, titel: `E-Mail: ${m.betreff}`, datum: new Date().toISOString().slice(0, 10),
+      db().dokumentSpeichern({ id: r.id, titel: `E-Mail: ${m.betreff}`, datum: ortszeit.heute(),
         zusammenfassung: `Gesendet an ${an}${anhaenge.length ? ` mit ${anhaenge.length} Anhang/Anhängen` : ''}.`, person_id: m.ablage?.person_id ?? null });
       return { gesendet: true, an, dokument_id: r.id };
     } finally {

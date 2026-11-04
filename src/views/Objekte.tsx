@@ -31,7 +31,8 @@ const FELDER: Field[] = [
   { key: 'notiz', label: 'Notiz', type: 'textarea', section: 'Sonstiges' },
 ];
 
-export function Objekte(props: { modus: Modus; objekte: Row[]; reload: () => void; onOpen: (id: number) => void }) {
+// A click on a house opens its profile (Steckbrief); the buttons lead to its units and to editing.
+export function Objekte(props: { modus: Modus; objekte: Row[]; reload: () => void; onOpen: (id: number) => void; onEinheiten: (id: number) => void }) {
   const [edit, setEdit] = useState<Row | null>(null);
   useAktion('neues-objekt', () => setEdit({ art: props.modus, wj_beginn: '01-01' }));
 
@@ -58,14 +59,14 @@ export function Objekte(props: { modus: Modus; objekte: Row[]; reload: () => voi
           </thead>
           <tbody>
             {props.objekte.map((o) => (
-              <tr key={o.id} onDoubleClick={() => setEdit(o)}>
-                <td>{o.bezeichnung}</td>
+              <tr key={o.id} className="klickbar" title="Steckbrief öffnen" onClick={() => props.onOpen(o.id)}>
+                <td><b className="linktext">{o.bezeichnung}</b></td>
                 <td><span className={`tag art-${o.art}`}>{OBJEKT_ART[o.art]}</span></td>
                 <td>{[o.strasse, [o.plz, o.ort].filter(Boolean).join(' ')].filter(Boolean).join(', ')}</td>
                 <td className="num">{o.anzahl_einheiten}</td>
                 <td className="num">{zahl(o.flaeche)}</td>
-                <td className="aktionen">
-                  <button onClick={() => props.onOpen(o.id)}>Einheiten</button>
+                <td className="aktionen" onClick={(e) => e.stopPropagation()}>
+                  <button onClick={() => props.onEinheiten(o.id)}>Einheiten</button>
                   <button onClick={() => setEdit(o)}>Bearbeiten</button>
                 </td>
               </tr>
