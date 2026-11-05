@@ -2,7 +2,7 @@
 # Build: docker build -t mietshaus .   Run: see compose.yaml and ANLEITUNG-NAS.md.
 
 # ---- user interface ----
-FROM node:24-bookworm-slim AS oberflaeche
+FROM node:25-bookworm-slim AS oberflaeche
 WORKDIR /app
 ENV ELECTRON_SKIP_BINARY_DOWNLOAD=1
 COPY package.json package-lock.json ./
@@ -15,7 +15,7 @@ COPY electron ./electron
 RUN npx vite build && test -f dist/logo.svg && test -f dist/symbole/cockpit.svg && test -f dist/sw.js && test -f dist/manifest.webmanifest
 
 # ---- server ----
-FROM node:24-bookworm-slim
+FROM node:25-bookworm-slim
 WORKDIR /app
 ENV NODE_ENV=production MIETSHAUS_DATEN=/daten PORT=8080 HOST=0.0.0.0 TZ=Europe/Berlin
 COPY package.json package-lock.json ./
