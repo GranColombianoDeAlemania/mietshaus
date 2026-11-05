@@ -16,6 +16,7 @@ const ortszeit = require('../electron/zeit.cjs');
 const { ics } = require('./ics.cjs');
 const { kandidaten: zaehlerKandidaten } = require('../electron/zaehlerfoto.cjs');
 const fintsModul = require('../electron/fints.cjs');
+const { bildsuche, MODELL: BILDMODELL } = require('../electron/bildsuche.cjs');
 const authModul = require('./auth.cjs');
 const geheim = require('./geheim.cjs');
 const versandModul = require('./versand.cjs');
@@ -30,7 +31,7 @@ const SICHERHEIT = { 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no
 const MAX_UPLOAD = 300 * 1024 * 1024;
 // Functions answered by the server itself, not by the database API.
 const MEINE = new Set(['mitteilungen', 'mitteilungenUngelesen', 'mitteilungGelesen', 'alleMitteilungenGelesen', 'aufgabenListe', 'vorgangStatus', 'vorgangKommentieren']);
-const NUR_SERVER = new Set(['benutzerListe', 'benutzerAnlegen', 'benutzerAendern', 'claudeToken', 'meineAufgaben', 'passkeyListe', 'passkeyLoeschen', 'personEinladen', 'einladungErneuern', 'kalenderAbo']);
+const NUR_SERVER = new Set(['bildsucheStatus', 'bildsucheEinschalten', 'bildsucheAusschalten', 'benutzerListe', 'benutzerAnlegen', 'benutzerAendern', 'claudeToken', 'meineAufgaben', 'passkeyListe', 'passkeyLoeschen', 'personEinladen', 'einladungErneuern', 'kalenderAbo']);
 
 class Fehler extends Error { constructor(status, text) { super(text); this.status = status; } }
 
@@ -227,7 +228,29 @@ async function starten(o) {
   automatik();
   papierkorbLeeren();
   const t1 = setTimeout(() => { autoSicherung(); updatePruefen(); morgenUebersicht(); erinnern(); serverWarnungen().catch((e) => console.error('Serverwarnungen', e)); }, 60_000);
-  const t2 = setInterval(() => { automatik(); papierkorbLeeren(); erinnern(); autoSicherung(); morgenUebersicht(); serverWarnungen().catch((e) => console.error('Serverwarnungen', e)); }, 3600_000);
+  const schluesselAufraeumen = () => { try { raw.prepare(`DELETE FROM vorgangsschluessel WHERE zeit < datetime('now', '-60 days')`).run(); } catch (e) { console.error('Vorgangsschlüssel', e); } };
+  const t2 = setInterval(() => { automatik(); papierkorbLeeren(); schluesselAufraeumen(); erinnern(); autoSicherung(); morgenUebersicht(); serverWarnungen().catch((e) => console.error('Serverwarnungen', e)); }, 3600_000);
+  // Image search: while switched on, a few photos at a time get their keywords; the model is loaded once first.
+  const bilder = bildsuche({ ordner: path.join(daten, 'modelle') });
+  let bilderLaufen = false;
+  const bilderTakt = async () => {
+    if (bilderLaufen || dbSystem.einstellungen().bildsuche !== '1') return;
+    if (!bilder.vorhanden()) { if (!bilder.ladestand()?.laeuft && !bilder.ladestand()?.fehler) bilder.herunterladen(); return; }
+    bilderLaufen = true;
+    try {
+      for (const d of dbSystem.bilderOhneStichworte(3)) {
+        try {
+          const r = await bilder.auswerten(path.join(dokumentOrdner(), path.basename(d.datei)));
+          dbSystem.bildStichworteSetzen(d.id, r.stichworte, r.vektor);
+        } catch (e) {
+          // A file that cannot be read gets an empty list, so it is not tried again and again.
+          console.error('Bildsuche', d.datei, e?.message ?? e);
+          dbSystem.bildStichworteSetzen(d.id, [], null);
+        }
+      }
+    } finally { bilderLaufen = false; }
+  };
+  const tBilder = setInterval(() => { bilderTakt().catch((e) => console.error('Bildsuche', e)); }, 15_000);
   const t3 = setInterval(updatePruefen, 24 * 3600_000);
 
   // ---------- helpers ----------
@@ -366,24 +389,29 @@ async function starten(o) {
     return [wert === undefined ? null : wert, geaendert ? {} : { 'X-Lesend': '1' }];
   }
 
-  // A change sent again with the same key (the page retries after a broken connection, or the user saves the same
-  // thing again) is not done twice: the second request waits for the first or gets its stored answer. Kept 15 minutes.
-  const erledigt = new Map();
+  // A change sent again with the same key (the page retries after a broken connection, the user saves the same thing
+  // again, or a device that worked offline sends its changes days later) is not done twice: a second request waits
+  // for the first (in memory) or gets the stored answer (table vorgangsschluessel, kept 60 days, also across restarts).
+  const laufend = new Map();
   async function einmal(schluessel, benutzer, ausfuehren) {
     if (typeof schluessel !== 'string' || !/^[\w-]{8,80}$/.test(schluessel)) return ausfuehren();
-    const jetzt = Date.now();
-    for (const [k, e] of erledigt) if (jetzt - e.zeit > 15 * 60_000 || erledigt.size > 2000) erledigt.delete(k); else break;
-    const k = `${benutzer ?? ''}:${schluessel}`;
-    const alt = erledigt.get(k);
-    if (alt) { const [wert, kopf] = await alt.antwort; return [wert, { ...kopf, 'X-Wiederholt': '1' }]; }
+    const b = benutzer ?? 0;
+    const k = `${b}:${schluessel}`;
+    const lauf = laufend.get(k);
+    if (lauf) { const [wert, kopf] = await lauf; return [wert, { ...kopf, 'X-Wiederholt': '1' }]; }
+    const alt = raw.prepare('SELECT antwort FROM vorgangsschluessel WHERE benutzer = ? AND schluessel = ?').get(b, schluessel);
+    if (alt) return [alt.antwort == null ? null : JSON.parse(alt.antwort), { 'X-Wiederholt': '1' }];
     const antwort = ausfuehren();
-    erledigt.set(k, { zeit: jetzt, antwort });
+    laufend.set(k, antwort);
     try {
       const [wert, kopf] = await antwort;
       // Only changes are kept: a read sent again should see the current data.
-      if (kopf['X-Lesend']) erledigt.delete(k);
+      if (!kopf['X-Lesend']) {
+        const j = JSON.stringify(wert ?? null);
+        raw.prepare('INSERT OR REPLACE INTO vorgangsschluessel (benutzer, schluessel, antwort) VALUES (?, ?, ?)').run(b, schluessel, j.length <= 100_000 ? j : null);
+      }
       return [wert, kopf];
-    } catch (e) { erledigt.delete(k); throw e; }
+    } finally { laufend.delete(k); }
   }
 
   // ---------- routes ----------
@@ -737,6 +765,9 @@ async function starten(o) {
   // User management: every user may manage users (same rights for all). Not possible in local mode.
   function serverFunktion(fn, args, w) {
     if (fn === 'meineAufgaben') return o.modus === 'server' ? roh.meineAufgaben(w.benutzer.id) : [];
+    if (fn === 'bildsucheStatus') return { an: dbSystem.einstellungen().bildsuche === '1', modell: bilder.vorhanden(), laden: bilder.ladestand(), groesse: BILDMODELL.groesse, ...roh.bildsucheZaehlen() };
+    if (fn === 'bildsucheEinschalten') { dbSystem.setzeEinstellungen({ bildsuche: '1' }); bilder.herunterladen(); return true; }
+    if (fn === 'bildsucheAusschalten') { dbSystem.setzeEinstellungen({ bildsuche: '0' }); if (args[0]?.modellLoeschen) bilder.loeschen(); return true; }
     if (o.modus !== 'server') throw new Fehler(400, 'Benutzer gibt es nur auf dem Server.');
     if (fn === 'benutzerListe') return auth.liste();
     if (fn === 'benutzerAnlegen') return auth.anlegen(args[0] ?? {});
@@ -774,7 +805,7 @@ async function starten(o) {
     importieren: (pfade, opt) => { const r = ana.importieren(pfade, opt); senden('aktualisiert'); return r; },
     eingangsordnerSetzen: (pfad) => { dbSystem.setzeEinstellungen({ eingangsordner: pfad || null }); ein.ordnerSetzen(pfad || null); },
     beenden: async () => {
-      clearTimeout(t1); clearInterval(t2); clearInterval(t3); clearInterval(tPuls); clearInterval(tVersion);
+      clearTimeout(t1); clearInterval(t2); clearInterval(t3); clearInterval(tBilder); clearInterval(tPuls); clearInterval(tVersion);
       ein.ordnerSetzen(null);
       for (const h of hoerer) h.res.end();
       await new Promise((ok) => server.close(ok));

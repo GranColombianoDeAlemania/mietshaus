@@ -79,6 +79,7 @@ export function Einstellungen() {
       <Darstellung />
       <SteuerKalender />
       <Automatik />
+      <Bildsuche />
       <Festschreibung />
       {info?.modus === 'server' && <Benutzer />}
       {window.hvDesktop && <Verbindung />}
@@ -258,6 +259,31 @@ function Automatik() {
         {e.auto_soll_ab ? `Aktiv seit ${e.auto_soll_ab.slice(5)}/${e.auto_soll_ab.slice(0, 4)}; frühere Monate werden nicht automatisch nachgebucht (dafür „Sollstellung“ nutzen).` : 'Startet mit dem aktuellen Monat.'}
         {e.auto_letzter_lauf ? ` Letzter Lauf: ${new Date(e.auto_letzter_lauf).toLocaleString('de-DE')}.` : ''}
       </p>
+    </div>
+  );
+}
+
+// Local image search: switched on, the image model is loaded once (about 90 MB) and the photos get keywords in the
+// background; the photos never leave the server or this Mac.
+function Bildsuche() {
+  const [s, reload] = useLoad<Row>(() => call('bildsucheStatus'), []);
+  useEffect(() => { if (!s?.an || (s.modell && s.fertig >= s.gesamt)) return; const t = setInterval(reload, 3000); return () => clearInterval(t); }, [s?.an, s?.modell, s?.fertig, s?.gesamt]);
+  if (!s) return null;
+  const mb = (b: number) => `${Math.round(b / 1e6)} MB`;
+  return (
+    <div className="block">
+      <h3>Bildsuche (lokal)</h3>
+      <label className="check">
+        <input type="checkbox" checked={!!s.an} onChange={async (ev) => { await call(ev.target.checked ? 'bildsucheEinschalten' : 'bildsucheAusschalten'); reload(); }} />
+        Fotos automatisch verschlagworten – dann findet die Suche „Heizung“, „Schimmel“ oder „Dachrinne“ auch in Fotos ohne Text
+      </label>
+      <p className="klein hinweis">
+        Beim Einschalten wird das Bildmodell einmal geladen ({mb(s.groesse)}, von Hugging Face, mit Prüfsumme). Danach läuft alles hier – die Fotos verlassen den Server nicht.
+        {s.an && !s.modell && (s.laden?.fehler ? <b className="fehlertext"> Laden fehlgeschlagen: {s.laden.fehler} – es wird später erneut versucht.</b>
+          : s.laden ? ` Lädt … ${mb(s.laden.geladen)} von ${mb(s.laden.gesamt)}.` : ' Lädt gleich …')}
+        {s.modell && ` ${s.fertig ?? 0} von ${s.gesamt ?? 0} Fotos verschlagwortet.`}
+      </p>
+      {!s.an && s.modell && <button className="klein" onClick={async () => { await call('bildsucheAusschalten', { modellLoeschen: true }); reload(); }}>Bildmodell löschen ({mb(s.groesse)})</button>}
     </div>
   );
 }

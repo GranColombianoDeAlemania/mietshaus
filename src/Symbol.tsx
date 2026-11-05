@@ -8,7 +8,7 @@ export const SYMBOLE = ['cockpit', 'aufgaben', 'objekte', 'steckbrief', 'einheit
   'vorschlaege', 'archiv', 'rechnungen', 'buchungen', 'konten', 'sollstellung', 'op', 'bank', 'darlehen', 'betriebskosten', 'jahresabrechnung',
   'wirtschaftsplan', 'ruecklagen', 'rendite', 'kaution', 'anpassung', 'vermietung', 'uebergabe', 'versammlung', 'beschluesse', 'kontakte',
   'schluessel', 'versicherung', 'briefe', 'vorgaenge', 'kalender', 'pruefung', 'status', 'protokoll', 'export', 'einstellungen', 'glocke',
-  'kamera', 'mehr', 'miete', 'projekte', 'zeitplan', 'kosten', 'fotos', 'suche', 'pflichten', 'inventar'] as const;
+  'kamera', 'mehr', 'miete', 'projekte', 'zeitplan', 'kosten', 'fotos', 'suche', 'pflichten', 'inventar', 'begehung'] as const;
 export type SymbolName = typeof SYMBOLE[number];
 
 // The symbol of each page (ids of SEITEN in App.tsx) and of the three modes.
@@ -19,7 +19,7 @@ export const SEITEN_SYMBOL: Record<string, SymbolName> = {
   buchen: 'buchungen', konten: 'konten', soll: 'sollstellung', op: 'op', bank: 'bank', darlehen: 'darlehen',
   nk: 'betriebskosten', wegabr: 'jahresabrechnung', wipl: 'wirtschaftsplan', ruecklagen: 'ruecklagen', auswertung: 'rendite',
   kaution: 'kaution', anpassung: 'anpassung', vermietung: 'vermietung', uebergabe: 'uebergabe', versammlungen: 'versammlung', beschluesse: 'beschluesse',
-  kontakte: 'kontakte', schluesselv: 'schluessel', versicherungen: 'versicherung', pflichten: 'pflichten', inventar: 'inventar', briefe: 'briefe', vorgaenge: 'vorgaenge', kalender: 'kalender',
+  kontakte: 'kontakte', schluesselv: 'schluessel', versicherungen: 'versicherung', pflichten: 'pflichten', inventar: 'inventar', begehungen: 'begehung', briefe: 'briefe', vorgaenge: 'vorgaenge', kalender: 'kalender',
   pruefung: 'pruefung', status: 'status', protokoll: 'protokoll', export: 'export', einstellungen: 'einstellungen',
 };
 export const MODUS_SYMBOL: Record<string, SymbolName> = { miete: 'miete', weg: 'einheiten', projekt: 'projekte' };

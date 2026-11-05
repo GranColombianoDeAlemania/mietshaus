@@ -20,7 +20,12 @@ WORKDIR /app
 ENV NODE_ENV=production MIETSHAUS_DATEN=/daten PORT=8080 HOST=0.0.0.0 TZ=Europe/Berlin
 COPY package.json package-lock.json ./
 # Only what the server needs at run time (pdf.js, canvas for scans, Tesseract, mail, MCP); no Electron.
-RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
+# The image model's runtime (local image search) ships builds for every system; only this one's stays (~23 MB).
+RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force \
+ && arch=$(uname -m | sed 's/x86_64/x64/;s/aarch64/arm64/') \
+ && find node_modules/onnxruntime-node/bin -mindepth 2 -maxdepth 2 ! -name linux -exec rm -rf {} + \
+ && find node_modules/onnxruntime-node/bin/*/linux -mindepth 1 -maxdepth 1 ! -name "$arch" -exec rm -rf {} + \
+ && test -f node_modules/onnxruntime-node/bin/napi-v6/linux/$arch/onnxruntime_binding.node
 COPY electron ./electron
 COPY server ./server
 COPY resources/tessdata ./resources/tessdata

@@ -1,0 +1,95 @@
+# Wortschatz der Bildsuche: je Zeile „deutsches Stichwort | englische Beschreibung fürs Modell“.
+# Nach einer Änderung neu berechnen (siehe woerter.mjs); die App liest electron/bildwoerter.json.
+Fassade | the facade of an apartment building
+Dach | a roof of a house
+Dachrinne | a rain gutter on a roof
+Schornstein | a chimney on a roof
+Fenster | a window
+Haustür | the front door of a building
+Balkon | a balcony
+Garten | a garden
+Baum | a tree
+Hecke | a hedge
+Rasen | a lawn
+Hof | a courtyard
+Garage | a garage
+Parkplatz | a parking lot
+Mülltonnen | garbage bins
+Briefkasten | mailboxes
+Klingel | a doorbell panel with name plates
+Zaun | a fence
+Spielplatz | a playground
+Gehweg | a sidewalk
+Schnee | snow on the ground
+Laub | fallen leaves on the ground
+Graffiti | graffiti on a wall
+Solaranlage | solar panels on a roof
+Treppenhaus | a staircase in an apartment building
+Keller | a basement
+Flur | a hallway
+Küche | a kitchen
+Bad | a bathroom
+Toilette | a toilet
+Dusche | a shower
+Badewanne | a bathtub
+Waschbecken | a sink
+Wohnzimmer | a living room
+Schlafzimmer | a bedroom
+Dachboden | an attic
+Waschküche | a laundry room
+Aufzug | an elevator
+Tür | a door
+Parkett | a wooden floor
+Fliesen | tiles
+Teppich | a carpet
+Decke | a ceiling
+Heizung | a heating boiler
+Heizkörper | a radiator
+Thermostat | a thermostat
+Warmwasserspeicher | a hot water tank
+Wärmepumpe | a heat pump
+Zähler | a utility meter
+Stromzähler | an electricity meter
+Wasserzähler | a water meter
+Sicherungskasten | a fuse box
+Steckdose | a power outlet
+Lichtschalter | a light switch
+Lampe | a lamp
+Rohre | pipes
+Wasserhahn | a faucet
+Rauchmelder | a smoke detector on a ceiling
+Feuerlöscher | a fire extinguisher
+Lüftung | a ventilation grille
+Waschmaschine | a washing machine
+Trockner | a clothes dryer
+Kühlschrank | a refrigerator
+Herd | a stove
+Backofen | an oven
+Spülmaschine | a dishwasher
+Dunstabzug | a range hood
+Typenschild | an appliance rating plate label
+Wasserschaden | water damage on a ceiling
+Schimmel | mold on a wall
+Feuchtigkeit | a damp wall with stains
+Riss | a crack in a wall
+Rost | rust
+Glasbruch | broken window glass
+Leck | a leaking pipe
+Verstopfung | a clogged drain
+Brandschaden | fire damage
+Ungeziefer | insects or pests
+Putzschaden | peeling plaster
+Sturmschaden | storm damage with a fallen tree
+Einbruch | a break-in with a damaged lock
+Rechnung | a receipt or invoice
+Brief | a letter document
+Grundriss | a floor plan
+Vertrag | a contract document
+Schlüssel | keys
+Handwerker | a craftsman working
+Baustelle | a construction site
+Gerüst | scaffolding on a building
+Möbel | furniture
+Sperrmüll | bulky waste furniture on the street
+Fahrrad | a bicycle
+Auto | a car

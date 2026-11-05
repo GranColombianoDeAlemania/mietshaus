@@ -38,6 +38,7 @@ export async function benutzerSetzen(id: string | null, status?: unknown) {
   schreiben('offline_benutzer', id);
   if (status) schreiben('offline_status', JSON.stringify(status));
 }
+export const aktuellerBenutzer = () => benutzer;
 export const letzterStatus = () => { try { return JSON.parse(lesen('offline_status') ?? 'null'); } catch { return null; } };
 
 export async function merken(fn: string, args: unknown[], wert: unknown) {

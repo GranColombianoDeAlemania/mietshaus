@@ -59,6 +59,8 @@ const Schluesselverwaltung = ansicht(vMieteExtras, 'Schluesselverwaltung');
 const Versicherungen = ansicht(vMieteExtras, 'Versicherungen');
 const vPflichten = () => import('./views/Pflichten');
 const vInventar = () => import('./views/Inventar');
+const vBegehung = () => import('./views/Begehung');
+const Begehungen = ansicht(vBegehung, 'Begehungen');
 const Inventar = ansicht(vInventar, 'Inventar');
 const Pflichten = ansicht(vPflichten, 'Pflichten');
 const vWegExtras = () => import('./views/WegExtras');
@@ -108,6 +110,11 @@ const Pruefbericht = ansicht(vPruefbericht, 'Pruefbericht');
 const vAufgaben = () => import('./views/Aufgaben');
 const Aufgaben = ansicht(vAufgaben, 'Aufgaben');
 const vorladen = () => { for (const l of [vArchiv, vUebersicht, vKommunikation, vKalender, vAufgaben]) l().catch(() => {}); };
+// All other pages a little later: then the service worker keeps every part, and each page opens without a connection too.
+const ALLE_SEITEN = [vObjekte, vEinheiten, vVertraege, vSchluessel, vPersonen, vZaehler, vKonten, vBuchen, vSollstellung, vOffenePosten, vBank, vEinstellungen,
+  vNkAbrechnung, vWegAbrechnung, vWirtschaftsplan, vRuecklagen, vMieteExtras, vPflichten, vInventar, vBegehung, vWegExtras, vExport, vProtokoll, vVorschlaege,
+  vStatus, vUebergabe, vVermietung, vAuswertungen, vSteckbrief, vAkten, vProjekte, vPruefbericht];
+const allesVorladen = () => { for (const l of ALLE_SEITEN) l().catch(() => {}); };
 
 // One icon per page; unknown ids fall back to a neutral dot.
 const ICON: Record<string, I.LucideIcon> = {
@@ -117,7 +124,7 @@ const ICON: Record<string, I.LucideIcon> = {
   buchen: I.BookOpen, konten: I.Landmark, soll: I.Repeat, op: I.BadgeEuro, bank: I.Wallet, darlehen: I.PiggyBank,
   nk: I.Calculator, wegabr: I.Calculator, wipl: I.ClipboardList, ruecklagen: I.PiggyBank, auswertung: I.ChartColumn,
   kaution: I.Shield, anpassung: I.TrendingUp, vermietung: I.UserPlus, uebergabe: I.ClipboardCheck, versammlungen: I.Gavel, beschluesse: I.ScrollText,
-  kontakte: I.Phone, schluesselv: I.KeyRound, versicherungen: I.Umbrella, pflichten: I.ClipboardCheck, inventar: I.WashingMachine,
+  kontakte: I.Phone, schluesselv: I.KeyRound, versicherungen: I.Umbrella, pflichten: I.ClipboardCheck, inventar: I.WashingMachine, begehungen: I.SearchCheck,
   briefe: I.Mail, vorgaenge: I.ListChecks, termine: I.CalendarDays, kalender: I.CalendarDays,
   pruefung: I.ShieldCheck, status: I.Activity, protokoll: I.History, export: I.Download, einstellungen: I.Settings,
 };
@@ -173,6 +180,7 @@ const SEITEN: Seite[] = [
   { id: 'beschluesse', label: 'Beschluss-Sammlung', gruppe: 'Verwaltung', objekt: true, modi: ['weg'], render: (c) => <Beschluesse key={c.objekt.id} objekt={c.objekt} /> },
   { id: 'kontakte', label: (m) => (m === 'weg' ? 'Beirat & Kontakte' : 'Ansprechpartner'), gruppe: 'Verwaltung', objekt: true, render: (c) => <Kontakte key={c.objekt.id + c.modus} objekt={c.objekt} titel={c.modus === 'weg' ? 'Beirat & Ansprechpartner' : 'Ansprechpartner'} /> },
   { id: 'schluesselv', label: 'Schlüssel', gruppe: 'Verwaltung', objekt: true, render: (c) => <Schluesselverwaltung key={c.objekt.id} objekt={c.objekt} /> },
+  { id: 'begehungen', label: 'Begehungen', gruppe: 'Verwaltung', objekt: true, render: (c) => <Begehungen key={c.objekt.id} objekt={c.objekt} /> },
   { id: 'pflichten', label: 'Pflichten am Haus', gruppe: 'Verwaltung', objekt: true, render: (c) => <Pflichten key={c.objekt.id} objekt={c.objekt} /> },
   { id: 'versicherungen', label: 'Versicherungen', gruppe: 'Verwaltung', objekt: true, render: (c) => <Versicherungen key={c.objekt.id} objekt={c.objekt} /> },
   { id: 'briefe', label: 'Briefe', gruppe: 'Kommunikation', objekt: true, render: (c) => <Briefe key={c.objekt.id + c.modus} objekt={c.objekt} modus={c.modus} /> },
@@ -356,7 +364,7 @@ export default function App(props: { benutzer?: Row | null }) {
     return () => window.removeEventListener('contextmenu', menue);
   }, [navi]);
   // The most used pages in the background, once the first one is shown.
-  useEffect(() => { const t = setTimeout(vorladen, 1500); return () => clearTimeout(t); }, []);
+  useEffect(() => { const t = setTimeout(vorladen, 1500); const t2 = setTimeout(allesVorladen, 12_000); return () => { clearTimeout(t); clearTimeout(t2); }; }, []);
   // Mac app: the server's notes as macOS notifications.
   useEffect(() => desktopMitteilungen(props.benutzer?.id ?? null), [props.benutzer?.id]);
   // Messages from dialogs outside the pages (e.g. a mail sent).

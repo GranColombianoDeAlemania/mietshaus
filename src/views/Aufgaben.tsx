@@ -12,6 +12,7 @@ import { STATUS, Vorgang, vorgangFelder } from './Kommunikation';
 import { PflichtErledigen } from './Pflichten';
 import { AblaufStarten, AblaufVorlagen } from './Ablaeufe';
 import { bestaetigen } from '../frage';
+import { DiktatKnopf, diktatMoeglich } from '../Diktat';
 
 const SPALTEN: [string, string][] = [['offen', 'Offen'], ['in_arbeit', 'In Arbeit'], ['wartet', 'Wartet'], ['erledigt', 'Erledigt']];
 const faelligKlasse = (v: Row) => (v.status === 'erledigt' || !v.faellig ? '' : v.faellig < heute() ? 'ueberfaellig' : v.faellig === heute() ? 'heute' : '');
@@ -41,6 +42,9 @@ export function Aufgaben(props: { objekte: Row[] }) {
   // A duty's case is done through the duty: date and proof, then the next date moves on.
   const [pflicht, setPflicht] = useState<Row | null>(null);
   const [ablauf, setAblauf] = useState<'starten' | 'vorlagen' | null>(null);
+  // A voice note: the dictation becomes the draft (title, house, unit, person, urgency, due date) to check before saving.
+  const [diktiert, setDiktiert] = useState<Row | null>(null);
+  const [sofortDiktat, setSofortDiktat] = useState(false);
   const setzeStatus = async (v: Row, status: string) => {
     try {
       if (status === 'erledigt' && v.pflicht_id) {
@@ -90,6 +94,7 @@ export function Aufgaben(props: { objekte: Row[] }) {
           <button role="tab" aria-selected={ansicht === 'korb'} onClick={() => { setAnsicht('korb'); schreiben('aufgaben_ansicht', 'korb'); }}><List size={15} /> Abarbeiten</button>
         </div>
         <span className="spacer" />
+        {diktatMoeglich() && <button onClick={() => { setSofortDiktat(true); neu(); }}>Sprachnotiz</button>}
         <button onClick={() => setAblauf('vorlagen')}>Vorlagen</button>
         <button onClick={() => setAblauf('starten')}>Ablauf starten</button>
         <button className="primary" onClick={neu}>Neue Aufgabe</button>
@@ -140,7 +145,21 @@ export function Aufgaben(props: { objekte: Row[] }) {
         aktionen={<button onClick={() => { setEdit(offen); setOffen(null); }}>Bearbeiten</button>} />}
       {edit && <FormDialog title={edit.id ? 'Aufgabe bearbeiten' : 'Neue Aufgabe'} row={edit}
         fields={vorgangFelder({ personen: personen ?? [], benutzer: benutzer ?? [], objekte: alleObjekte ?? props.objekte })}
-        onSave={(r) => call('save', 'vorgaenge', r)} onDelete={() => call('remove', 'vorgaenge', edit.id)} onClose={() => { setEdit(null); reload(); }} />}
+        onSave={(r) => call('save', 'vorgaenge', { ...r, ...(diktiert?.einheit_id && !r.einheit_id ? { einheit_id: diktiert.einheit_id } : {}) })}
+        onDelete={() => call('remove', 'vorgaenge', edit.id)} onClose={() => { setEdit(null); setDiktiert(null); setSofortDiktat(false); reload(); }}
+        extra={edit.id ? undefined : (f, setze) => (
+          <div className="diktat-zeile">
+            <DiktatKnopf sofort={sofortDiktat} label="Diktieren" onText={async (text) => {
+              try {
+                const d = await call<Row>('diktatDeuten', text, f.objekt_id ? Number(f.objekt_id) : null);
+                setDiktiert(d);
+                setze({ titel: d.titel, beschreibung: d.beschreibung, prioritaet: String(d.prioritaet), ...(d.objekt_id ? { objekt_id: String(d.objekt_id) } : {}),
+                  ...(d.person_id ? { person_id: String(d.person_id) } : {}), ...(d.faellig ? { faellig: d.faellig } : {}) });
+              } catch (e) { fehler(e); }
+            }} />
+            {!!diktiert?.erkannt?.length && <span className="klein hinweis">Erkannt: {diktiert.erkannt.join(' · ')} – bitte prüfen.</span>}
+          </div>
+        )} />}
       {ablauf === 'starten' && <AblaufStarten onClose={(id) => { setAblauf(null); if (id) reload(); }} />}
       {ablauf === 'vorlagen' && <AblaufVorlagen onClose={() => setAblauf(null)} />}
       {pflicht && <PflichtErledigen pflicht={pflicht} onClose={(ok) => { setPflicht(null); if (ok) { reload(); const t = Date.now(); setGeschafft(t); setTimeout(() => setGeschafft((x) => (x === t ? 0 : x)), 1200); } }} />}

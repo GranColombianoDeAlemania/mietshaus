@@ -19,6 +19,8 @@ const aufgabenModul = require('./aufgaben.cjs');
 const pflichtenModul = require('./pflichten.cjs');
 const inventarModul = require('./inventar.cjs');
 const ablaeufeModul = require('./ablaeufe.cjs');
+const begehungModul = require('./begehung.cjs');
+const diktatModul = require('./diktat.cjs');
 const pruefung = require('./pruefung.cjs');
 const { AKTIONEN } = require('./claudeAktionen.cjs');
 const kennzahlen = require('./kennzahlen.cjs');
@@ -920,10 +922,36 @@ const MIGRATIONS = [
   CREATE INDEX vorgaenge_eltern ON vorgaenge (eltern_id);`,
   // How an item left: scrapped (its remaining book value is deducted) or sold (it is not).
   `ALTER TABLE inventar ADD COLUMN abgang_art TEXT;`,
+  // Inspections of a house on the phone: areas with state, photos, notes, defects (cases) and duties to check.
+  `CREATE TABLE begehungen (
+    id INTEGER PRIMARY KEY,
+    objekt_id INTEGER NOT NULL REFERENCES objekte(id) ON DELETE CASCADE,
+    datum TEXT NOT NULL,
+    teilnehmer TEXT,
+    bereiche TEXT NOT NULL DEFAULT '[]',
+    notiz TEXT,
+    abgeschlossen INTEGER NOT NULL DEFAULT 0,
+    dokument_id INTEGER REFERENCES dokumente(id) ON DELETE SET NULL,
+    geaendert_am TEXT, geaendert_von TEXT, geaendert_benutzer INTEGER
+  );
+  CREATE INDEX begehungen_objekt ON begehungen (objekt_id, datum);`,
+  // Local image search: keywords from the image model (found by the full-text search) and the image's vector, so new
+  // words can be matched later without looking at the photo again.
+  `ALTER TABLE dokumente ADD COLUMN stichworte TEXT;
+   ALTER TABLE dokumente ADD COLUMN bildvektor TEXT;`,
+  // Keys of changes already done (sent again after a broken connection or from a device that worked offline):
+  // kept 60 days, so a change sent days later is still done only once – also after a restart of the server.
+  `CREATE TABLE vorgangsschluessel (
+    benutzer INTEGER NOT NULL DEFAULT 0,
+    schluessel TEXT NOT NULL,
+    zeit TEXT NOT NULL DEFAULT (datetime('now')),
+    antwort TEXT,
+    PRIMARY KEY (benutzer, schluessel)
+  ) WITHOUT ROWID;`,
 ];
 
 // Tables without change time: the log itself, settings of this installation and page state.
-const AENDERUNG_AUSGENOMMEN = new Set(['protokoll', 'einstellungen', 'hinweis_status', 'checkliste', 'geraete', 'benutzer', 'sitzungen', 'push_abos', 'passkeys', 'mitteilungen']);
+const AENDERUNG_AUSGENOMMEN = new Set(['protokoll', 'einstellungen', 'hinweis_status', 'checkliste', 'geraete', 'benutzer', 'sitzungen', 'push_abos', 'passkeys', 'mitteilungen', 'vorgangsschluessel']);
 const UTC_JETZT = `strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`;
 
 // Ordinary tables holding user data; with vorMigration the columns need not exist yet.
@@ -1088,7 +1116,7 @@ function open(file, quelle = 'app', geraet = null, { ohneUpdateSicherung = false
 // Tables whose changes are logged, and columns left out of the log (large or derived).
 const PROTOKOLLIERT = ['interessenten', 'uebergaben', 'objekte', 'einheiten', 'personen', 'mietverhaeltnisse', 'eigentum', 'konten', 'buchungen', 'anpassungen',
   'kautionen', 'kautionsbewegungen', 'dokumente', 'darlehen', 'beschluesse', 'projekte', 'projektposten', 'zaehlerstaende', 'mahnungen', 'abrechnungen',
-  'ratenplaene', 'erhaltungsverteilung', 'selbstnutzung', 'pflichten', 'pflicht_erledigt', 'inventar'];
+  'ratenplaene', 'erhaltungsverteilung', 'selbstnutzung', 'pflichten', 'pflicht_erledigt', 'inventar', 'begehungen'];
 const NICHT_PROTOKOLLIEREN = new Set(['daten', 'erfasst', 'unterschrift_mieter', 'unterschrift_vermieter', 'erechnung', 'geaendert_am', 'geaendert_von']);
 // The recognised text of a document is large; the text of a booking or a dunning letter belongs in the log.
 const nichtProtokollieren = (tabelle, spalte) => NICHT_PROTOKOLLIEREN.has(spalte) || (tabelle === 'dokumente' && spalte === 'text');
@@ -1191,18 +1219,24 @@ function api(db) {
     }
   }
 
-  // Two people at work on the same record: a form sends back the change time it was loaded with (geaendert_am). When
-  // another user has changed the record since, saving stops with a conflict the app shows – unless the user chose to
-  // overwrite (kontext 'ueberschreiben'). One's own later changes and the local mode (no users) never conflict.
+  // Two people – or one person on two devices – at work on the same record: a form sends back the change time it was
+  // loaded with (geaendert_am). When another user, or the same user on another device (e.g. changes sent later from a
+  // phone that was offline), has changed the record since, saving stops with a conflict the app shows – unless the user
+  // chose to overwrite (kontext 'ueberschreiben'). One's own later changes on the same device and the local mode (no
+  // users) never conflict.
   function konfliktPruefen(table, row) {
     if (!row?.id || !row.geaendert_am || !TABLES[table]) return;
     const kontext = (k) => get('SELECT wert FROM temp.kontext WHERE schluessel = ?', k)?.wert ?? null;
     if (kontext('ueberschreiben') === '1') return;
-    const jetzt = get(`SELECT geaendert_am, geaendert_benutzer FROM ${table} WHERE id = ?`, row.id);
+    const jetzt = get(`SELECT geaendert_am, geaendert_benutzer, geaendert_von FROM ${table} WHERE id = ?`, row.id);
     if (!jetzt?.geaendert_am || jetzt.geaendert_am <= row.geaendert_am || jetzt.geaendert_benutzer == null) return;
-    if (String(jetzt.geaendert_benutzer) === String(kontext('benutzer'))) return;
-    const wer = get('SELECT name FROM benutzer WHERE id = ?', jetzt.geaendert_benutzer)?.name ?? 'Ein anderer Benutzer';
-    const e = new Error(`${wer} hat diesen Eintrag um ${new Date(jetzt.geaendert_am).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })} Uhr geändert, nachdem du ihn geöffnet hast.`);
+    const selbst = String(jetzt.geaendert_benutzer) === String(kontext('benutzer'));
+    if (selbst && (!jetzt.geaendert_von || jetzt.geaendert_von === kontext('geraet'))) return;
+    const geraet = selbst ? get('SELECT name FROM geraete WHERE id = ?', jetzt.geaendert_von)?.name : null;
+    const wer = selbst ? `du auf ${geraet ? `„${geraet}“` : 'einem anderen Gerät'}` : get('SELECT name FROM benutzer WHERE id = ?', jetzt.geaendert_benutzer)?.name ?? 'Ein anderer Benutzer';
+    const um = new Date(jetzt.geaendert_am).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+    const e = new Error(selbst ? `Du hast diesen Eintrag ${geraet ? `auf „${geraet}“` : 'auf einem anderen Gerät'} um ${um} Uhr geändert, nachdem er hier geöffnet wurde.`
+      : `${wer} hat diesen Eintrag um ${um} Uhr geändert, nachdem du ihn geöffnet hast.`);
     e.code = 'KONFLIKT';
     e.konflikt = { wer, wann: jetzt.geaendert_am };
     throw e;
@@ -1272,6 +1306,8 @@ function api(db) {
   const pf = pflichtenModul({ db, all, get, tx, PERSON_NAME });
   const iv = inventarModul({ db, all, get, tx });
   const al = ablaeufeModul({ db, all, get, tx });
+  const bg = begehungModul({ db, all, get, tx, ablaufStarten: al.ablaufStarten });
+  const dk = diktatModul({ all });
 
   // Master data changes can create or rename accounts.
   const SYNC = new Set(['objekte', 'einheiten', 'personen', 'mietverhaeltnisse', 'eigentum']);
@@ -1538,7 +1574,7 @@ function api(db) {
   };
 
   const alles = {
-    ...bh, ...ab, ...vw, ...ar, ...mt, ...af, ...pf, ...iv, ...al, ...au, ...pj, ...aw, ...ak, ...dl, ...mw, ...pr, ...kz, ...basis, ...vorschlaege,
+    ...bh, ...ab, ...vw, ...ar, ...mt, ...af, ...pf, ...iv, ...al, ...bg, ...dk, ...au, ...pj, ...aw, ...ak, ...dl, ...mw, ...pr, ...kz, ...basis, ...vorschlaege,
     protokollRueckgaengig: rueckgaengig,
     buchen: (b, ohneTx) => { buchungPruefen(b); return bh.buchen(b, ohneTx); },
     ablesung: (datum, werte, fotos) => { for (const [id, stand] of Object.entries(werte ?? {})) zaehlerPruefen(Number(id), datum, stand); return bh.ablesung(datum, werte, fotos); },

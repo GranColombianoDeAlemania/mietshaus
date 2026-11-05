@@ -171,7 +171,7 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME }) {
     const person = d.person_id ? get(`SELECT ${PERSON_NAME} AS n FROM personen p WHERE p.id = ?`, d.person_id)?.n : '';
     const steller = json(d.steller) ?? {};
     const posten = (json(d.positionen) ?? []).map((x) => x.text);
-    const meta = [d.typ, d.kategorie, d.absender, d.rechnungsnr, d.iban, d.name, d.notiz, d.zusammenfassung, person, ...Object.values(steller), ...posten,
+    const meta = [d.typ, d.kategorie, d.stichworte, d.absender, d.rechnungsnr, d.iban, d.name, d.notiz, d.zusammenfassung, person, ...Object.values(steller), ...posten,
       objekt && `${objekt.bezeichnung} ${objekt.strasse ?? ''} ${objekt.ort ?? ''}`, d.betrag_ct != null ? (d.betrag_ct / 100).toFixed(2).replace('.', ',') : ''].filter(Boolean).join(' ');
     db.prepare('INSERT INTO dokumente_fts (rowid, titel, inhalt) VALUES (?, ?, ?)').run(id, norm(d.titel), norm(`${meta}\n${d.text ?? ''}`));
   }
@@ -228,6 +228,16 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME }) {
     norm,
     felderErkennen,
     kontaktFinden,
+
+    // Image search: photos still without keywords (newest first), saving the result, and how far it got.
+    bilderOhneStichworte: (limit = 3) => all(`SELECT id, datei FROM dokumente WHERE status <> 'papierkorb' AND stichworte IS NULL
+      AND (lower(datei) GLOB '*.jp*g' OR lower(datei) GLOB '*.png' OR lower(datei) GLOB '*.webp') ORDER BY id DESC LIMIT ?`, limit),
+    bildStichworteSetzen: (id, stichworte, vektor = null) => {
+      db.prepare('UPDATE dokumente SET stichworte = ?, bildvektor = ? WHERE id = ?').run((stichworte ?? []).join(', '), vektor, id);
+      indexieren(id);
+    },
+    bildsucheZaehlen: () => get(`SELECT count(*) AS gesamt, sum(stichworte IS NOT NULL) AS fertig FROM dokumente WHERE status <> 'papierkorb'
+      AND (lower(datei) GLOB '*.jp*g' OR lower(datei) GLOB '*.png' OR lower(datei) GLOB '*.webp')`),
 
     dokumentLoeschen: (ids) => tx(() => {
       const liste = [ids].flat().map(Number).filter(Boolean);

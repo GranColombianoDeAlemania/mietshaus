@@ -1561,6 +1561,85 @@ Stadtsparkasse München | IBAN DE02 7015 0000 0000 1234 56 | BIC SSKMDEMMXXX`;
   gleich('Ablauf ohne Stichtag: verständlicher Fehler', /Termin/.test(fehler), true);
 }
 
+// ---------- 0.21: inspection on the phone ----------
+{
+  const raw2 = open(':memory:');
+  const t = api(raw2);
+  t.setzeEinstellungen({ bundesland: 'BE', auto_soll: '0' });
+  const ob = t.neuesObjekt({ bezeichnung: 'Rundganghaus', art: 'miete', strasse: 'Weg 4', plz: '10115', ort: 'Berlin' });
+  const eh = t.save('einheiten', { objekt_id: ob, nr: 1, bezeichnung: 'WE1', art: 'Wohnung', wohnflaeche: 50 });
+  const heute = require('../electron/zeit.cjs').heute();
+  const [hz, rm] = t.pflichtenAnlegen(ob, [{ art: 'heizung', naechste: heute }, { art: 'rauchmelder', naechste: '2099-01-01' }]);
+  const id = t.begehungNeu({ objekt_id: ob });
+  let b = t.begehung(id);
+  gleich('Begehung: Standardbereiche und die Einheit', [b.bereiche.length, b.bereiche.at(-1).name, b.bereiche.at(-1).einheit_id], [9, 'WE1', eh]);
+  gleich('Begehung: fällige Pflicht im passenden Bereich, spätere nicht', [b.bereiche.find((x) => x.name === 'Heizraum').pruefpunkte.map((p) => p.pflicht_id), b.bereiche.flatMap((x) => x.pruefpunkte).length], [[hz], 1]);
+  const dok = t.dokumentNeu({ objekt_id: ob, titel: 'Foto Keller', datei: 'keller.jpg', name: 'keller.jpg', groesse: 1000, typ: 'Foto', status: 'abgelegt' }).id;
+  b.bereiche[1].fotos = [{ id: dok, datei: 'keller.jpg' }];
+  b.bereiche[1].notiz = 'Wand feucht';
+  t.begehungSpeichern(b);
+  const v = t.begehungMangel(id, 1, { text: 'Feuchte Kellerwand', foto_ids: [dok], prioritaet: 1 });
+  const vg = raw2.prepare('SELECT * FROM vorgaenge WHERE id = ?').get(v);
+  gleich('Mangel: Vorgang mit Dringlichkeit, Foto am Vorgang', [vg.titel, vg.prioritaet, vg.kategorie, raw2.prepare('SELECT vorgang_id FROM dokumente WHERE id = ?').get(dok).vorgang_id], ['Feuchte Kellerwand', 1, 'mangel', v]);
+  b = t.begehung(id);
+  gleich('Mangel: im Bereich vermerkt, Notiz bleibt', [b.bereiche[1].zustand, b.bereiche[1].maengel.length, b.bereiche[1].notiz], ['maengel', 1, 'Wand feucht']);
+  const v2 = t.begehungMangel(id, 9 - 1, { text: 'Fenster undicht', ablauf: true });
+  gleich('Mangel als Schadensfall: Vorgang mit Schritten an der Einheit', [t.ablaufSchritte(v2).length > 0, raw2.prepare('SELECT einheit_id FROM vorgaenge WHERE id = ?').get(v2).einheit_id], [true, eh]);
+  t.pflichtErledigen(hz, { datum: heute });
+  gleich('Prüfpunkt: als erledigt angezeigt, wenn die Pflicht erledigt ist', t.begehung(id).bereiche.find((x) => x.name === 'Heizraum').pruefpunkte[0].erledigt, true);
+  t.begehungAbschliessen(id, null);
+  let fehler = '';
+  try { t.begehungSpeichern(t.begehung(id)); } catch (e) { fehler = e.message; }
+  gleich('Abgeschlossen: nicht mehr änderbar', /abgeschlossen/.test(fehler), true);
+  gleich('Liste: geprüft und Mängel gezählt', t.begehungen(ob).map((x) => [x.maengel, x.abgeschlossen]), [[2, 1]]);
+  gleich('Rauchmelder später fällig: kein Prüfpunkt', !!rm, true);
+}
+
+// ---------- 0.21: voice notes become a case draft ----------
+{
+  const raw2 = open(':memory:');
+  const t = api(raw2);
+  t.setzeEinstellungen({ bundesland: 'BE', auto_soll: '0' });
+  const ob = t.neuesObjekt({ bezeichnung: 'Sonnenhof', art: 'miete', strasse: 'Sonnenweg 3', plz: '10115', ort: 'Berlin' });
+  const ob2 = t.neuesObjekt({ bezeichnung: 'Lindenhaus', art: 'miete', strasse: 'Lindenstraße 5', plz: '10115', ort: 'Berlin' });
+  const [e1, e3] = [1, 3].map((nr) => t.save('einheiten', { objekt_id: ob, nr, bezeichnung: nr === 1 ? 'EG links' : 'OG rechts', art: 'Wohnung', wohnflaeche: 50 }));
+  const meier = t.save('personen', { anrede: 'Herr', vorname: 'Klaus', nachname: 'Meier' });
+  t.save('mietverhaeltnisse', { einheit_id: e3, person_id: meier, beginn: '2020-01-01', kaltmiete_ct: 50000, bk_vz_ct: 0, hk_vz_ct: 0, personen_anzahl: 1, faelligkeitstag: 0, ust_satz: 0 });
+  const heute = require('../electron/zeit.cjs').heute();
+  const plus = (n) => new Date(Date.parse(`${heute}T12:00:00Z`) + n * 864e5).toISOString().slice(0, 10);
+  const d1 = t.diktatDeuten('Herr Meier, Wohnung 3, tropfender Wasserhahn, dringend');
+  gleich('Diktat: Person, Einheit über die Nummer, Haus, dringend', [d1.person_id, d1.einheit_id, d1.objekt_id, d1.prioritaet], [meier, e3, ob, 1]);
+  gleich('Diktat: Titel ohne Name, Einheit und Dringlichkeit', d1.titel, 'Tropfender Wasserhahn');
+  const d2 = t.diktatDeuten('Meier Heizung kalt morgen');
+  gleich('Diktat: Einheit des Mieters, wenn keine genannt; morgen fällig', [d2.einheit_id, d2.faellig, d2.titel], [e3, plus(1), 'Heizung kalt']);
+  const d3 = t.diktatDeuten('EG links Klingel defekt bei Gelegenheit', ob);
+  gleich('Diktat: Einheit über den Namen, bei Gelegenheit', [d3.einheit_id, d3.prioritaet, d3.titel], [e1, 3, 'Klingel defekt']);
+  const d4 = t.diktatDeuten('Lindenhaus Dachrinne verstopft in drei Tagen');
+  gleich('Diktat: Haus über den Namen, „in drei Tagen“', [d4.objekt_id, d4.faellig, d4.titel], [ob2, plus(3), 'Dachrinne verstopft']);
+  gleich('Diktat: ohne Treffer bleibt der Text der Titel', t.diktatDeuten('Müll steht im Hof').titel, 'Müll steht im Hof');
+}
+
+// ---------- 0.21: local image search (keywords from an image vector) ----------
+{
+  const { stichworte, WOERTER, alsBytes, ausBytes } = require('../electron/bildsuche.cjs');
+  const vektorVon = (wort) => Float32Array.from(WOERTER.find(([de]) => de === wort)[1], (x) => x / 127);
+  gleich('Bildsuche: Wortschatz geladen', WOERTER.length > 80 && WOERTER.every(([, v]) => v.length === 512), true);
+  gleich('Bildsuche: Vektor eines Worts ergibt das Wort zuerst', ['Heizung', 'Schimmel', 'Dachrinne'].map((w) => stichworte(vektorVon(w))[0]), ['Heizung', 'Schimmel', 'Dachrinne']);
+  gleich('Bildsuche: höchstens drei Stichworte', stichworte(vektorVon('Küche')).length <= 3, true);
+  const v = vektorVon('Rauchmelder');
+  gleich('Bildsuche: Vektor gespeichert und zurückgelesen', Math.max(...ausBytes(alsBytes(v)).map((x, i) => Math.abs(x - v[i]))) < 0.01, true);
+
+  const raw2 = open(':memory:');
+  const t = api(raw2);
+  const ob = t.neuesObjekt({ bezeichnung: 'Fotohaus', art: 'miete', strasse: 'Weg 5', plz: '10115', ort: 'Berlin' });
+  const d = t.dokumentNeu({ objekt_id: ob, titel: 'IMG_0042', datei: 'img0042.jpg', name: 'IMG_0042.jpg', groesse: 1000, typ: 'Foto', status: 'abgelegt' }).id;
+  t.dokumentNeu({ objekt_id: ob, titel: 'Vertrag', datei: 'vertrag.pdf', name: 'vertrag.pdf', groesse: 1000, status: 'abgelegt' });
+  gleich('Bildsuche: nur Bilder ohne Stichworte stehen an', t.bilderOhneStichworte(5).map((x) => x.id), [d]);
+  t.bildStichworteSetzen(d, ['Heizung', 'Keller'], alsBytes(v));
+  gleich('Bildsuche: Stichworte gespeichert, Stand gezählt', [raw2.prepare('SELECT stichworte FROM dokumente WHERE id = ?').get(d).stichworte, t.bildsucheZaehlen().fertig, t.bilderOhneStichworte(5).length], ['Heizung, Keller', 1, 0]);
+  gleich('Bildsuche: die Volltextsuche findet das Foto über das Stichwort', raw2.prepare(`SELECT rowid FROM dokumente_fts WHERE dokumente_fts MATCH 'heizung'`).all().map((r) => r.rowid), [d]);
+}
+
 console.log(`\nRechentest: ${ok} Prüfungen richtig, ${falsch} falsch.`);
 if (falsch) process.exitCode = 1;
 // The click test reuses the sample data.

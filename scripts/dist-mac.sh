@@ -8,6 +8,7 @@ npx electron-packager . Mietshaus --platform=darwin --arch=arm64 --out=release -
   --protocol=mietshaus --protocol-name=Mietshaus \
   --app-bundle-id=local.mietshaus --app-category-type=public.app-category.business \
   --ignore='^/(src|scripts|release|resources|node_modules/\.vite)' --ignore='\.ts$' --overwrite \
+  --ignore='^/node_modules/onnxruntime-node/bin/napi-v[0-9]+/(linux|win32|darwin/x64)' \
   --extra-resource=resources/tessdata --no-asar
 # Signature. On a Mac with a code signing certificate of its own (MIETSHAUS_SIGNATUR="Mietshaus Lokal", made once
 # in Keychain Access → Certificate Assistant → Create a Certificate…, type "Code Signing"), every build keeps the

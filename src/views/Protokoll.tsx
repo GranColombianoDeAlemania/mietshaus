@@ -26,6 +26,7 @@ const TABELLEN: Record<string, string> = {
   objekte: 'Objekte', einheiten: 'Einheiten', anpassungen: 'Mietanpassungen', kautionen: 'Kautionen', kautionsbewegungen: 'Kautionsbewegungen',
   dokumente: 'Dokumente', darlehen: 'Darlehen', beschluesse: 'Beschlüsse', projekte: 'Projekte', projektposten: 'Projektposten',
   zaehlerstaende: 'Zählerstände', mahnungen: 'Mahnungen', abrechnungen: 'Abrechnungen',
+  pflichten: 'Pflichten', pflicht_erledigt: 'Erledigte Pflichten', inventar: 'Inventar', begehungen: 'Begehungen',
 };
 
 function unterschiede(alt: Row | null, neu: Row | null) {

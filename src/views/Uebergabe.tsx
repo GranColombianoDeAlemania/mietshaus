@@ -11,6 +11,7 @@ import { dokUrl } from './Archiv';
 import { ZAEHLER_ARTEN } from './Zaehler';
 import { sollNachfrage } from './Sollstellung';
 import { bestaetigen, hinweis } from '../frage';
+import { istVorlaeufig } from '../ausgang';
 
 const ZUSTAENDE: [string, string][] = [['gut', 'in Ordnung'], ['gebraucht', 'normale Abnutzung'], ['maengel', 'Mängel']];
 
@@ -56,7 +57,8 @@ export function UebergabeEditor(props: { id: number; onClose: () => void }) {
       : window.hv[handy() ? 'fotoAufnehmen' : 'dateienImportieren']({ objekt_id: u!.einheit.objekt_id, einheit_id: u!.einheit_id, status: 'abgelegt', typ: 'Foto' }));
     const docs = await Promise.all(r.map(async (x) => {
       await call('dokumentSpeichern', { id: x.id, titel: `${u!.art === 'einzug' ? 'Einzug' : 'Auszug'} ${u!.einheit.bezeichnung}: ${u!.raeume[i].name}`, typ: 'Foto', datum: u!.datum });
-      return { id: x.id, datei: (await call('dokument', x.id)).datei };
+      const datei = x.datei ?? (istVorlaeufig(x.id) ? null : (await call<Row>('dokument', x.id).catch(() => null))?.datei ?? null);
+      return { id: x.id, datei, vorschau: x.vorschau };
     }));
     raum(i, { fotos: [...(u!.raeume[i].fotos ?? []), ...docs] });
   }
@@ -114,7 +116,7 @@ export function UebergabeEditor(props: { id: number; onClose: () => void }) {
             )}
             {r.zustand && r.zustand !== 'maengel' && !r.bemerkung && <button className="link" onClick={() => raum(i, { bemerkung: ' ' })}>Bemerkung hinzufügen</button>}
             {r.fotos?.length > 0 && <div className="galerie" style={{ marginTop: 8 }}>{r.fotos.map((f: Row) => (
-              <div key={f.id} className="kachelbild"><div className="bild" style={{ backgroundImage: `url("${dokUrl(f.datei)}")`, height: 90 }} /></div>))}</div>}
+              <div key={f.id} className="kachelbild"><div className="bild" style={{ backgroundImage: `url("${f.datei ? dokUrl(f.datei) : f.vorschau ?? ''}")`, height: 90 }} /></div>))}</div>}
             <div onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); window.dispatchEvent(new Event('hv-ziehen-aus')); }}
               onDrop={(e) => { e.preventDefault(); e.stopPropagation(); fotoHinzu(i, e.dataTransfer.files); }} className="klein hinweis" style={{ marginTop: 4 }}>
               Fotos auch hierher ziehen.

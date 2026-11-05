@@ -5,6 +5,9 @@ export type Row = Record<string, any>;
 
 type DateiFilter = { name: string; extensions: string[] };
 
+// An uploaded file; offline it has a provisional number and a preview from the device until it is sent.
+export type Hochgeladen = { id: number; doppelt: boolean; name: string; datei?: string | null; vorschau?: string; offline?: boolean };
+
 declare global {
   interface Window {
     hv: {
@@ -22,11 +25,11 @@ declare global {
       dokumentAblegen: () => Promise<{ name: string; datei: string; groesse: number }[]>;
       dokumentOeffnen: (datei: string) => Promise<string>;
       dokumentLoeschen: (id: number | number[]) => Promise<void>;
-      importieren: (files: FileList | File[], opt?: Row) => Promise<{ id: number; doppelt: boolean; name: string }[]>;
-      dateienImportieren: (opt?: Row) => Promise<{ id: number; doppelt: boolean; name: string }[]>;
+      importieren: (files: FileList | File[], opt?: Row) => Promise<Hochgeladen[]>;
+      dateienImportieren: (opt?: Row) => Promise<Hochgeladen[]>;
       // On a phone the camera opens at once; on a computer it is a picker for images.
-      fotoAufnehmen: (opt?: Row) => Promise<{ id: number; doppelt: boolean; name: string }[]>;
-      fotoMitStandort: () => Promise<{ id: number; doppelt: boolean; name: string; objekt?: string }[]>;
+      fotoAufnehmen: (opt?: Row) => Promise<Hochgeladen[]>;
+      fotoMitStandort: () => Promise<(Hochgeladen & { objekt?: string })[]>;
       // Photo of a meter: filed, and the digits read as proposals (null when no photo was taken).
       zaehlerFoto: (zaehlerId: number) => Promise<{ dokument_id: number; datei: string; kandidaten: number[]; letzter: number | null } | null>;
       neuAnalysieren: (id: number) => Promise<void>;

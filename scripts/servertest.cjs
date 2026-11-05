@@ -12,7 +12,8 @@ const pruefe = (name, ok, info = '') => { if (ok) richtig++; else { falsch++; co
 const warte = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // A small client: keeps its cookie like a browser does.
-function client(url) {
+function client(adresse) {
+  let url = adresse;
   let keks = '';
   const anfrage = async (pfad, { methode = 'GET', json, roh, kopf = {} } = {}) => {
     const r = await fetch(url + pfad, { method: methode, redirect: 'manual',
@@ -31,6 +32,7 @@ function client(url) {
       return j.wert;
     },
     keks: () => keks,
+    url: (neu) => { url = neu; },
   };
 }
 
@@ -372,6 +374,30 @@ function client(url) {
     pruefe('Lesen wird nicht aufbewahrt', r1.ok && r2.headers.get('x-wiederholt') === null);
   }
 
+  // ---------- one user on two devices: a stale change from the other device is a conflict ----------
+  {
+    const auf = (geraet, row) => anna.anfrage('/api/call', { methode: 'POST', kopf: { 'X-Geraet': geraet }, json: { fn: 'save', args: ['objekte', row] } });
+    await auf('geraet-mac', { id: o, notiz: 'vom Mac' });
+    const alt = await anna.call('get', 'objekte', o);
+    await warte(5);
+    await auf('geraet-mac', { id: o, notiz: 'noch einmal vom Mac', geaendert_am: alt.geaendert_am });
+    const vomHandy = await auf('geraet-handy', { id: o, notiz: 'vom Handy (alter Stand)', geaendert_am: alt.geaendert_am });
+    pruefe('Zwei Geräte: alter Stand vom anderen Gerät ist ein Konflikt', vomHandy.status === 409 && /anderen Gerät|Du hast/.test((await vomHandy.json()).fehler));
+    const gleich = await auf('geraet-mac', { id: o, notiz: 'Mac überschreibt sich selbst', geaendert_am: alt.geaendert_am });
+    pruefe('Zwei Geräte: dasselbe Gerät überschreibt sich ohne Rückfrage', gleich.ok);
+  }
+
+  // ---------- 5''''. a broken photo does not stop the server ----------
+  {
+    const kaputt = Buffer.from([255, 216, 255, 224, 0, 16, 74, 70, 73, 70, 0, 1, 1, 0, 0, 1, 0, 1, 0, 0, 255, 217]);
+    const r = await anna.anfrage('/api/hochladen?name=kaputt.jpg&opt=%7B%7D', { methode: 'POST', roh: kaputt });
+    const [d] = await r.json();
+    let analyse = null;
+    const fertig = (a) => a === 'fertig' || /^fehler/.test(a ?? '');
+    for (let i = 0; i < 40 && !fertig(analyse); i++) { await warte(250); analyse = (await anna.call('dokument', d.id)).analyse; }
+    pruefe('Kaputtes Foto: Server läuft weiter, Dokument als fehlerhaft markiert', Array.isArray(await anna.call('objekte', 'miete')) && fertig(analyse), analyse);
+  }
+
   // ---------- 5'''. duties, inventory and workflows over the server ----------
   {
     const heute = new Date().toISOString().slice(0, 10);
@@ -422,6 +448,17 @@ function client(url) {
   pruefe('Deaktivierter Benutzer kann sich nicht anmelden', (await ben.anfrage('/api/anmelden', { methode: 'POST', json: { login: 'ben', passwort: 'auch-geheim-22' } })).status === 401);
   pruefe('Letzter aktiver Benutzer bleibt', await anna.call('benutzerAendern', 1, { aktiv: false }).then(() => false, (e) => /Mindestens ein Benutzer/.test(e.message)));
   await s.beenden();
+
+  // The key of a change outlives a restart of the server: a device that worked offline may send its changes days later.
+  {
+    const s2 = await starten({ modus: 'server', daten: ordner, port: 0, geraet: { id: 'nas', name: 'NAS' } });
+    anna.url(s2.url);
+    const nach = await anna.anfrage('/api/call', { methode: 'POST', kopf: { 'X-Vorgang': 'schluessel-eins-123' },
+      json: { fn: 'save', args: ['termine', { titel: 'Doppelt?', datum: '2026-12-01', objekt_id: o }] } });
+    pruefe('Nach dem Neustart: gleicher Schlüssel legt nichts doppelt an', nach.ok && nach.headers.get('x-wiederholt') === '1'
+      && (await anna.call('liste', 'termine')).filter((x) => x.titel === 'Doppelt?').length === 3, nach.status);
+    await s2.beenden();
+  }
 
   // ---------- 7. local mode ----------
   const lokal = await starten({ modus: 'lokal', daten: path.join(ordner, 'lokal'), port: 0, token: 'x'.repeat(43), geraet: { id: 'mac', name: 'mac' } });

@@ -93,7 +93,7 @@ function KatalogDialog(props: { objekt: Row; onClose: () => void }) {
           return (
             <div key={k.art} className={`katalog-punkt${aktiv.has(k.art) ? ' inaktiv' : ''}`}>
               <label className="check">
-                <input type="checkbox" checked={an} disabled={aktiv.has(k.art)}
+                <input type="checkbox" checked={an} disabled={aktiv.has(k.art)} aria-label={k.titel}
                   onChange={(e) => setWahl({ ...wahl, [k.art]: e.target.checked ? '' : null })} />
                 <b>{k.titel}</b> <span className="klein hinweis">· {turnus(k.monate)}{aktiv.has(k.art) ? ' · schon angelegt' : ''}</span>
               </label>
@@ -125,8 +125,10 @@ export function PflichtErledigen(props: { pflicht: Row; onClose: (ok: boolean) =
     try {
       const r = await (files ? window.hv.importieren(files, opt) : window.hv[handy() ? 'fotoAufnehmen' : 'dateienImportieren'](opt));
       if (!r?.length) return;
-      await call('dokumentSpeichern', { id: r[0].id, titel: `Nachweis ${p.titel} ${datum(tag)}`, datum: tag });
-      setNachweis(await call('dokument', r[0].id));
+      const titel = `Nachweis ${p.titel} ${datum(tag)}`;
+      await call('dokumentSpeichern', { id: r[0].id, titel, datum: tag });
+      // Offline the file waits on this device; the preview shows it until then.
+      setNachweis(r[0].offline ? { id: r[0].id, titel, datei: null, vorschau: r[0].vorschau } : await call('dokument', r[0].id));
     } catch (e) { fehler(e); }
   }
 
@@ -150,7 +152,7 @@ export function PflichtErledigen(props: { pflicht: Row; onClose: (ok: boolean) =
       </div>
       <div className="toolbar">
         <button onClick={() => ablegen()}>{handy() ? 'Nachweis fotografieren' : 'Nachweis ablegen …'}</button>
-        {nachweis && <span className="klein">Abgelegt: <a href={dokUrl(nachweis.datei)} target="_blank" rel="noreferrer">{nachweis.titel}</a></span>}
+        {nachweis && <span className="klein">{nachweis.datei ? 'Abgelegt' : 'Auf dem Gerät, wird übertragen'}: <a href={nachweis.datei ? dokUrl(nachweis.datei) : nachweis.vorschau} target="_blank" rel="noreferrer">{nachweis.titel}</a></span>}
       </div>
     </Dialog>
   );

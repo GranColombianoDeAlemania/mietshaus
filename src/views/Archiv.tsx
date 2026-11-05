@@ -180,6 +180,7 @@ function DokumentFormular(props: { id: number; onFertig: () => void; postfach?: 
         {text('faellig', 'Fällig am', 'date')}
         <label className="breit">IBAN<input value={f.iban ?? ''} onChange={(e) => set('iban', e.target.value)} /></label>
         <label className="breit">Zusammenfassung / Notiz<textarea rows={2} value={f.zusammenfassung ?? f.notiz ?? ''} onChange={(e) => set('zusammenfassung', e.target.value)} /></label>
+        {f.stichworte && <p className="breit chips klein" title="Von der lokalen Bildsuche erkannt – die Suche findet das Foto mit diesen Wörtern">Im Bild erkannt: {f.stichworte.split(', ').map((w: string) => <span key={w} className="chip">{w}</span>)}</p>}
       </div>
       {wieBisher && !kopie && (
         <div className="hinweisbox klein wie-bisher">

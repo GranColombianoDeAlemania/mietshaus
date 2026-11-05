@@ -32,7 +32,7 @@ export function Leisten(props: { status: Awaited<ReturnType<typeof status>> }) {
     const stand = v?.offline ? new Date(v.offline).toLocaleString('de-DE', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : null;
     return (
       <div className="leiste rot">
-        <span><b>Keine Verbindung</b> – du siehst {stand ? `den Stand von ${stand}` : 'den zuletzt geladenen Stand'}. Ändern und Speichern geht erst wieder mit Verbindung.</span>
+        <span><b>Keine Verbindung</b> – du siehst {stand ? `den Stand von ${stand}` : 'den zuletzt geladenen Stand'}. Änderungen sammelt Mietshaus auf diesem Gerät und überträgt sie, sobald die Verbindung wieder steht.</span>
       </div>
     );
   }

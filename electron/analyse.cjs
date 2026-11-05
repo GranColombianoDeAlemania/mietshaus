@@ -38,6 +38,9 @@ module.exports = function analyse({ db, dokumentOrdner, vorschauOrdner, onFertig
         gzip: false,
         cachePath: cacheOrdner,
         workerPath: ausserhalbAsar(require.resolve('tesseract.js/src/worker-script/node/index.js')),
+        // Without a handler tesseract.js throws an unreadable image (a broken photo) out of its message handler and ends
+        // the whole server; with it only this recognition fails (its promise rejects and the document is marked).
+        errorHandler: () => {},
       });
     }
     const { data } = await ocrWorker.recognize(bild, {}, { text: true, blocks: true });
@@ -161,7 +164,7 @@ module.exports = function analyse({ db, dokumentOrdner, vorschauOrdner, onFertig
   async function ziffernLesen(bild) {
     if (!ziffernWorker) {
       const { createWorker } = require('tesseract.js');
-      ziffernWorker = await createWorker(['eng'], 1, { langPath: tessdata, gzip: false, cachePath: cacheOrdner,
+      ziffernWorker = await createWorker(['eng'], 1, { langPath: tessdata, gzip: false, cachePath: cacheOrdner, errorHandler: () => {},
         workerPath: ausserhalbAsar(require.resolve('tesseract.js/src/worker-script/node/index.js')) });
     }
     const { createCanvas, loadImage } = require('@napi-rs/canvas');

@@ -951,6 +951,23 @@ def inventar():
     return s
 
 
+def begehung():
+    # A small house seen through a magnifying glass: the inspection round.
+    s = Symbol()
+    s.k('<path d="M84 84 L110 110" stroke-width="18" fill="none"/>', '<circle cx="56" cy="56" r="40"/>')
+    s += linie('M84 84 L110 110', 11, HOLZ[0]) + linie('M92 96 L108 112', 4, HOLZ[1])
+    s += kreis(56, 56, 40, ANTHRAZIT[0])
+    s += kreis(56, 56, 32, '#dff1f8', 2)
+    s += f'<g clip-path="{s.clip(f"M24 56 A32 32 0 1 0 88 56 A32 32 0 1 0 24 56 Z")}">'
+    s += pfad(P([(38, 76), (38, 56), (56, 42), (74, 56), (74, 76)]), PAPIER[0], 1.8)
+    s += flaeche(P([(64, 48), (74, 56), (74, 76), (64, 76)]), PAPIER[1])
+    s += pfad(P([(32, 58), (56, 38), (80, 58), (76, 62), (56, 46), (36, 62)]), ZIEGEL[0], 1.8)
+    s += rechteck(51, 62, 10, 14, HOLZ[0], 1, 1.6)
+    s += flaeche(sektor(56, 56, 31, 10, 130), HIMMEL[0], 0.3) + '</g>'
+    s += glanz(bogen(56, 56, 25, 200, 262), 3)
+    return s
+
+
 SYMBOLE = {
     'cockpit': ('Cockpit', cockpit), 'aufgaben': ('Aufgaben', aufgaben), 'objekte': ('Objekte', objekte), 'steckbrief': ('Steckbrief', steckbrief),
     'einheiten': ('Einheiten / WEG', einheiten), 'mieter': ('Mieter / Eigentümer', mieter), 'zaehler': ('Zähler', zaehler), 'umlage': ('Umlageschlüssel', umlage),
@@ -965,7 +982,7 @@ SYMBOLE = {
     'protokoll': ('Änderungsprotokoll', protokoll), 'export': ('Export & Steuer', export), 'einstellungen': ('Einstellungen', einstellungen),
     'glocke': ('Mitteilungen', glocke), 'kamera': ('Foto', kamera), 'mehr': ('Mehr', mehr), 'miete': ('Miete (Modus)', miete), 'projekte': ('Projekte', projekte),
     'zeitplan': ('Zeitplan', zeitplan), 'kosten': ('Kosten & Budget', kosten), 'fotos': ('Fotos & Dokumente', fotos), 'suche': ('Suche', suche),
-    'pflichten': ('Pflichten', pflichten), 'inventar': ('Inventar', inventar),
+    'pflichten': ('Pflichten', pflichten), 'inventar': ('Inventar', inventar), 'begehung': ('Begehungen', begehung),
 }
 
 if __name__ == '__main__':

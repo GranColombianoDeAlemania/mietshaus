@@ -19,6 +19,8 @@ echo "Status ok"
 test "$(curl -fsS -o /dev/null -w '%{content_type}' "$URL/logo.svg")" = "image/svg+xml"
 test "$(curl -fsS -o /dev/null -w '%{content_type}' "$URL/symbole/cockpit.svg")" = "image/svg+xml"
 echo "Logo ok"
+# The image search runtime loads in the locked-down container (the model itself is only fetched when switched on).
+docker exec mietshaus-rauch node -e "require('onnxruntime-node'); console.log('Bildsuche-Laufzeit ok')"
 
 PW="rauch-$(date +%s)-test"
 curl -fsS -c "$KEKS" -H 'X-Mietshaus: 1' -H 'Content-Type: application/json' \

@@ -256,7 +256,20 @@ From the pick of 28.10.2026 („Paket 1 – ich will nichts bezahlen; Paket 2 so
 | Abläufe | Workflow templates (`ablaeufe`, `electron/ablaeufe.cjs`): tenant change, damage, service-charge statement, new letting (editable, own ones: one step per line „-30 Vorabnahme“); started from a key date they become a case with sub-cases (`vorgaenge.eltern_id`), past steps due today; board shows „3/7“ and the origin of a step, the last step offers to close the workflow; the case view ticks the steps; a recorded notice offers the tenant change | done |
 | Fachprüfung | Catalogue and write-off checked against BetrKV, TrinkwV, GEG, EStG/EStR/LStR (E-Check chargeable, legionella details, disposal rules, building services) | done |
 
-Next, 0.21: inspection on the phone, voice notes. 0.22: local image search.
+
+## Version 0.21 – inspection, voice notes, image search, working offline (one update)
+
+From the wish of 05.11.2026 („das muss gebaut werden, das ist wichtig, nicht dass Daten verloren gehen … zusammengefasst, damit ich nur einmal den Server updaten muss“): the planned 0.21 and 0.22 and offline work in one release.
+
+| Area | Contents | Status |
+|------|----------|--------|
+| Begehung | Inspection on the phone (`begehungen`, `electron/begehung.cjs`, page „Begehungen“): areas (stairwell, cellar, boiler room, roof, facade, outdoor, bins, letterboxes, the units) with state, notes, photos; „Mangel melden“ makes a case with the chosen photos (or a whole damage workflow); due duties are check points in their area („Erledigt …“); saved a moment after each change; completed as a PDF protocol | done |
+| Sprachnotizen | Speaking instead of typing (Safari on iPhone and Mac; asked once per device, the system's recognition processes the speech): „Sprachnotiz“ on the board fills a new task – person, unit (by name, number or the tenant's), house, urgency, due date („morgen“, „in drei Tagen“, „Freitag“) are recognised locally (`electron/diktat.cjs`) and shown to check; notes and defects in the inspection can be spoken | done |
+| Bildsuche | Local image search (`electron/bildsuche.cjs`): switched on in the settings, the image half of CLIP (89 MB, pinned revision and checksum) is loaded once into the data folder; photos get German keywords from a vocabulary of 93 terms (`scripts/bildsuche/`, `electron/bildwoerter.json`) in the background (3 every 15 s); the full-text search finds them; keywords shown at the document; the runtime `onnxruntime-node` keeps only this system's build in the image (~23 MB) and the Mac app | done |
+| Offline | Working without a connection (`src/ausgang.ts`): changes and files are kept on the device (IndexedDB, never cleared at logout) and sent in their order when the connection is back; provisional numbers for new records are rewritten to the real ones; the server keeps the keys of done changes 60 days (`vorgangsschluessel`, also across restarts); a conflict (another user or the same user on another device changed it meanwhile) or an error stops the sending at that entry – decided in the traffic light (send anyway, or discard after asking); the page itself and all its parts are kept by the service worker, so the app also starts without a connection; inspection, duty proof and handover photos work offline with a preview from the device | done |
+| Robustheit | A broken image no longer stops the server (OCR error handler); conflicts also between two devices of one user | done |
+
+Next: CSS audit with the design-system skill, accessibility review of the phone screens.
 
 ## Development
 
