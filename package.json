@@ -1,6 +1,6 @@
 {
   "name": "mietshaus",
-  "version": "0.21.0",
+  "version": "0.21.1",
   "description": "Persönliche Hausverwaltung (Miete & WEG)",
   "main": "electron/main.cjs",
   "scripts": {
@@ -45,7 +45,7 @@
     "imapflow": "2.1.2",
     "lib-fints": "1.5.2",
     "nodemailer": "10.2.1",
-    "onnxruntime-node": "1.22.0",
+    "onnxruntime-node": "1.30.0",
     "pdfjs-dist": "6.3.289",
     "tesseract.js": "7.0.0",
     "web-push": "3.6.7",
