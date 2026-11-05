@@ -250,6 +250,31 @@ async function speichernVon(r: Response, vorschlag: string, filter?: DateiFilter
   return speichern(new Uint8Array(await r.arrayBuffer()), name ? decodeURIComponent(name) : vorschlag, filter);
 }
 
+// Every call carries a key. When the connection breaks, the same call goes again with the same key – a few times by
+// itself, and later when the user saves the very same thing again – and the server does it only once.
+const unklar = new Map<string, { schluessel: string; zeit: number }>();
+async function aufrufSenden(fn: string, args: unknown[], kopf: Record<string, string> = {}) {
+  const inhalt = JSON.stringify([fn, args, kopf]);
+  const alt = unklar.get(inhalt);
+  const schluessel = alt && Date.now() - alt.zeit < 10 * 60_000 ? alt.schluessel : zufall();
+  for (let versuch = 0; ; versuch++) {
+    try {
+      const r = await anfrage('/api/call', { json: { fn, args }, kopf: { ...kopf, 'X-Vorgang': schluessel } });
+      unklar.delete(inhalt);
+      return r;
+    } catch (e) {
+      if (!(e instanceof HttpFehler) || e.status !== 0) { unklar.delete(inhalt); throw e; }
+      unklar.set(inhalt, { schluessel, zeit: alt?.schluessel === schluessel ? alt.zeit : Date.now() });
+      // A read with a kept answer shows that at once; anything else is tried again after 1, 2 and 4 seconds.
+      if (versuch >= 3 || await offline.holen(fn, args)) {
+        throw new HttpFehler(0, 'Keine Verbindung zum Mietshaus-Server. Ob die Änderung gespeichert wurde, ist nicht sicher. '
+          + 'Speichere nach dem Wiederverbinden einfach noch einmal, ohne etwas zu ändern – es wird dann nicht doppelt angelegt.');
+      }
+      await new Promise((ok) => setTimeout(ok, 1000 * 2 ** versuch));
+    }
+  }
+}
+
 export function brueckeEinrichten() {
   const d = desktop();
   window.hv = {
@@ -257,7 +282,7 @@ export function brueckeEinrichten() {
     zoom: (f) => (d ? d.zoom(f) : void (document.documentElement.style.zoom = String(f))),
     call: async (fn, ...args) => {
       try {
-        const r = await anfrage('/api/call', { json: { fn, args } });
+        const r = await aufrufSenden(fn, args);
         const { wert } = await r.json();
         if (r.headers.get('x-lesend') === '1') offline.merken(fn, args, wert);
         return wert;
@@ -270,13 +295,13 @@ export function brueckeEinrichten() {
         // A plausibility question of the server: asked here, then sent again as confirmed.
         if (e instanceof HttpFehler && e.bestaetigen) {
           if (!await bestaetigen(e.bestaetigen, { titel: 'Bitte prüfen', ja: 'Ja, so speichern' })) throw new StillerFehler('Nicht gespeichert.');
-          return (await (await anfrage('/api/call', { json: { fn, args }, kopf: { 'X-Bestaetigt': '1' } })).json()).wert;
+          return (await (await aufrufSenden(fn, args, { 'X-Bestaetigt': '1' })).json()).wert;
         }
         if (!(e instanceof HttpFehler) || !e.konflikt) throw e;
         // Someone else changed the record meanwhile: overwrite on purpose, or keep theirs and see it.
         const wahl = await frage({ titel: 'Inzwischen geändert', text: <>{absatz(e.message)}{absatz('Deine Änderung überschreibt seine. Wenn du abbrichst, siehst du den neuen Stand und kannst deine Änderung dort noch einmal eintragen.')}</>,
           optionen: [{ id: 'neu', label: 'Abbrechen, neuen Stand zeigen' }, { id: 'ueber', label: 'Meine Änderung speichern', primary: true }] });
-        if (wahl === 'ueber') return (await (await anfrage('/api/call', { json: { fn, args }, kopf: { 'X-Ueberschreiben': '1' } })).json()).wert;
+        if (wahl === 'ueber') return (await (await aufrufSenden(fn, args, { 'X-Ueberschreiben': '1' })).json()).wert;
         for (const h of hoerer.get('aktualisiert') ?? []) h(null);
         throw new StillerFehler('Nicht gespeichert.');
       }

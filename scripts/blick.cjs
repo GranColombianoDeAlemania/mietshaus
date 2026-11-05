@@ -72,7 +72,7 @@ app.whenReady().then(async () => {
   const klick = (text) => js(`(() => { const t = ${JSON.stringify(text)}; const b = [...document.querySelectorAll('button')].find(b => b.textContent.trim() === t || b.querySelector('.text')?.textContent.trim() === t); if (b) b.click(); return !!b; })()`);
   const shot = async (n) => { await wait(500); fs.writeFileSync(path.join(out, n + '.png'), (await win.webContents.capturePage()).toPNG()); console.log('BILD', n, await js(`document.querySelector('.pfad')?.textContent`)); };
   const schritte = (process.env.SCHRITTE || 'cockpit,mieter,person,einheit,vertrag,buchungen,steckbrief').split(',');
-  await js(`document.querySelector('.objektwahl select').value='${o}'; document.querySelector('.objektwahl select').dispatchEvent(new Event('change',{bubbles:true}))`);
+  await js(`(async () => { document.querySelector('.objektwahl input').focus(); await new Promise((r) => setTimeout(r, 50)); document.querySelector('.objektwahl .option[data-wert="${o}"]')?.click(); })()`);
   await wait(300);
   for (const s of schritte) {
     if (s === 'cockpit') { await klick('Cockpit'); await shot('cockpit'); }

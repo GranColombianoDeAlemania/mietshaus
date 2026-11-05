@@ -50,6 +50,8 @@ const STANDARDKONTEN = [
   [45200, 'Bankgebühren', 'kosten', 'bank', 'beide'],
   [45300, 'Sonstige nicht umlagefähige Kosten', 'kosten', 'sonstige', 'beide'],
   [45400, 'Instandhaltung aus Rücklage', 'kosten', 'instandhaltung', 'weg', { aus_ruecklage: 1, p35a: 'handwerker' }],
+  // Kitchens and appliances for a unit: not deducted at once but written off via the inventory (Anlage V).
+  [45500, 'Anschaffungen (Einbauküche, Geräte) – Abschreibung über das Inventar', 'kosten', 'anschaffung', 'miete', { seit: 4 }],
 ];
 
 // VAT accounts, created once an object has a commercial letting with VAT.
@@ -61,7 +63,7 @@ const USTKONTEN = [
   [1780, 'Umsatzsteuer: Zahlungen an / Erstattungen vom Finanzamt', 'steuer', 'ust_fa'],
 ];
 // Version of the standard chart; objects created earlier get the accounts added later (marker 'k3' in kontenplan).
-const KONTENPLAN_VERSION = 3;
+const KONTENPLAN_VERSION = 4;
 
 // Contract amounts and the income account category each one is charged to.
 const POSTEN = {

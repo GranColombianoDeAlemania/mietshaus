@@ -12,6 +12,7 @@ const WK_GRUPPEN = [
 ];
 
 const { tageZwischen, einheitVonSql } = require('./buchhaltung.cjs');
+const { afaPosten } = require('./inventar.cjs');
 const ortszeit = require('./zeit.cjs');
 const maxD = (a, b) => (a > b ? a : b);
 const minD = (a, b) => (a < b ? a : b);
@@ -138,7 +139,10 @@ module.exports = function auswertung({ db, all, get, tx, bh, ab }) {
     const zinsFaktor = manuell.zins_anteil != null ? manuell.zins_anteil / 100 : va.anteil;
     const geteilt = va.selbst.length > 0;
     const gruppen = Object.fromEntries(WK_GRUPPEN.map(([g, l]) => [g, { label: l, ct: 0, absetzbar_ct: 0, einzeln: false, konten: [] }]));
+    let anschaffungGebucht = 0;
     for (const k of kostenAufgeteilt(objektId, von, bis, va.anteil, zinsFaktor, perioden)) {
+      // Purchases of kitchens and appliances are written off through the inventory, not deducted at once.
+      if (k.kategorie === 'anschaffung') { anschaffungGebucht += k.betrag_ct; continue; }
       const [g] = WK_GRUPPEN.find(([, , f]) => f(k));
       gruppen[g].ct += k.betrag_ct;
       gruppen[g].absetzbar_ct += k.absetzbar_ct;
@@ -175,8 +179,23 @@ module.exports = function auswertung({ db, all, get, tx, bh, ab }) {
     const flaeche = 'nach Fläche';
     const zinsRegel = manuell.zins_anteil != null ? `eigener Satz ${String(manuell.zins_anteil).replace('.', ',')} %` : 'nach Fläche, änderbar';
     const afaGesamt = afa(o, jahr);
+    // Inventory: items of a unit count for the days it was let (or vacant), the house's own items by the rented share.
+    const mitVorsteuer = (o.vorsteuer_quote ?? 0) > 0;
+    const T = tageZwischen(von, bis) + 1;
+    let afaInventar = 0, afaInventarAbsetzbar = 0, inventarGekauft = 0;
+    const inventarPosten = [];
+    for (const x of all('SELECT * FROM inventar WHERE objekt_id = ? ORDER BY id', objektId)) {
+      if (x.kaufdatum?.startsWith(String(jahr))) inventarGekauft += x.preis_ct ?? 0;
+      const [ct, art] = afaPosten(x, jahr, mitVorsteuer);
+      if (!ct) continue;
+      const faktor = x.einheit_id ? 1 - selbstTage(perioden, x.einheit_id, von, bis) / T : va.anteil;
+      afaInventar += ct;
+      afaInventarAbsetzbar += Math.round(ct * faktor);
+      inventarPosten.push({ id: x.id, bezeichnung: x.bezeichnung, art, ct, absetzbar_ct: Math.round(ct * faktor) });
+    }
     const aufteilung = [
       ['Absetzung für Abnutzung (AfA) Gebäude', afaGesamt, Math.round(afaGesamt * va.anteil), flaeche],
+      ['AfA bewegliche Wirtschaftsgüter (Einbauküche, Geräte)', afaInventar, afaInventarAbsetzbar, 'Einheit: vermietet voll, eigene nicht; Haus nach Fläche'],
       ['Schuldzinsen', manuell.schuldzinsen_ct ?? 0, Math.round((manuell.schuldzinsen_ct ?? 0) * zinsFaktor), zinsRegel],
       ['Geldbeschaffungskosten', manuell.geldbeschaffung_ct ?? 0, Math.round((manuell.geldbeschaffung_ct ?? 0) * zinsFaktor), zinsRegel],
       ...WK_GRUPPEN.map(([g]) => [gruppen[g].label, gruppen[g].ct, gruppen[g].absetzbar_ct,
@@ -196,6 +215,9 @@ module.exports = function auswertung({ db, all, get, tx, bh, ab }) {
       summe_einnahmen_ct: summeE, summe_werbungskosten_ct: summeW, ergebnis_ct: summeE - summeW,
       // Kaution receipts are not income; they are listed only so they are not forgotten.
       kautionen_ct: ein.kaution ?? 0,
+      inventar: inventarPosten,
+      // Booked as purchases but not (fully) entered in the inventory: nothing of it is deducted yet.
+      anschaffung_ohne_inventar_ct: Math.max(0, anschaffungGebucht - inventarGekauft),
       gemischt: o.art === 'gemischt',
     };
   }

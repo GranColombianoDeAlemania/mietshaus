@@ -228,7 +228,7 @@ function DokumentFormular(props: { id: number; onFertig: () => void; postfach?: 
 function Belegbuchung(props: { dok: Row; onFertig: (buchungId: number) => void; onAbbruch: () => void }) {
   const d = props.dok;
   const [konten] = useLoad<Row[]>(() => call('konten', d.objekt_id), [d.objekt_id]);
-  const [vorschlag] = useLoad<number | null>(() => call('kontoVorschlag', d.objekt_id, d.absender), [d.objekt_id, d.absender]);
+  const [vorschlag] = useLoad<number | null>(() => call('kontoVorschlag', d.objekt_id, d.absender, d.person_id ?? null), [d.objekt_id, d.absender, d.person_id]);
   const [kosten, setKosten] = useState<number | ''>('');
   const [geld, setGeld] = useState<number | ''>('');
   const [datumB, setDatumB] = useState(d.datum ?? heute());

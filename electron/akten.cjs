@@ -7,10 +7,10 @@ module.exports = function akten({ db, all, get, PERSON_NAME, bh }) {
   const heute = () => ortszeit.heute();
   const BILD = `(lower(d.datei) GLOB '*.jp*g' OR lower(d.datei) GLOB '*.png' OR lower(d.datei) GLOB '*.webp')`;
 
-  // Title photo: the chosen one, otherwise the newest photo of the house itself (not of a unit).
+  // Title photo: the chosen one, otherwise the newest photo of the house itself (not of a unit, no receipts or meter photos).
   const titelbild = (o) => (o.titelbild_id ? get('SELECT datei FROM dokumente WHERE id = ?', o.titelbild_id)?.datei : null) ??
     get(`SELECT d.datei FROM dokumente d WHERE d.objekt_id = ? AND d.einheit_id IS NULL AND d.status = 'abgelegt' AND ${BILD}
-      ORDER BY (d.typ = 'Foto') DESC, d.id DESC LIMIT 1`, o.id)?.datei ?? null;
+      AND d.typ = 'Foto' AND coalesce(d.titel, '') NOT LIKE 'Zählerfoto%' ORDER BY d.id DESC LIMIT 1`, o.id)?.datei ?? null;
 
   // Arrears: what was not paid by its due date (charges due today are not late yet), less any credit.
   const rueckstand = (objektId, typ) => all(`SELECT id FROM konten WHERE objekt_id = ? AND klasse = 'person' AND (?2 IS NULL OR vertrag_typ = ?2)`, objektId, typ ?? null)

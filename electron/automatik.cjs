@@ -21,7 +21,7 @@ const plusMonateTag = (iso, n) => {
 const euro = (ct) => new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format((ct ?? 0) / 100);
 const datumDe = (iso) => (iso ? iso.split('-').reverse().join('.') : '');
 
-module.exports = function automatik({ db, all, get, tx, PERSON_NAME, bh, ab, vw, kz, einstellungen }) {
+module.exports = function automatik({ db, all, get, tx, PERSON_NAME, bh, ab, vw, kz, pf, einstellungen }) {
   const einst = () => einstellungen();
 
   // Monthly charges up to the current month for all objects. Starts with the month automation was switched on,
@@ -48,6 +48,8 @@ module.exports = function automatik({ db, all, get, tx, PERSON_NAME, bh, ab, vw,
 
   function lauf() {
     const r = sollstellungAutomatisch();
+    // Duties of the houses: a case once the lead time of the next date has begun.
+    try { r.pflichten = pf ? pf.pflichtVorgaenge() : 0; } catch (e) { console.error('Pflichten', e); }
     db.prepare(`INSERT INTO einstellungen (schluessel, wert) VALUES ('auto_letzter_lauf', ?) ON CONFLICT (schluessel) DO UPDATE SET wert = excluded.wert`)
       .run(new Date().toISOString());
     return r;

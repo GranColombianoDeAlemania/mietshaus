@@ -101,7 +101,7 @@ app.whenReady().then(async () => {
   win.setSize(1300, 1250); await click('Cockpit'); await wait(800); await shot('1-miete-uebersicht');
   await modus('WEG-Verwaltung'); await wait(800); await shot('1b-weg-cockpit'); await modus('Mietverwaltung'); win.setSize(1300, 760);
   await modus('Mietverwaltung'); await wait(200);
-  await js(`document.querySelector('.objektwahl select').value='${o}'; document.querySelector('.objektwahl select').dispatchEvent(new Event('change',{bubbles:true}))`);
+  await js(`(async () => { document.querySelector('.objektwahl input').focus(); await new Promise((r) => setTimeout(r, 50)); document.querySelector('.objektwahl .option[data-wert="${o}"]')?.click(); })()`);
   await click('Buchungen'); await shot('2-buchungen');
   await click('Neue Buchung'); await shot('3-buchungsmaske');
   // Account search: type part of a name into the second account field.

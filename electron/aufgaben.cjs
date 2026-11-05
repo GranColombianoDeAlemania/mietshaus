@@ -14,7 +14,10 @@ module.exports = function aufgaben({ db, all, get, tx, PERSON_NAME }) {
     aufgabenListe: (benutzerId, { nur_meine = false, objekt_id = null, zustaendig = null } = {}) => all(`SELECT v.*, ${PERSON_NAME} AS person,
         e.bezeichnung AS einheit, o.bezeichnung AS objekt, o.art AS objekt_art, b.name AS zustaendig_name,
         (SELECT count(*) FROM vorgangseintraege x WHERE x.vorgang_id = v.id AND x.art NOT IN ('status')) AS eintraege,
-        (SELECT count(*) FROM dokumente d WHERE d.vorgang_id = v.id AND d.status <> 'papierkorb') AS fotos
+        (SELECT count(*) FROM dokumente d WHERE d.vorgang_id = v.id AND d.status <> 'papierkorb') AS fotos,
+        (SELECT count(*) FROM vorgaenge c WHERE c.eltern_id = v.id) AS schritte,
+        (SELECT count(*) FROM vorgaenge c WHERE c.eltern_id = v.id AND c.status = 'erledigt') AS schritte_erledigt,
+        (SELECT x.titel FROM vorgaenge x WHERE x.id = v.eltern_id) AS eltern_titel
       FROM vorgaenge v LEFT JOIN personen p ON p.id = v.person_id LEFT JOIN einheiten e ON e.id = v.einheit_id
       LEFT JOIN objekte o ON o.id = v.objekt_id LEFT JOIN benutzer b ON b.id = v.zustaendig
       WHERE (v.status <> 'erledigt' OR coalesce(v.geaendert_am, v.erstellt) >= ?1)

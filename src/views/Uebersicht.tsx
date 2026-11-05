@@ -1,7 +1,7 @@
 // Cockpit: what needs attention, what is coming up, opportunities, key figures and cash flow.
 import { useState } from 'react';
 import * as I from 'lucide-react';
-import { call, datum, euro, inTagen, type Modus, type Row } from '../api';
+import { call, datum, euro, heute, inTagen, type Modus, type Row } from '../api';
 import { useLoad } from '../useLoad';
 import { ObjektKacheln } from './Steckbrief';
 import { L, mitLinks, useNavi } from '../navi';
@@ -10,6 +10,7 @@ import { CockpitKpis, CockpitRadar, CockpitVorschau } from './Kennzahlen';
 import { Kennzahl } from '../zeiger';
 import { BelegFoto } from '../Foto';
 import { SYMBOL } from '../icons';
+import { PflichtErledigen, PFLICHT_ZUSTAND } from './Pflichten';
 
 const STUFE: Record<string, [string, string]> = { rot: ['●', 'Jetzt handeln'], orange: ['●', 'Bald / prüfen'], gelb: ['●', 'Chance / Hinweis'] };
 
@@ -22,6 +23,9 @@ export function Uebersicht(props: { modus: Modus; objekte: Row[]; oeffne: (seite
   // Cases assigned to the user who is logged in (server only).
   const [aufgaben] = useLoad<Row[]>(() => call<Row[]>('meineAufgaben').catch(() => []), []);
   const [start, ladeStart] = useLoad<Row>(() => call('ersteSchritte'), []);
+  // Duties of the houses of this mode that are overdue, due within their lead time or without a date.
+  const [pflichten, ladePflichten] = useLoad<Row[]>(() => call('pflichtenFaellig', props.objekte.map((o) => o.id)), [props.objekte.map((o) => o.id).join()]);
+  const [erledigen, setErledigen] = useState<Row | null>(null);
   const [erledigteZeigen, setErledigteZeigen] = useState(false);
   const navi = useNavi();
   const weg = props.modus === 'weg';
@@ -114,6 +118,21 @@ export function Uebersicht(props: { modus: Modus; objekte: Row[]; oeffne: (seite
               {c.bald.length > 12 && <li><span className="punkt" /><div className="inhalt"><L zu={{ seite: 'kalender' }}>{c.bald.length - 12} weitere im Kalender</L></div></li>}
             </ul>
           </div>
+          {!!pflichten?.length && (
+            <div className="panel">
+              <div className="panelkopf"><h3>Pflichten am Haus</h3></div>
+              <ul className="hinweisliste">
+                {pflichten.map((p) => (
+                  <li key={'p' + p.id} className={p.zustand === 'ueberfaellig' ? 'wichtig' : ''}>
+                    <span className="punkt"><I.ClipboardCheck size={14} /></span>
+                    <div className="inhalt"><L zu={{ seite: 'pflichten', objektId: p.objekt_id }}>{p.titel}</L>
+                      <div className="klein hinweis">{p.naechste ? `${p.naechste === heute() ? 'heute fällig' : PFLICHT_ZUSTAND[p.zustand]?.[0] ?? ''} · ${datum(p.naechste)}` : 'ohne Termin'} · {p.objekt}{p.einheit ? `, ${p.einheit}` : ''}</div></div>
+                    {p.naechste && <button className="klein" onClick={() => setErledigen(p)}>Erledigt …</button>}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           {chancen.length > 0 && (
             <div className="panel">
               <div className="panelkopf"><h3>Chancen & Hinweise</h3></div>
@@ -127,6 +146,7 @@ export function Uebersicht(props: { modus: Modus; objekte: Row[]; oeffne: (seite
       <CockpitRadar c={c}>{weg ? verlauf : null}</CockpitRadar>
       <ObjektKacheln modus={props.modus} oeffne={props.oeffne} />
       {!weg && <div className="kz-raster">{verlauf}</div>}
+      {erledigen && <PflichtErledigen pflicht={erledigen} onClose={(ok) => { setErledigen(null); if (ok) ladePflichten(); }} />}
     </section>
   );
 }

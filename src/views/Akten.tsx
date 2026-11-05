@@ -20,6 +20,7 @@ import { sollNachfrage } from './Sollstellung';
 import { EinheitKennzahlen, Kalender, MieterKennzahlen, SelbstnutzungDialog, Zahlungsverhalten } from './Kennzahlen';
 import { euro0, prozent, Ring, RingZeile, ZONEN_KAUTION } from '../zeiger';
 import { emailSchreiben } from '../Mail';
+import { Inventar } from './Inventar';
 
 const monatKurz = (m: string | null | undefined) => (m && /^\d{4}-\d{2}/.test(m) ? `${m.slice(5, 7)}/${m.slice(2, 4)}` : datum(m));
 const GRUND: Record<string, string> = {
@@ -222,7 +223,7 @@ export function PersonSeite(props: { id: number }) {
 export function EinheitSeite(props: { id: number }) {
   const navi = useNavi();
   const [a, reload] = useLoad<Row>(() => call('einheitAkte', props.id), [props.id]);
-  const [tab, setTab] = useState<'uebersicht' | 'dokumente' | 'verlauf'>('uebersicht');
+  const [tab, setTab] = useState<'uebersicht' | 'dokumente' | 'inventar' | 'verlauf'>('uebersicht');
   const [edit, setEdit] = useState(false);
   const [selbstEdit, setSelbstEdit] = useState<Row | null>(null);
   useEffect(() => { if (a?.einheit) navi.setzeObjekt(a.einheit.objekt_id); }, [a?.einheit?.objekt_id]);
@@ -263,7 +264,7 @@ export function EinheitSeite(props: { id: number }) {
           <button className="icon" onClick={() => setEdit(true)}><I.Pencil size={15} />Bearbeiten</button>
         </>}
       />
-      <Reiter value={tab} onChange={setTab} tabs={[['uebersicht', 'Übersicht'], ['dokumente', 'Fotos & Dokumente', a.dokumente.length], ['verlauf', 'Verlauf']]} />
+      <Reiter value={tab} onChange={setTab} tabs={[['uebersicht', 'Übersicht'], ['dokumente', 'Fotos & Dokumente', a.dokumente.length], ['inventar', 'Inventar'], ['verlauf', 'Verlauf']]} />
 
       {tab === 'uebersicht' && zeigeMiete && <EinheitKennzahlen key={e.id} einheit={e} selbstnutzung={a.selbstnutzung} reload={reload} />}
       {tab === 'uebersicht' && (
@@ -376,6 +377,7 @@ export function EinheitSeite(props: { id: number }) {
         </div>
       )}
       {tab === 'dokumente' && <Galerie filter={{ objekt_id: e.objekt_id, einheit_id: e.id }} hinweis={`${e.objekt}, ${e.bezeichnung}`} />}
+      {tab === 'inventar' && <Inventar objekt={{ id: e.objekt_id }} einheit={e} ohneKopf />}
       {tab === 'verlauf' && <Panel titel="Verlauf"><Zeitleiste eintraege={a.zeitleiste} /></Panel>}
 
       {edit && <FormDialog title="Einheit bearbeiten" row={e} fields={EINHEIT_FELDER}

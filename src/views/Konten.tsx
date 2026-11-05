@@ -8,7 +8,7 @@ import { L, useNavi } from '../navi';
 
 const shText = (ct: number) => (ct === 0 ? '0,00' : `${betrag(Math.abs(ct))} ${ct > 0 ? 'S' : 'H'}`);
 
-const KATEGORIEN_KOSTEN: [string, string][] = [
+export const KATEGORIEN_KOSTEN: [string, string][] = [
   ['bk01', 'BetrKV Nr. 1 – Grundsteuer'], ['bk02', 'Nr. 2 – Wasserversorgung'], ['bk03', 'Nr. 3 – Entwässerung'],
   ['bk04', 'Nr. 4 – Heizung'], ['bk05', 'Nr. 5 – Warmwasser'], ['bk07', 'Nr. 7 – Aufzug'],
   ['bk08', 'Nr. 8 – Straßenreinigung / Müll'], ['bk09', 'Nr. 9 – Gebäudereinigung'], ['bk10', 'Nr. 10 – Gartenpflege'],
@@ -16,6 +16,7 @@ const KATEGORIEN_KOSTEN: [string, string][] = [
   ['bk14', 'Nr. 14 – Hauswart'], ['bk15', 'Nr. 15 – Antenne / Breitband (nur Strom & Wartung)'], ['bk15c', 'Nr. 15 – Glasfaser-Bereitstellungsentgelt'],
   ['kabel_tv', 'Kabel-TV-Gebühren (nicht umlagefähig)'], ['bk16', 'Nr. 16 – Wäschepflege'],
   ['bk17', 'Nr. 17 – Sonstige Betriebskosten'], ['verwaltung', 'Verwaltung'], ['instandhaltung', 'Instandhaltung'],
+  ['anschaffung', 'Anschaffung (Abschreibung über das Inventar)'],
   ['bank', 'Bankgebühren'], ['sonstige', 'Sonstige Kosten'],
 ];
 const KATEGORIEN_EINNAHME: [string, string][] = [

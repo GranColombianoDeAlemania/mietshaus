@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from 'react';
 import { call, OBJEKT_ART, type Modus, type Row } from './api';
 import { useLoad } from './useLoad';
-import { Fehlergrenze } from './ui';
+import { Auswahl, Fehlergrenze } from './ui';
 import { Ampel } from './Ampel';
 import { Glocke } from './Glocke';
 import { Bild, MODUS_SYMBOL, SEITEN_SYMBOL } from './Symbol';
@@ -57,6 +57,10 @@ const Kautionen = ansicht(vMieteExtras, 'Kautionen');
 const Mietanpassung = ansicht(vMieteExtras, 'Mietanpassung');
 const Schluesselverwaltung = ansicht(vMieteExtras, 'Schluesselverwaltung');
 const Versicherungen = ansicht(vMieteExtras, 'Versicherungen');
+const vPflichten = () => import('./views/Pflichten');
+const vInventar = () => import('./views/Inventar');
+const Inventar = ansicht(vInventar, 'Inventar');
+const Pflichten = ansicht(vPflichten, 'Pflichten');
 const vWegExtras = () => import('./views/WegExtras');
 const Beschluesse = ansicht(vWegExtras, 'Beschluesse');
 const Kontakte = ansicht(vWegExtras, 'Kontakte');
@@ -113,7 +117,7 @@ const ICON: Record<string, I.LucideIcon> = {
   buchen: I.BookOpen, konten: I.Landmark, soll: I.Repeat, op: I.BadgeEuro, bank: I.Wallet, darlehen: I.PiggyBank,
   nk: I.Calculator, wegabr: I.Calculator, wipl: I.ClipboardList, ruecklagen: I.PiggyBank, auswertung: I.ChartColumn,
   kaution: I.Shield, anpassung: I.TrendingUp, vermietung: I.UserPlus, uebergabe: I.ClipboardCheck, versammlungen: I.Gavel, beschluesse: I.ScrollText,
-  kontakte: I.Phone, schluesselv: I.KeyRound, versicherungen: I.Umbrella,
+  kontakte: I.Phone, schluesselv: I.KeyRound, versicherungen: I.Umbrella, pflichten: I.ClipboardCheck, inventar: I.WashingMachine,
   briefe: I.Mail, vorgaenge: I.ListChecks, termine: I.CalendarDays, kalender: I.CalendarDays,
   pruefung: I.ShieldCheck, status: I.Activity, protokoll: I.History, export: I.Download, einstellungen: I.Settings,
 };
@@ -147,6 +151,7 @@ const SEITEN: Seite[] = [
   { id: 'einheiten', label: 'Einheiten', gruppe: 'Stammdaten', objekt: true, render: (c) => <Einheiten key={c.objekt.id} modus={c.modus} objekt={c.objekt} /> },
   { id: 'vertraege', label: (m) => (m === 'weg' ? 'Eigentümer' : 'Mieter'), gruppe: 'Stammdaten', objekt: true, render: (c) => <Vertraege key={c.objekt.id + c.modus} modus={c.modus} objekt={c.objekt} objekte={c.objekte} /> },
   { id: 'zaehler', label: 'Zähler', gruppe: 'Stammdaten', objekt: true, render: (c) => <Zaehler key={c.objekt.id} objekt={c.objekt} /> },
+  { id: 'inventar', label: 'Inventar', gruppe: 'Stammdaten', objekt: true, render: (c) => <Inventar key={c.objekt.id} objekt={c.objekt} /> },
   { id: 'schluessel', label: 'Umlageschlüssel', gruppe: 'Stammdaten', objekt: true, render: (c) => <Schluessel key={c.objekt.id} objekt={c.objekt} /> },
   { id: 'personen', label: 'Adressbuch', gruppe: 'Stammdaten', alle: true, render: () => <Personen /> },
   { id: 'buchen', label: 'Buchungen', gruppe: 'Buchhaltung', objekt: true, render: (c) => <Buchen key={c.objekt.id} objekt={c.objekt} /> },
@@ -168,6 +173,7 @@ const SEITEN: Seite[] = [
   { id: 'beschluesse', label: 'Beschluss-Sammlung', gruppe: 'Verwaltung', objekt: true, modi: ['weg'], render: (c) => <Beschluesse key={c.objekt.id} objekt={c.objekt} /> },
   { id: 'kontakte', label: (m) => (m === 'weg' ? 'Beirat & Kontakte' : 'Ansprechpartner'), gruppe: 'Verwaltung', objekt: true, render: (c) => <Kontakte key={c.objekt.id + c.modus} objekt={c.objekt} titel={c.modus === 'weg' ? 'Beirat & Ansprechpartner' : 'Ansprechpartner'} /> },
   { id: 'schluesselv', label: 'Schlüssel', gruppe: 'Verwaltung', objekt: true, render: (c) => <Schluesselverwaltung key={c.objekt.id} objekt={c.objekt} /> },
+  { id: 'pflichten', label: 'Pflichten am Haus', gruppe: 'Verwaltung', objekt: true, render: (c) => <Pflichten key={c.objekt.id} objekt={c.objekt} /> },
   { id: 'versicherungen', label: 'Versicherungen', gruppe: 'Verwaltung', objekt: true, render: (c) => <Versicherungen key={c.objekt.id} objekt={c.objekt} /> },
   { id: 'briefe', label: 'Briefe', gruppe: 'Kommunikation', objekt: true, render: (c) => <Briefe key={c.objekt.id + c.modus} objekt={c.objekt} modus={c.modus} /> },
   { id: 'vorgaenge', label: 'Vorgänge', gruppe: 'Kommunikation', objekt: true, render: (c) => <Vorgaenge key={c.objekt.id} objekt={c.objekt} /> },
@@ -607,19 +613,20 @@ export default function App(props: { benutzer?: Row | null }) {
             ))}
           </nav>
           <Suche befehle={befehle} onDokument={(d) => setDokOffen({ id: d.id, datei: d.datei })} />
-          <label className="objektwahl" title={modus === 'projekt' ? 'Projekt' : 'Objekt'}>
+          <div className="objektwahl" aria-label={modus === 'projekt' ? 'Projekt wählen' : 'Objekt wählen'}>
             <I.Building2 size={15} />
-            <select value={objektId ?? ''} onChange={(e) => {
-              const id = Number(e.target.value);
-              detail ? zu({ seite: modus === 'projekt' ? 'zeitplan' : 'steckbrief', objektId: id }) : gehe({ objektId: id, param: undefined });
-            }} disabled={!objekte?.length}>
-              {!objekte?.length && <option value="">{!objekte ? 'lädt …' : modus === 'projekt' ? '– noch keine Projekte –' : '– noch keine Objekte –'}</option>}
-              {detail && objektId && !objekte?.some((o) => o.id === objektId) && <option value={objektId}>…</option>}
-              {objekte?.map((o) => (
-                <option key={o.id} value={o.id}>{o.bezeichnung ?? o.titel}{o.art === 'gemischt' ? ' (gemischt)' : ''}</option>
-              ))}
-            </select>
-          </label>
+            <Auswahl pflicht value={objektId ?? ''} disabled={!objekte?.length}
+              platzhalter={!objekte ? 'lädt …' : !objekte.length ? (modus === 'projekt' ? '– noch keine Projekte –' : '– noch keine Objekte –') : undefined}
+              options={[
+                ...(detail && objektId && !objekte?.some((o) => o.id === objektId) ? [[objektId, '…'] as [number, string]] : []),
+                ...(objekte ?? []).map((o): [number, string] => [o.id, `${o.bezeichnung ?? o.titel}${o.art === 'gemischt' ? ' (gemischt)' : ''}`]),
+              ]}
+              onChange={(v) => {
+                const id = Number(v);
+                if (!id) return;
+                detail ? zu({ seite: modus === 'projekt' ? 'zeitplan' : 'steckbrief', objektId: id }) : gehe({ objektId: id, param: undefined });
+              }} />
+          </div>
           <button className="rund ring" title="Dokumente ablegen – sie landen zur Prüfung im Postfach" onClick={schnellAblegen}><I.FilePlus2 size={16} /></button>
           <Glocke />
           <Ampel benutzer={props.benutzer?.name ?? null} />

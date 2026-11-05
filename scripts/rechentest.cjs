@@ -1447,6 +1447,120 @@ Stadtsparkasse München | IBAN DE02 7015 0000 0000 1234 56 | BIC SSKMDEMMXXX`;
   gleich('Wirtschaftsplan: Hinweis zur Verteilung', plan.hinweise.length, 1);
 }
 
+// ---------- 0.20: duties of a house ----------
+{
+  const { plusMonate } = require('../electron/pflichten.cjs');
+  const raw2 = open(':memory:');
+  const t = api(raw2);
+  t.setzeEinstellungen({ bundesland: 'BE', auto_soll: '0' });
+  const ob = t.neuesObjekt({ bezeichnung: 'Pflichtenhaus', art: 'miete', strasse: 'Prüfweg 2', plz: '10115', ort: 'Berlin' });
+  gleich('Pflichten: ein neues Haus hat keine', t.pflichten(ob).length, 0);
+  gleich('Turnus: 31.01. + 1 Monat = 28.02.', plusMonate('2025-01-31', 1), '2025-02-28');
+  gleich('Turnus: 29.02.2024 + 12 Monate = 28.02.2025', plusMonate('2024-02-29', 12), '2025-02-28');
+  gleich('Turnus: 15.03. + 36 Monate', plusMonate('2025-03-15', 36), '2028-03-15');
+  const heute = require('../electron/zeit.cjs').heute();
+  const [rm, sf] = t.pflichtenAnlegen(ob, [{ art: 'rauchmelder', naechste: heute }, { art: 'schornstein', naechste: '2099-01-01' }]);
+  gleich('Pflichten: nur die ausgewählten angelegt', t.pflichten(ob).map((p) => p.art).sort(), ['rauchmelder', 'schornstein']);
+  gleich('Pflichten: dieselbe nicht doppelt', t.pflichtenAnlegen(ob, [{ art: 'rauchmelder' }]).length, 0);
+  gleich('Pflichten: Turnus und Kostenart aus dem Katalog', [t.get('pflichten', rm).intervall_monate, t.get('pflichten', rm).kategorie, t.get('pflichten', sf).intervall_monate], [12, 'bk17', null]);
+  gleich('Vorgang: einmal angelegt, auch bei zwei Läufen', [t.pflichtVorgaenge(), t.pflichtVorgaenge()], [1, 0]);
+  const vg = raw2.prepare('SELECT * FROM vorgaenge WHERE pflicht_id = ?').get(rm);
+  gleich('Vorgang: Titel, Fälligkeit, Kategorie', [vg.titel, vg.faellig, vg.kategorie], ['Rauchmelder prüfen', heute, 'pflicht']);
+  const r = t.pflichtErledigen(rm, { datum: heute, notiz: 'alle 6 Melder ok' });
+  gleich('Erledigt: nächster Termin ein Jahr später', r.naechste, plusMonate(heute, 12));
+  gleich('Erledigt: Vorgang geschlossen, Verlauf vermerkt', [raw2.prepare('SELECT status FROM vorgaenge WHERE id = ?').get(vg.id).status, t.pflichtVerlauf(rm).length], ['erledigt', 1]);
+  gleich('Erledigt: kein neuer Vorgang bis zum Vorlauf', t.pflichtVorgaenge(), 0);
+  gleich('Ohne Turnus: nächster Termin laut Bescheid', t.pflichtErledigen(sf, { datum: heute, naechste: '2030-05-01' }).naechste, '2030-05-01');
+  t.save('pflichten', { id: sf, aktiv: 0, naechste: heute });
+  gleich('Pausiert: kein Vorgang, Zustand pausiert', [t.pflichtVorgaenge(), t.pflichten(ob).find((p) => p.id === sf).zustand], [0, 'pausiert']);
+  const k = t.kalender(heute, heute).filter((x) => /Schornstein|Rauchmelder/.test(x.titel));
+  gleich('Kalender: pausierte und erledigte nicht als fällig', k.length, 0);
+  t.save('pflichten', { id: sf, aktiv: 1 });
+  gleich('Kalender: fällige Pflicht erscheint', t.kalender(heute, plusMonate(heute, 1)).some((x) => /Schornstein/.test(x.titel)), true);
+  let fehler = '';
+  try { t.pflichtErledigen(rm, { datum: '2999-01-01' }); } catch (e) { fehler = e.message; }
+  gleich('Erledigt: kein Datum in der Zukunft', /Zukunft/.test(fehler), true);
+  const firma = t.save('personen', { firma: 'Wärme Krause GmbH' });
+  const [hz] = t.pflichtenAnlegen(ob, [{ art: 'heizung', firma_id: firma }]);
+  const hk = t.konten(ob).find((x) => x.kategorie === 'bk04');
+  gleich('Rechnung der Firma: Kostenart der Pflicht vorgeschlagen', [t.kontoVorschlag(ob, 'Wärme Krause GmbH · Rechnung 17'), t.kontoVorschlag(ob, null, firma)], [hk.id, hk.id]);
+  gleich('Rechnung einer anderen Firma: kein Vorschlag', t.kontoVorschlag(ob, 'Dachdecker Rot'), null);
+  gleich('Pflicht mit Firma angelegt', t.get('pflichten', hz).firma_id, firma);
+}
+
+// ---------- 0.20: inventory and the write-off of movable assets ----------
+{
+  const { afaPosten, restwert } = require('../electron/inventar.cjs');
+  const kueche = { preis_ct: 600000, kaufdatum: '2025-03-10', nutzungsdauer_jahre: 10 };
+  gleich('Küche 6.000 € im März: 10/12 im ersten Jahr', afaPosten(kueche, 2025), [50000, 'linear']);
+  gleich('Küche: volle Jahresrate danach', afaPosten(kueche, 2026), [60000, 'linear']);
+  gleich('Küche: Rest im elften Jahr (2 Monate)', afaPosten(kueche, 2035), [10000, 'linear']);
+  gleich('Küche: danach nichts mehr', afaPosten(kueche, 2036), [0, 'linear']);
+  gleich('Küche: Restwert Ende 2026', restwert(kueche, 2026), 490000);
+  gleich('Küche entsorgt 2027: Restbuchwert im Abgangsjahr', afaPosten({ ...kueche, abgang_am: '2027-06-30', abgang_art: 'entsorgt' }, 2027), [490000, 'abgang']);
+  gleich('Küche verkauft 2027: nur AfA bis Juni, kein Restbuchwert', afaPosten({ ...kueche, abgang_am: '2027-06-30', abgang_art: 'verkauft' }, 2027), [30000, 'verkauf']);
+  gleich('Im Kaufjahr verkauft: AfA März bis Mai', afaPosten({ ...kueche, abgang_am: '2025-05-20', abgang_art: 'verkauft' }, 2025), [15000, 'verkauf']);
+  gleich('Fest eingebaute Haustechnik: keine Abschreibung (Erhaltungsaufwand)', [afaPosten({ ...kueche, kategorie: 'haustechnik' }, 2025)[0], restwert({ ...kueche, kategorie: 'haustechnik' }, 2025)], [0, null]);
+  gleich('Nach dem Abgang nichts mehr', afaPosten({ ...kueche, abgang_am: '2027-06-30' }, 2028), [0, null]);
+  gleich('GWG 952 € brutto (800 € netto): sofort voll', afaPosten({ preis_ct: 95200, kaufdatum: '2025-11-02', nutzungsdauer_jahre: 10 }, 2025), [95200, 'gwg']);
+  gleich('Über der GWG-Grenze: linear', afaPosten({ preis_ct: 96000, kaufdatum: '2025-12-02', nutzungsdauer_jahre: 10 }, 2025)[1], 'linear');
+  gleich('GWG mit Vorsteuerabzug: Grenze auf den Nettopreis', afaPosten({ preis_ct: 85000, kaufdatum: '2025-01-02', nutzungsdauer_jahre: 10 }, 2025, true)[1], 'linear');
+
+  const raw2 = open(':memory:');
+  const t = api(raw2);
+  t.setzeEinstellungen({ bundesland: 'BE', auto_soll: '0' });
+  const ob = t.neuesObjekt({ bezeichnung: 'Küchenhaus', art: 'miete', strasse: 'Herdweg 1', plz: '10115', ort: 'Berlin' });
+  const [e1, e2] = [1, 2].map((nr) => t.save('einheiten', { objekt_id: ob, nr, bezeichnung: `WE${nr}`, art: 'Wohnung', wohnflaeche: 50 }));
+  t.save('selbstnutzung', { einheit_id: e2, beginn: '2020-01-01', personen: 1 });
+  const konten = t.konten(ob);
+  const anschaffung = konten.find((k) => k.kategorie === 'anschaffung');
+  gleich('Konto für Anschaffungen im Kontenplan', !!anschaffung, true);
+  const bank = konten.find((k) => k.nr === 1200).id;
+  t.buchen({ objekt_id: ob, datum: '2025-03-10', text: 'Einbauküche WE1', positionen: [{ soll_id: anschaffung.id, haben_id: bank, betrag_ct: 600000 }] });
+  t.save('inventar', { objekt_id: ob, einheit_id: e1, bezeichnung: 'Einbauküche', kategorie: 'kueche', kaufdatum: '2025-03-10', preis_ct: 600000, nutzungsdauer_jahre: 10 });
+  t.save('inventar', { objekt_id: ob, einheit_id: e2, bezeichnung: 'Spülmaschine (eigene Wohnung)', kategorie: 'geraet', kaufdatum: '2025-05-01', preis_ct: 59500, nutzungsdauer_jahre: 10 });
+  const av = t.anlageV(ob, 2025);
+  const zeile = av.selbstnutzung.zeilen.find((z) => /bewegliche/.test(z[0]));
+  gleich('Anlage V: AfA Küche voll, Spülmaschine der eigenen Wohnung nicht', [zeile[1], zeile[2]], [50000 + 59500, 50000]);
+  gleich('Anlage V: die gebuchte Anschaffung wird nicht sofort abgezogen', av.werbungskosten.some(([l]) => /Sonstige/.test(l)), false);
+  gleich('Anlage V: Anschaffung vollständig im Inventar', av.anschaffung_ohne_inventar_ct, 0);
+  t.buchen({ objekt_id: ob, datum: '2025-08-01', text: 'Waschmaschine', positionen: [{ soll_id: anschaffung.id, haben_id: bank, betrag_ct: 70000 }] });
+  gleich('Anlage V: Hinweis auf Anschaffung ohne Inventar', t.anlageV(ob, 2025).anschaffung_ohne_inventar_ct, 10500);
+  t.save('inventar', { objekt_id: ob, einheit_id: e1, bezeichnung: 'Waschmaschine', kaufdatum: '2026-08-01', garantie_bis: require('../electron/zeit.cjs').heute().slice(0, 4) + '-12-31', preis_ct: 70000 });
+  gleich('Inventar: Liste der Einheit mit Restwert', t.inventar(ob, e1).map((x) => [x.bezeichnung, x.restwert_ct != null]), [['Einbauküche', true], ['Waschmaschine', true]]);
+}
+
+// ---------- 0.20: workflow templates ----------
+{
+  const raw2 = open(':memory:');
+  const t = api(raw2);
+  t.setzeEinstellungen({ bundesland: 'BE', auto_soll: '0' });
+  const ob = t.neuesObjekt({ bezeichnung: 'Ablaufhaus', art: 'miete', strasse: 'Weg 3', plz: '10115', ort: 'Berlin' });
+  const eh = t.save('einheiten', { objekt_id: ob, nr: 1, bezeichnung: 'WE1', art: 'Wohnung', wohnflaeche: 50 });
+  const vorlagen = t.ablaeufe();
+  gleich('Abläufe: vier Vorlagen mitgeliefert', vorlagen.map((a) => a.art).sort(), ['mieterwechsel', 'neuvermietung', 'nk', 'schaden']);
+  const mw = vorlagen.find((a) => a.art === 'mieterwechsel');
+  const heute = require('../electron/zeit.cjs').heute();
+  const plus = (n) => new Date(Date.parse(`${heute}T12:00:00Z`) + n * 864e5).toISOString().slice(0, 10);
+  const id = t.ablaufStarten(mw.id, { objekt_id: ob, einheit_id: eh, stichtag: plus(40) });
+  const teile = t.ablaufSchritte(id);
+  gleich('Ablauf: ein Schritt je Vorlagenschritt', teile.length, mw.schritte.length);
+  gleich('Ablauf: vergangene Schritte heute fällig, spätere nach Stichtag', [teile[0].faellig, teile.find((x) => x.titel.startsWith('Auszug')).faellig], [heute, plus(40)]);
+  const h = raw2.prepare('SELECT * FROM vorgaenge WHERE id = ?').get(id);
+  gleich('Ablauf: Hauptvorgang mit Einheit, fällig mit dem letzten Schritt', [h.titel, h.einheit_id, h.faellig], ['Mieterwechsel: WE1', eh, plus(70)]);
+  const liste = t.aufgabenListe(null, {});
+  gleich('Board: Fortschritt am Hauptvorgang, Herkunft am Schritt', [liste.find((v) => v.id === id).schritte, liste.find((v) => v.id === teile[0].id).eltern_titel], [mw.schritte.length, 'Mieterwechsel: WE1']);
+  t.vorgangStatus(null, teile[0].id, 'erledigt');
+  gleich('Board: erledigte Schritte gezählt', t.aufgabenListe(null, {}).find((v) => v.id === id).schritte_erledigt, 1);
+  t.remove('vorgaenge', id);
+  gleich('Hauptvorgang gelöscht: Schritte gehen mit', raw2.prepare('SELECT count(*) AS n FROM vorgaenge WHERE eltern_id = ?').get(id).n, 0);
+  const eigene = t.save('ablaeufe', { titel: 'Treppenhaus streichen', anlass: 'Termin', schritte: JSON.stringify([{ tage: -7, titel: 'Mieter informieren' }, { tage: 0, titel: 'Maler' }, { tage: 'x', titel: 'kaputt' }]) });
+  gleich('Eigene Vorlage: ungültige Schritte fallen weg', t.ablaeufe().find((a) => a.id === eigene).schritte.length, 2);
+  let fehler = '';
+  try { t.ablaufStarten(eigene, { objekt_id: ob }); } catch (e) { fehler = e.message; }
+  gleich('Ablauf ohne Stichtag: verständlicher Fehler', /Termin/.test(fehler), true);
+}
+
 console.log(`\nRechentest: ${ok} Prüfungen richtig, ${falsch} falsch.`);
 if (falsch) process.exitCode = 1;
 // The click test reuses the sample data.

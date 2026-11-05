@@ -300,6 +300,7 @@ function AnlageV(props: { objekt: Row }) {
           </table>
           <p className="hervor kachel" style={{ marginTop: 14 }}>{a.ergebnis_ct >= 0 ? 'Überschuss' : 'Verlust'}: {euro(a.ergebnis_ct)}</p>
           {a.kautionen_ct > 0 && <p className="klein hinweis">Erhaltene Kautionen ({euro(a.kautionen_ct)}) sind keine Einnahmen und nicht enthalten.</p>}
+          {a.anschaffung_ohne_inventar_ct > 0 && <p className="klein fehlertext">Auf „Anschaffungen“ gebucht, aber nicht im Inventar: {euro(a.anschaffung_ohne_inventar_ct)}. Erst mit einem Eintrag im Inventar (Kaufdatum, Preis, Nutzungsdauer) wird es abgeschrieben.</p>}
         </div>
         <div className="panel">
           <h3>Ergänzende Angaben {jahr}</h3>

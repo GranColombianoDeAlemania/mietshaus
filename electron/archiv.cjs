@@ -191,12 +191,19 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME }) {
     return v;
   }
 
-  // Suggests the expense account from earlier invoices of the same sender.
-  function kontoVorschlag(objektId, absender) {
-    if (!objektId || !absender) return null;
-    const r = get(`SELECT b.soll_id FROM dokumente d JOIN buchungen b ON b.id = d.buchung_id
-      WHERE d.objekt_id = ? AND d.absender = ? ORDER BY d.id DESC LIMIT 1`, objektId, absender);
-    return r?.soll_id ?? null;
+  // Suggests the expense account from earlier invoices of the same sender; failing that, from a duty of the house
+  // done by this firm (its cost type, e.g. boiler service → heating costs).
+  function kontoVorschlag(objektId, absender, personId = null) {
+    if (!objektId || (!absender && !personId)) return null;
+    const r = absender ? get(`SELECT b.soll_id FROM dokumente d JOIN buchungen b ON b.id = d.buchung_id
+      WHERE d.objekt_id = ? AND d.absender = ? ORDER BY d.id DESC LIMIT 1`, objektId, absender) : null;
+    if (r) return r.soll_id;
+    const pf = get(`SELECT f.kategorie FROM pflichten f JOIN personen p ON p.id = f.firma_id
+      WHERE f.objekt_id = ?1 AND f.aktiv = 1 AND f.kategorie IS NOT NULL AND (p.id = ?2
+        OR (?3 IS NOT NULL AND length(coalesce(p.firma, '')) > 3 AND instr(lower(?3), lower(p.firma)) > 0)
+        OR (?3 IS NOT NULL AND length(coalesce(p.nachname, '')) > 3 AND instr(lower(?3), lower(p.nachname)) > 0))
+      ORDER BY f.id LIMIT 1`, objektId, personId, absender || null);
+    return pf ? get(`SELECT id FROM konten WHERE objekt_id = ? AND klasse = 'kosten' AND kategorie = ? AND coalesce(inaktiv, 0) = 0 ORDER BY nr LIMIT 1`, objektId, pf.kategorie)?.id ?? null : null;
   }
 
   // Recycle bin: a deleted document keeps its file for PAPIERKORB_TAGE days and can come back to where it was.

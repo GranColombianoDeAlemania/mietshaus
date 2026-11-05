@@ -243,7 +243,20 @@ From the pick of 28.10.2026 („Paket 1 – ich will nichts bezahlen; Paket 2 so
 | Bank | Same transaction from CAMT and FinTS/MT940/CSV recognised („vermutlich schon gebucht“); CAMT batch bookings split per payer, own references for equal payments and returns; created SEPA files recorded (`sepa_dateien`), their items not preselected again | done |
 | Bedienung | Save and book buttons locked while saving; honest message when the connection breaks; houses clickable → profile (menu entry „Steckbrief“ gone); logo top left (Mac after the window buttons, phone in the top bar); searchable lists in forms (type to filter); tenants/owners created from the contract form („+ Neuer Mieter“), contract for any house with its units; a new unit asks „vermietet / Eigennutzung“ and opens the form; more names, units and accounts are links | done |
 
-Next, 0.20: image search (local), workflow templates, inspection on the phone, voice notes.
+## Version 0.20 – duties of a house, inventory, workflows
+
+| Area | Contents | Status |
+|------|----------|--------|
+| Fehler | Cockpit house tiles: the status chips („keine Rückstände“, „1 leer“, „2 selbst genutzt“) were drawn as round 28 px buttons, because the top bar's status light used the same class (`.ampel`); chips now `.zustand`, no line breaks; „1 Einheit“ instead of „1 Einheiten“ | done |
+| Titelbild | Without a chosen title photo only real photos of the house are used (no scanned receipts, no meter photos), otherwise the house symbol | done |
+| Objektwahl | The house picker in the top bar is searchable (type to filter, arrows and Enter); on the phone search and picker share the bar | done |
+| Doppelt speichern | Every call carries a key (`X-Vorgang`); after a broken connection the page sends it again by itself (1, 2, 4 s) and also when the user saves the very same thing again within 10 minutes; the server does a change only once per key and user (answers kept 15 minutes, reads not kept) | done |
+| Pflichten am Haus | Duties per house (`pflichten`, `pflicht_erledigt`, `electron/pflichten.cjs`): nothing active by itself – picked from a catalogue with ticks (smoke detectors, boiler, legionella, chimney sweep, trees, winter service, gutters, backflow, lift, extinguishers, playground, E-Check, gas pipes, energy certificate) with interval, next date, firm, cost type; a case is opened `vorlauf_tage` ahead (automation, once per duty); „Erledigt“ keeps date, proof and note and moves the next date on (day-exact months; by notice for the chimney sweep); paused duties make no cases or deadlines; deadlines, calendar and subscription; cockpit panel; the board and the case view complete a duty's case through the duty; the firm's invoice suggests the duty's cost type | done |
+| Inventar | Items per house and unit (`inventar`, `electron/inventar.cjs`): purchase, price, warranty, invoice, photo, disposal; page „Inventar“ and a tab in the unit file; warranty end in the deadlines and at a case of the unit; Anlage V: write-off of movable assets (kitchen 10 years, monthly in the purchase year, GWG up to 800 € net at once, self-used unit not deductible, sold: AfA up to the month, scrapped: remaining value); purchases booked on the new account 45500 „Anschaffungen“ are not deducted at once, with a hint when the inventory is missing; fixed building services are listed without write-off (maintenance) | done |
+| Abläufe | Workflow templates (`ablaeufe`, `electron/ablaeufe.cjs`): tenant change, damage, service-charge statement, new letting (editable, own ones: one step per line „-30 Vorabnahme“); started from a key date they become a case with sub-cases (`vorgaenge.eltern_id`), past steps due today; board shows „3/7“ and the origin of a step, the last step offers to close the workflow; the case view ticks the steps; a recorded notice offers the tenant change | done |
+| Fachprüfung | Catalogue and write-off checked against BetrKV, TrinkwV, GEG, EStG/EStR/LStR (E-Check chargeable, legionella details, disposal rules, building services) | done |
+
+Next, 0.21: inspection on the phone, voice notes. 0.22: local image search.
 
 ## Development
 

@@ -328,6 +328,64 @@ async function starten(o) {
     } catch (e) { throw alsFehler(e); }
   };
 
+  // One call of the business logic for /api/call: returns the value and the extra response headers.
+  async function aufrufen({ fn, args: argumente = [] }, req, w) {
+    // The calendar marks the cases of the signed-in user (filter "nur meine").
+    const args = fn === 'kalender' ? [argumente[0], argumente[1], w.benutzer?.id ?? null]
+      // The bell shows only the signed-in user's notifications, and creating them is the server's business.
+      : MEINE.has(fn) ? [w.benutzer?.id ?? null, ...argumente] : argumente;
+    if (fn === 'mitteilungAnlegen') throw new Fehler(403, 'Nicht erlaubt.');
+    if (NUR_SERVER.has(fn)) return [await fachlich(() => serverFunktion(fn, args, w)), {}];
+    if (typeof fn !== 'string' || typeof roh[fn] !== 'function') throw new Fehler(400, `Unbekannte Funktion: ${fn}`);
+    // Setting the context writes to temp.kontext: counted before, every read would look like a change (and
+    // other windows would reload, which made them reload each other).
+    kontext(req, w);
+    const vorher = aenderungen();
+    // A case assigned to someone else: that user gets a notification.
+    const zuweisung = fn === 'save' && args[0] === 'vorgaenge' && args[1]?.zustaendig && Number(args[1].zustaendig) !== w.benutzer?.id
+      ? { neu: Number(args[1].zustaendig), alt: args[1].id ? raw.prepare('SELECT zustaendig FROM vorgaenge WHERE id = ?').get(args[1].id)?.zustaendig : null } : null;
+    let wert = await fachlich(() => roh[fn](...args));
+    // A comment notifies the person in charge.
+    if (fn === 'vorgangKommentieren' && wert?.benachrichtigen) { benachrichtigen(wert.benachrichtigen); wert = true; }
+    // Removed for good: the records are gone, their files go too.
+    if (fn === 'dokumentEndgueltig' || fn === 'papierkorbLeeren') { dateienEntfernen(wert); wert = wert.length; }
+    if (zuweisung && zuweisung.neu !== zuweisung.alt) {
+      const v = raw.prepare('SELECT v.titel, v.faellig, v.objekt_id, o.bezeichnung AS objekt FROM vorgaenge v LEFT JOIN objekte o ON o.id = v.objekt_id WHERE v.id = ?').get(args[1].id ?? wert);
+      if (v) benachrichtigen({ art: 'aufgaben', benutzer: zuweisung.neu, ziel: { vorgang: args[1].id ?? wert, objektId: v.objekt_id ?? null }, titel: `${w.benutzer?.name ?? 'Jemand'} hat dir einen Vorgang zugewiesen`,
+        text: `${v.titel}${v.objekt ? ` · ${v.objekt}` : ''}${v.faellig ? ` · fällig ${v.faellig.split('-').reverse().join('.')}` : ''}` });
+      // The history of the task says who handed it to whom.
+      const an = raw.prepare('SELECT name FROM benutzer WHERE id = ?').get(zuweisung.neu)?.name;
+      if (v && an) raw.prepare(`INSERT INTO vorgangseintraege (vorgang_id, datum, art, text, von) VALUES (?, ?, 'status', ?, ?)`)
+        .run(args[1].id ?? wert, ortszeit.heute(), `Zugewiesen an ${an}`, w.benutzer?.name ?? null);
+    }
+    // Stored mail passwords (encrypted) stay on the server; the page only learns that one is set.
+    if (fn === 'einstellungen') wert = Object.fromEntries(Object.entries(wert).map(([k, v]) => [k, /_passwort_(server|enc|klar)$/.test(k) && v ? 'gesetzt' : v]));
+    const geaendert = aenderungen() !== vorher;
+    if (geaendert) { senden('aktualisiert', null, req.headers['x-client'] ?? null); pulsSenden(); }
+    // A call that changed nothing may be kept by the browser for reading without a connection.
+    return [wert === undefined ? null : wert, geaendert ? {} : { 'X-Lesend': '1' }];
+  }
+
+  // A change sent again with the same key (the page retries after a broken connection, or the user saves the same
+  // thing again) is not done twice: the second request waits for the first or gets its stored answer. Kept 15 minutes.
+  const erledigt = new Map();
+  async function einmal(schluessel, benutzer, ausfuehren) {
+    if (typeof schluessel !== 'string' || !/^[\w-]{8,80}$/.test(schluessel)) return ausfuehren();
+    const jetzt = Date.now();
+    for (const [k, e] of erledigt) if (jetzt - e.zeit > 15 * 60_000 || erledigt.size > 2000) erledigt.delete(k); else break;
+    const k = `${benutzer ?? ''}:${schluessel}`;
+    const alt = erledigt.get(k);
+    if (alt) { const [wert, kopf] = await alt.antwort; return [wert, { ...kopf, 'X-Wiederholt': '1' }]; }
+    const antwort = ausfuehren();
+    erledigt.set(k, { zeit: jetzt, antwort });
+    try {
+      const [wert, kopf] = await antwort;
+      // Only changes are kept: a read sent again should see the current data.
+      if (kopf['X-Lesend']) erledigt.delete(k);
+      return [wert, kopf];
+    } catch (e) { erledigt.delete(k); throw e; }
+  }
+
   // ---------- routes ----------
   async function bearbeiten(req, res) {
     const u = new URL(req.url, 'http://x');
@@ -430,41 +488,9 @@ async function starten(o) {
       return;
     }
     if (post && p === '/api/call') {
-      const { fn, args: argumente = [] } = await jsonLesen(req);
-      // The calendar marks the cases of the signed-in user (filter "nur meine").
-      const args = fn === 'kalender' ? [argumente[0], argumente[1], w.benutzer?.id ?? null]
-        // The bell shows only the signed-in user's notifications, and creating them is the server's business.
-        : MEINE.has(fn) ? [w.benutzer?.id ?? null, ...argumente] : argumente;
-      if (fn === 'mitteilungAnlegen') throw new Fehler(403, 'Nicht erlaubt.');
-      if (NUR_SERVER.has(fn)) return json(res, 200, { wert: fachlich(() => serverFunktion(fn, args, w)) });
-      if (typeof fn !== 'string' || typeof roh[fn] !== 'function') throw new Fehler(400, `Unbekannte Funktion: ${fn}`);
-      // Setting the context writes to temp.kontext: counted before, every read would look like a change (and
-      // other windows would reload, which made them reload each other).
-      kontext(req, w);
-      const vorher = aenderungen();
-      // A case assigned to someone else: that user gets a notification.
-      const zuweisung = fn === 'save' && args[0] === 'vorgaenge' && args[1]?.zustaendig && Number(args[1].zustaendig) !== w.benutzer?.id
-        ? { neu: Number(args[1].zustaendig), alt: args[1].id ? raw.prepare('SELECT zustaendig FROM vorgaenge WHERE id = ?').get(args[1].id)?.zustaendig : null } : null;
-      let wert = await fachlich(() => roh[fn](...args));
-      // A comment notifies the person in charge.
-      if (fn === 'vorgangKommentieren' && wert?.benachrichtigen) { benachrichtigen(wert.benachrichtigen); wert = true; }
-      // Removed for good: the records are gone, their files go too.
-      if (fn === 'dokumentEndgueltig' || fn === 'papierkorbLeeren') { dateienEntfernen(wert); wert = wert.length; }
-      if (zuweisung && zuweisung.neu !== zuweisung.alt) {
-        const v = raw.prepare('SELECT v.titel, v.faellig, v.objekt_id, o.bezeichnung AS objekt FROM vorgaenge v LEFT JOIN objekte o ON o.id = v.objekt_id WHERE v.id = ?').get(args[1].id ?? wert);
-        if (v) benachrichtigen({ art: 'aufgaben', benutzer: zuweisung.neu, ziel: { vorgang: args[1].id ?? wert, objektId: v.objekt_id ?? null }, titel: `${w.benutzer?.name ?? 'Jemand'} hat dir einen Vorgang zugewiesen`,
-          text: `${v.titel}${v.objekt ? ` · ${v.objekt}` : ''}${v.faellig ? ` · fällig ${v.faellig.split('-').reverse().join('.')}` : ''}` });
-        // The history of the task says who handed it to whom.
-        const an = raw.prepare('SELECT name FROM benutzer WHERE id = ?').get(zuweisung.neu)?.name;
-        if (v && an) raw.prepare(`INSERT INTO vorgangseintraege (vorgang_id, datum, art, text, von) VALUES (?, ?, 'status', ?, ?)`)
-          .run(args[1].id ?? wert, ortszeit.heute(), `Zugewiesen an ${an}`, w.benutzer?.name ?? null);
-      }
-      // Stored mail passwords (encrypted) stay on the server; the page only learns that one is set.
-      if (fn === 'einstellungen') wert = Object.fromEntries(Object.entries(wert).map(([k, v]) => [k, /_passwort_(server|enc|klar)$/.test(k) && v ? 'gesetzt' : v]));
-      const geaendert = aenderungen() !== vorher;
-      if (geaendert) { senden('aktualisiert', null, req.headers['x-client'] ?? null); pulsSenden(); }
-      // A call that changed nothing may be kept by the browser for reading without a connection.
-      return json(res, 200, { wert: wert === undefined ? null : wert }, geaendert ? {} : { 'X-Lesend': '1' });
+      const anfrage = await jsonLesen(req);
+      const [wert, kopf] = await einmal(req.headers['x-vorgang'], w.benutzer?.id ?? null, () => aufrufen(anfrage, req, w));
+      return json(res, 200, { wert }, kopf);
     }
     if (p === '/api/info') {
       const e = dbSystem.einstellungen();

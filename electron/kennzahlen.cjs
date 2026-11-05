@@ -745,7 +745,7 @@ module.exports = function kennzahlen({ all, get, PERSON_NAME, bh, aw, ab, vw, dl
     return { summe_ct: eintraege.reduce((s, x) => s + x.plus_ct, 0), eintraege, ohne_vergleich: ohneVergleich };
   }
 
-  // K7: deadlines and dates of the next days (no calibration, legionella, smoke detector or boiler service dates).
+  // K7: deadlines and dates of the next days, with the duties of the houses (overdue ones on the first day).
   // max: the cockpit shows the next 14; the calendar and its subscription need all of them.
   function fristen(objekte, typ, t, tage = 90, max = 14) {
     const ids = idListe(objekte);
@@ -785,6 +785,18 @@ module.exports = function kennzahlen({ all, get, PERSON_NAME, bh, aw, ab, vw, dl
         while (d <= t) d = plusJahre(d, 1);
         add(d, `${v.art} (${euro(v.beitrag_ct)})`, { ziel: { seite: 'versicherungen', objektId: v.objekt_id } });
       }
+    }
+    for (const p of all(`SELECT f.*, o.bezeichnung AS objekt FROM pflichten f JOIN objekte o ON o.id = f.objekt_id
+        WHERE f.objekt_id IN (${ids}) AND f.aktiv = 1 AND f.naechste IS NOT NULL AND f.naechste <= ?
+          -- With an open case the case itself is listed (calendar, cockpit); the deadline would show it twice.
+          AND NOT EXISTS (SELECT 1 FROM vorgaenge v WHERE v.pflicht_id = f.id AND v.status <> 'erledigt')`, bisD)) {
+      // Overdue ones on the first day – only when looking from today, not in a past month of the calendar.
+      const ueber = p.naechste <= t && t >= vorTag(ortszeit.heute());
+      add(ueber ? nachTag(t) : p.naechste, `${ueber ? 'Überfällig: ' : ''}${p.titel} (${p.objekt})`, { wichtig: ueber || tageZwischen(t, p.naechste) <= 14, ziel: { seite: 'pflichten', objektId: p.objekt_id } });
+    }
+    for (const x of all(`SELECT i.*, coalesce(e.bezeichnung, o.bezeichnung) AS wo FROM inventar i JOIN objekte o ON o.id = i.objekt_id LEFT JOIN einheiten e ON e.id = i.einheit_id
+        WHERE i.objekt_id IN (${ids}) AND i.abgang_am IS NULL AND i.garantie_bis > ? AND i.garantie_bis <= ?`, t, bisD)) {
+      add(x.garantie_bis, `Garantie endet: ${x.bezeichnung} (${x.wo})`, { ziel: { seite: 'inventar', objektId: x.objekt_id } });
     }
     for (const d of all(`SELECT * FROM darlehen WHERE objekt_id IN (${ids}) AND zinsbindung_bis IS NOT NULL`)) add(d.zinsbindung_bis, `Zinsbindung ${d.bank} endet`, { wichtig: true, ziel: { seite: 'darlehen', objektId: d.objekt_id } });
     // Property tax: the instalments paid in the same weeks of last year.

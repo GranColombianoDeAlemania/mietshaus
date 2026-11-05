@@ -907,6 +907,50 @@ def suche():
     return s
 
 
+def pflichten():
+    # A smoke detector seen from below at an angle, with a green check: the duties of a house.
+    s = Symbol()
+    s.unten.append(boden(60, 108, 44, 6))
+    s.k('<ellipse cx="58" cy="74" rx="46" ry="28"/>', '<circle cx="98" cy="36" r="20"/>')
+    s += ellipse(58, 80, 46, 22, PAPIER[1])
+    s += ellipse(58, 72, 46, 22, PAPIER[0])
+    s += flaeche('M12 72 A46 22 0 0 0 104 72 L104 80 A46 22 0 0 1 12 80 Z', dunkler(PAPIER[1], 0.12))
+    s += ellipse(58, 72, 30, 13, '#fbf7ec', 1.6)
+    for a in range(200, 341, 28):
+        x1, y1 = punkt(58, 72, a, 22)
+        x2, y2 = punkt(58, 72, a, 27)
+        s += linie(f'M{n(x1)} {n(y1 * 0.5 + 36)} L{n(x2)} {n(y2 * 0.5 + 36)}', 1.6, STAHL[1])
+    s += kreis(58, 72, 5.5, ROT[0], 1.6)
+    s += kreis(56.6, 70.6, 1.6, HELL, 0)
+    s += glanz('M22 66 Q30 56 50 53', 2)
+    s += kreis(98, 36, 20, GRUEN[0])
+    s += flaeche(sektor(98, 36, 19, 20, 160), GRUEN[1])
+    s += haken('M88 36 L95 43 L108 29', HELL, 4.5)
+    s += glanz(bogen(98, 36, 15, 205, 255), 1.8)
+    return s
+
+
+def inventar():
+    # A front-loading washing machine: the appliances and fittings of a unit.
+    s = Symbol()
+    s.unten.append(boden(64, 112, 42, 6))
+    s.k('<rect x="24" y="16" width="80" height="94" rx="8"/>')
+    s += rechteck(24, 16, 80, 94, PAPIER[0], 8)
+    s += flaeche('M88 16 L96 16 Q104 16 104 24 L104 102 Q104 110 96 110 L88 110 Z', PAPIER[1])
+    s += rechteck(24, 16, 80, 20, '#efe7d6', 8)
+    s += rechteck(32, 22, 22, 8, GLAS, 2, 1.4)
+    s += linie('M35 26 L50 26', 1.4, GLAS_LICHT)
+    for x in (70, 82):
+        s += kreis(x, 26, 4, STAHL[0], 1.4)
+    s += kreis(64, 72, 26, STAHL[0])
+    s += flaeche(sektor(64, 72, 25, 20, 160), STAHL[1])
+    s += kreis(64, 72, 18, GLAS, 1.8)
+    s += flaeche('M47 76 Q56 68 64 74 Q72 80 81 72 L81 80 A18 18 0 0 1 47 80 Z', HIMMEL[0], 0.75)
+    s += glanz(bogen(64, 72, 13, 200, 255), 2)
+    s += glanz('M30 44 L30 98', 1.6)
+    return s
+
+
 SYMBOLE = {
     'cockpit': ('Cockpit', cockpit), 'aufgaben': ('Aufgaben', aufgaben), 'objekte': ('Objekte', objekte), 'steckbrief': ('Steckbrief', steckbrief),
     'einheiten': ('Einheiten / WEG', einheiten), 'mieter': ('Mieter / Eigentümer', mieter), 'zaehler': ('Zähler', zaehler), 'umlage': ('Umlageschlüssel', umlage),
@@ -921,6 +965,7 @@ SYMBOLE = {
     'protokoll': ('Änderungsprotokoll', protokoll), 'export': ('Export & Steuer', export), 'einstellungen': ('Einstellungen', einstellungen),
     'glocke': ('Mitteilungen', glocke), 'kamera': ('Foto', kamera), 'mehr': ('Mehr', mehr), 'miete': ('Miete (Modus)', miete), 'projekte': ('Projekte', projekte),
     'zeitplan': ('Zeitplan', zeitplan), 'kosten': ('Kosten & Budget', kosten), 'fotos': ('Fotos & Dokumente', fotos), 'suche': ('Suche', suche),
+    'pflichten': ('Pflichten', pflichten), 'inventar': ('Inventar', inventar),
 }
 
 if __name__ == '__main__':

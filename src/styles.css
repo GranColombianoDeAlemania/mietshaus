@@ -129,7 +129,9 @@ button.rund.ring:hover:not(:disabled) { border-color: var(--accent); color: var(
 .pfadteil button:hover:not(:disabled) { background: var(--hover); color: var(--ink); }
 .pfadteil b { font-weight: 600; padding: 3px 6px; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .objektwahl { display: flex; align-items: center; gap: 6px; color: var(--muted); flex-shrink: 1; min-width: 0; }
-.objektwahl select { min-width: 150px; max-width: 250px; padding: 6px 8px; border-radius: 7px; border: 1px solid var(--line); background: var(--feld); color: var(--ink); }
+.objektwahl .kontowahl { width: 170px; }
+.objektwahl input { padding: 6px 8px; border-radius: 7px; border: 1px solid var(--line); background: var(--feld); color: var(--ink); text-overflow: ellipsis; }
+.objektwahl .kontowahl-liste { left: auto; right: 0; z-index: 45; }
 
 main { grid-area: main; overflow: auto; padding: 26px 34px 48px; min-width: 0; }
 footer { grid-area: foot; padding: 5px 34px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--line); background: var(--bg); min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -423,11 +425,21 @@ textarea.brieftext { width: 100%; padding: 10px 12px; border: 1px solid var(--li
 .objektkachel .foto { height: 116px; background: var(--vorschau) center / cover no-repeat; display: flex; align-items: center; justify-content: center; color: var(--leise); }
 .objektkachel .text { padding: 10px 14px 13px; }
 .objektkachel .text > b { font-size: 15px; font-weight: 500; display: block; }
-.ampeln { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
-.ampel { font-size: 11.5px; font-weight: 600; border-radius: 999px; padding: 1px 8px; background: var(--hover); color: var(--muted); }
-.ampel.rot { background: var(--rot-bg); color: var(--rot); }
-.ampel.orange { background: var(--gelb-bg); color: var(--gelb); }
-.ampel.gruen { background: var(--gruen-bg); color: var(--gruen); }
+.zustaende { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.zustand { font-size: 11.5px; font-weight: 600; border-radius: 999px; padding: 1px 8px; white-space: nowrap; background: var(--hover); color: var(--muted); }
+.zustand.rot { background: var(--rot-bg); color: var(--rot); }
+.zustand.orange { background: var(--gelb-bg); color: var(--gelb); }
+.zustand.gruen { background: var(--gruen-bg); color: var(--gruen); }
+.katalog { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; max-height: 60vh; overflow-y: auto; }
+.katalog-punkt { border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 12px; background: var(--feld); }
+.katalog-punkt p { margin: 4px 0 6px 26px; }
+.katalog-punkt > label.klein { display: flex; align-items: center; gap: 8px; margin-left: 26px; }
+.katalog-punkt.inaktiv { opacity: 0.6; }
+.ablauf-vorschau { list-style: none; padding: 0; margin: 4px 0 0; font-size: 13px; display: grid; gap: 4px; }
+.ablauf-vorschau span { display: inline-block; min-width: 88px; font-variant-numeric: tabular-nums; }
+.ablauf-schritte li { display: flex; align-items: center; gap: 8px; }
+.ablauf-schritte li .klein { margin-left: auto; }
+.inventar-foto { width: 36px; height: 36px; object-fit: cover; border-radius: 6px; display: block; }
 
 /* Timeline */
 .zeitleiste { list-style: none; margin: 0; padding: 0 0 0 16px; border-left: 1px solid var(--line-stark); }
@@ -687,9 +699,11 @@ textarea.brieftext { width: 100%; padding: 10px 12px; border: 1px solid var(--li
   .kopfleiste { padding: 0 10px; gap: 8px; }
   .kopfleiste .navknoepfe { display: none; }
   .kopfleiste .pfad { display: none; }
-  .kopfleiste .suche { min-width: 0; flex: 1 1 auto; width: auto; }
+  .globalsuche { min-width: 0; flex: 1 1 0; width: auto; }
   .objektwahl svg { display: none; }
-  .objektwahl select { min-width: 0; max-width: 34vw; }
+  .objektwahl { flex: 1 1 0; }
+  .objektwahl .kontowahl { width: 100%; }
+  .objektwahl .kontowahl-liste { min-width: min(260px, 80vw); }
   main { padding: 16px 14px 40px; }
   .kz-raster > .kz { grid-column: span 12 !important; }
   table { display: block; overflow-x: auto; }

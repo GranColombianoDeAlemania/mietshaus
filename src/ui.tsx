@@ -85,6 +85,7 @@ export function Auswahl(props: {
   pflicht?: boolean;
   neu?: { label: string; onClick: (text: string) => void };
   disabled?: boolean;
+  platzhalter?: string;
 }) {
   const [suche, setSuche] = useState<string | null>(null);
   const [markiert, setMarkiert] = useState(0);
@@ -117,7 +118,7 @@ export function Auswahl(props: {
 
   return (
     <div className="kontowahl">
-      <input value={offen ? suche : gewaehlt?.[1] ?? ''} placeholder={props.pflicht ? '– bitte wählen –' : props.leer ?? '–'} disabled={props.disabled}
+      <input value={offen ? suche : gewaehlt?.[1] ?? ''} placeholder={props.platzhalter ?? (props.pflicht ? '– bitte wählen –' : props.leer ?? '–')} disabled={props.disabled}
         role="combobox" aria-expanded={offen} aria-autocomplete="list" title={gewaehlt?.[1]}
         onFocus={(e) => { setSuche(''); setMarkiert(Math.max(0, treffer.findIndex(([v]) => String(v) === String(props.value ?? '')))); e.currentTarget.select(); }}
         onChange={(e) => { setSuche(e.target.value); setMarkiert(0); }}
@@ -127,7 +128,7 @@ export function Auswahl(props: {
           {!props.pflicht && gewaehlt && !suche && <div className="option leer" onClick={() => waehlen('')}>{props.leer ?? '–'}</div>}
           {treffer.length === 0 && <div className="option leer">Nichts passt zu „{suche}“.</div>}
           {treffer.map(([v, l], i) => (
-            <div key={v} role="option" aria-selected={String(v) === String(props.value ?? '')}
+            <div key={v} data-wert={v} role="option" aria-selected={String(v) === String(props.value ?? '')}
               className={`option${i === markiert ? ' markiert' : ''}${String(v) === String(props.value ?? '') ? ' gewaehlt' : ''}`}
               onMouseEnter={() => setMarkiert(i)} onClick={() => waehlen(v)}>{l}</div>
           ))}

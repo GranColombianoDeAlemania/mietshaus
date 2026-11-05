@@ -9,6 +9,9 @@ import { FormDialog } from '../Form';
 import { Arbeitskorb } from '../Arbeitskorb';
 import { Bild } from '../Symbol';
 import { STATUS, Vorgang, vorgangFelder } from './Kommunikation';
+import { PflichtErledigen } from './Pflichten';
+import { AblaufStarten, AblaufVorlagen } from './Ablaeufe';
+import { bestaetigen } from '../frage';
 
 const SPALTEN: [string, string][] = [['offen', 'Offen'], ['in_arbeit', 'In Arbeit'], ['wartet', 'Wartet'], ['erledigt', 'Erledigt']];
 const faelligKlasse = (v: Row) => (v.status === 'erledigt' || !v.faellig ? '' : v.faellig < heute() ? 'ueberfaellig' : v.faellig === heute() ? 'heute' : '');
@@ -35,9 +38,22 @@ export function Aufgaben(props: { objekte: Row[] }) {
 
   // Done: a short check pops up (src/styles.css .geschafft; not with "reduce motion").
   const [geschafft, setGeschafft] = useState(0);
+  // A duty's case is done through the duty: date and proof, then the next date moves on.
+  const [pflicht, setPflicht] = useState<Row | null>(null);
+  const [ablauf, setAblauf] = useState<'starten' | 'vorlagen' | null>(null);
   const setzeStatus = async (v: Row, status: string) => {
     try {
+      if (status === 'erledigt' && v.pflicht_id) {
+        const p = await call<Row>('get', 'pflichten', v.pflicht_id);
+        if (p) { setPflicht(p); return; }
+      }
       await call('vorgangStatus', v.id, status);
+      // The last step of a workflow done: offer to close the workflow too.
+      if (status === 'erledigt' && v.eltern_id) {
+        const offen = (await call<Row[]>('ablaufSchritte', v.eltern_id)).filter((x) => x.status !== 'erledigt' && x.id !== v.id);
+        if (!offen.length && await bestaetigen(`Alle Schritte von „${v.eltern_titel}“ sind erledigt. Den Ablauf abschließen?`, { titel: 'Ablauf fertig', ja: 'Abschließen' }))
+          await call('vorgangStatus', v.eltern_id, 'erledigt');
+      }
       reload();
       if (status === 'erledigt') { const t = Date.now(); setGeschafft(t); setTimeout(() => setGeschafft((x) => (x === t ? 0 : x)), 1200); }
     } catch (e) { fehler(e); }
@@ -51,7 +67,9 @@ export function Aufgaben(props: { objekte: Row[] }) {
   };
   const karte = (v: Row) => (
     <>
-      <span className="karte-titel">{v.prioritaet === 1 && <span className="tag fehlertext">!</span>}{v.titel}</span>
+      <span className="karte-titel">{v.prioritaet === 1 && <span className="tag fehlertext">!</span>}{v.titel}
+        {!!v.schritte && <span className="tag" title="Erledigte Schritte des Ablaufs">{v.schritte_erledigt}/{v.schritte}</span>}</span>
+      {v.eltern_titel && <span className="klein hinweis">↳ {v.eltern_titel}</span>}
       <span className="klein hinweis">{[v.objekt, v.einheit, v.person].filter(Boolean).join(' · ')}</span>
       <span className="karte-fuss klein">
         {v.faellig && <span className={`faellig ${faelligKlasse(v)}`}><CalendarClock size={13} aria-hidden="true" /> {datum(v.faellig)}</span>}
@@ -72,6 +90,8 @@ export function Aufgaben(props: { objekte: Row[] }) {
           <button role="tab" aria-selected={ansicht === 'korb'} onClick={() => { setAnsicht('korb'); schreiben('aufgaben_ansicht', 'korb'); }}><List size={15} /> Abarbeiten</button>
         </div>
         <span className="spacer" />
+        <button onClick={() => setAblauf('vorlagen')}>Vorlagen</button>
+        <button onClick={() => setAblauf('starten')}>Ablauf starten</button>
         <button className="primary" onClick={neu}>Neue Aufgabe</button>
       </div>
       <div className="toolbar filter">
@@ -121,6 +141,9 @@ export function Aufgaben(props: { objekte: Row[] }) {
       {edit && <FormDialog title={edit.id ? 'Aufgabe bearbeiten' : 'Neue Aufgabe'} row={edit}
         fields={vorgangFelder({ personen: personen ?? [], benutzer: benutzer ?? [], objekte: alleObjekte ?? props.objekte })}
         onSave={(r) => call('save', 'vorgaenge', r)} onDelete={() => call('remove', 'vorgaenge', edit.id)} onClose={() => { setEdit(null); reload(); }} />}
+      {ablauf === 'starten' && <AblaufStarten onClose={(id) => { setAblauf(null); if (id) reload(); }} />}
+      {ablauf === 'vorlagen' && <AblaufVorlagen onClose={() => setAblauf(null)} />}
+      {pflicht && <PflichtErledigen pflicht={pflicht} onClose={(ok) => { setPflicht(null); if (ok) { reload(); const t = Date.now(); setGeschafft(t); setTimeout(() => setGeschafft((x) => (x === t ? 0 : x)), 1200); } }} />}
     </section>
   );
 }

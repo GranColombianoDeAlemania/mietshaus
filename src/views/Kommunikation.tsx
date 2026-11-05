@@ -9,6 +9,7 @@ import { FormDialog, type Field } from '../Form';
 import { absaetze, absenderAus, alsPdf, brief, esc, empfaengerVon } from '../dokument';
 import { L } from '../navi';
 import { bestaetigen, hinweis } from '../frage';
+import { PflichtErledigen } from './Pflichten';
 import { Galerie } from '../Galerie';
 
 export const PLATZHALTER: [string, string][] = [
@@ -320,14 +321,40 @@ export function Vorgaenge(props: { objekt: Row }) {
 export function Vorgang(props: { v: Row; onClose: () => void; eingebettet?: boolean; aktionen?: ReactNode }) {
   const [eintraege, reload] = useLoad<Row[]>(() => call('liste', 'vorgangseintraege', { vorgang_id: props.v.id }, 'datum DESC, id DESC'), [props.v.id]);
   const [neu, setNeu] = useState({ art: 'kommentar', text: '', datum: heute() });
-  const erledigt = props.v.status !== 'erledigt' && <button onClick={async () => { await call('vorgangStatus', props.v.id, 'erledigt'); props.onClose(); }}>Als erledigt markieren</button>;
+  // A duty's case is done through the duty (date and proof, next date); others directly.
+  const [pflicht, setPflicht] = useState<Row | null>(null);
+  const [schritte, ladeSchritte] = useLoad<Row[]>(() => (props.v.schritte ? call('ablaufSchritte', props.v.id) : Promise.resolve([])), [props.v.id, props.v.schritte]);
+  const [geraete] = useLoad<Row[]>(() => (props.v.einheit_id ? call('inventarGarantie', props.v.einheit_id) : Promise.resolve([])), [props.v.einheit_id]);
+  const erledigt = props.v.status !== 'erledigt' && <button onClick={async () => {
+    if (props.v.pflicht_id) { setPflicht(await call('get', 'pflichten', props.v.pflicht_id)); return; }
+    await call('vorgangStatus', props.v.id, 'erledigt'); props.onClose();
+  }}>Als erledigt markieren</button>;
   const inhalt = (
     <>
       {(props.v.einheit_id || props.v.person_id) && (
         <p className="chips">{props.v.einheit_id && <span className="chip">Einheit <L zu={{ einheit: props.v.einheit_id }}>{props.v.einheit}</L></span>}
           {props.v.person_id && <span className="chip">Person <L zu={{ person: props.v.person_id }}>{props.v.person}</L></span>}</p>
       )}
+      {!!geraete?.length && (
+        <p className="chips" title="Geräte der Einheit aus dem Inventar – bei einem Defekt erst die Garantie prüfen">
+          {geraete.map((g) => <span key={g.id} className={`chip${g.garantie_bis && g.garantie_bis >= heute() ? ' gruen' : ''}`}>
+            {g.bezeichnung}{g.garantie_bis ? ` – Garantie ${g.garantie_bis >= heute() ? 'bis' : 'abgelaufen'} ${datum(g.garantie_bis)}` : ''}</span>)}
+        </p>
+      )}
       {props.v.beschreibung && <p style={{ whiteSpace: 'pre-wrap' }}>{props.v.beschreibung}</p>}
+      {!!schritte?.length && (
+        <ul className="checkliste ablauf-schritte">
+          {schritte.map((s) => (
+            <li key={s.id} className={s.status === 'erledigt' ? 'fertig' : ''}>
+              <label className="check"><input type="checkbox" checked={s.status === 'erledigt'} onChange={async (e) => {
+                try { await call('vorgangStatus', s.id, e.target.checked ? 'erledigt' : 'offen'); ladeSchritte(); } catch (x) { fehler(x); }
+              }} /> <span className="text">{s.titel}</span></label>
+              <span className="klein hinweis">{datum(s.faellig)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {pflicht && <PflichtErledigen pflicht={pflicht} onClose={(ok) => { setPflicht(null); if (ok) props.onClose(); }} />}
       <div className="toolbar">
         <input type="date" value={neu.datum} onChange={(e) => setNeu({ ...neu, datum: e.target.value })} />
         <select value={neu.art} onChange={(e) => setNeu({ ...neu, art: e.target.value })}>{ARTEN.filter(([a]) => a !== 'status').map(([a, l]) => <option key={a} value={a}>{l}</option>)}</select>

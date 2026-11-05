@@ -16,6 +16,9 @@ const darlehen = require('./darlehen.cjs');
 const mieterwechsel = require('./mieterwechsel.cjs');
 const mitteilungenModul = require('./mitteilungen.cjs');
 const aufgabenModul = require('./aufgaben.cjs');
+const pflichtenModul = require('./pflichten.cjs');
+const inventarModul = require('./inventar.cjs');
+const ablaeufeModul = require('./ablaeufe.cjs');
 const pruefung = require('./pruefung.cjs');
 const { AKTIONEN } = require('./claudeAktionen.cjs');
 const kennzahlen = require('./kennzahlen.cjs');
@@ -848,6 +851,75 @@ const MIGRATIONS = [
     erstellt TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
   );
   CREATE INDEX sepa_dateien_objekt ON sepa_dateien (objekt_id, art, erstellt);`,
+  // Duties of a house (smoke detectors, boiler service, legionella test …): chosen per house from a catalogue, with
+  // their interval and next date; a case is opened ahead of time, and each completion keeps its proof.
+  `CREATE TABLE pflichten (
+    id INTEGER PRIMARY KEY,
+    objekt_id INTEGER NOT NULL REFERENCES objekte(id) ON DELETE CASCADE,
+    einheit_id INTEGER REFERENCES einheiten(id) ON DELETE SET NULL,
+    art TEXT NOT NULL DEFAULT 'eigene',
+    titel TEXT NOT NULL,
+    intervall_monate INTEGER,
+    naechste TEXT,
+    vorlauf_tage INTEGER NOT NULL DEFAULT 30,
+    firma_id INTEGER REFERENCES personen(id) ON DELETE SET NULL,
+    kategorie TEXT,
+    aktiv INTEGER NOT NULL DEFAULT 1,
+    notiz TEXT,
+    geaendert_am TEXT, geaendert_von TEXT, geaendert_benutzer INTEGER
+  );
+  CREATE INDEX pflichten_objekt ON pflichten (objekt_id);
+  CREATE TABLE pflicht_erledigt (
+    id INTEGER PRIMARY KEY,
+    pflicht_id INTEGER NOT NULL REFERENCES pflichten(id) ON DELETE CASCADE,
+    datum TEXT NOT NULL,
+    dokument_id INTEGER REFERENCES dokumente(id) ON DELETE SET NULL,
+    buchung_id INTEGER REFERENCES buchungen(id) ON DELETE SET NULL,
+    notiz TEXT,
+    von TEXT,
+    geaendert_am TEXT, geaendert_von TEXT, geaendert_benutzer INTEGER
+  );
+  CREATE INDEX pflicht_erledigt_pflicht ON pflicht_erledigt (pflicht_id, datum);
+  ALTER TABLE vorgaenge ADD COLUMN pflicht_id INTEGER REFERENCES pflichten(id) ON DELETE SET NULL;`,
+  // Inventory of houses and units (fitted kitchens, appliances, building services): purchase, warranty, invoice; the
+  // write-off of items bought for a rented unit goes into Anlage V.
+  `CREATE TABLE inventar (
+    id INTEGER PRIMARY KEY,
+    objekt_id INTEGER NOT NULL REFERENCES objekte(id) ON DELETE CASCADE,
+    einheit_id INTEGER REFERENCES einheiten(id) ON DELETE SET NULL,
+    bezeichnung TEXT NOT NULL,
+    kategorie TEXT,
+    hersteller TEXT, modell TEXT, seriennr TEXT,
+    kaufdatum TEXT,
+    preis_ct INTEGER,
+    garantie_bis TEXT,
+    nutzungsdauer_jahre INTEGER,
+    dokument_id INTEGER REFERENCES dokumente(id) ON DELETE SET NULL,
+    buchung_id INTEGER REFERENCES buchungen(id) ON DELETE SET NULL,
+    foto_id INTEGER REFERENCES dokumente(id) ON DELETE SET NULL,
+    abgang_am TEXT,
+    notiz TEXT,
+    geaendert_am TEXT, geaendert_von TEXT, geaendert_benutzer INTEGER
+  );
+  CREATE INDEX inventar_objekt ON inventar (objekt_id, einheit_id);`,
+  // Workflow templates (tenant change, damage, statement, new letting): steps with days before or after a key date;
+  // started, they become a case with its steps as sub-cases.
+  `CREATE TABLE ablaeufe (
+    id INTEGER PRIMARY KEY,
+    art TEXT NOT NULL DEFAULT 'eigene',
+    titel TEXT NOT NULL,
+    anlass TEXT,
+    schritte TEXT NOT NULL DEFAULT '[]',
+    geaendert_am TEXT, geaendert_von TEXT, geaendert_benutzer INTEGER
+  );
+  INSERT INTO ablaeufe (art, titel, anlass, schritte) VALUES ('mieterwechsel', 'Mieterwechsel', 'Auszug am', '[{"tage": -85, "titel": "Kündigung prüfen und schriftlich bestätigen"}, {"tage": -60, "titel": "Wohnung inserieren, Interessenten einladen"}, {"tage": -30, "titel": "Vorabnahme mit dem Mieter (Schönheitsreparaturen, Mängel)"}, {"tage": -7, "titel": "Übergabe vorbereiten: Protokoll, Zählerliste, Schlüsselliste"}, {"tage": 0, "titel": "Auszug: Übergabe mit Zählerständen und Schlüsseln"}, {"tage": 3, "titel": "Zählerstände an die Versorger melden"}, {"tage": 30, "titel": "Kaution abrechnen (Nebenkosten-Einbehalt prüfen)"}]');
+  INSERT INTO ablaeufe (art, titel, anlass, schritte) VALUES ('schaden', 'Schadensfall', 'Gemeldet am', '[{"tage": 0, "titel": "Schaden aufnehmen: Fotos, Ursache, betroffene Einheiten"}, {"tage": 2, "titel": "Versicherung melden (Schadennummer notieren)"}, {"tage": 3, "titel": "Handwerker beauftragen"}, {"tage": 21, "titel": "Reparatur abnehmen"}, {"tage": 35, "titel": "Rechnung prüfen, buchen und bei der Versicherung einreichen"}]');
+  INSERT INTO ablaeufe (art, titel, anlass, schritte) VALUES ('nk', 'Betriebskostenabrechnung', 'Abrechnungszeitraum endet am', '[{"tage": 0, "titel": "Zählerstände ablesen (Wasser, Wärme, Strom)"}, {"tage": 60, "titel": "Rechnungen des Zeitraums vollständig? Grundsteuer, Versicherung, Versorger"}, {"tage": 120, "titel": "Abrechnung erstellen und prüfen"}, {"tage": 150, "titel": "Abrechnung an die Mieter schicken (spätestens 12 Monate nach Ende)"}, {"tage": 185, "titel": "Nachzahlungen und Guthaben prüfen, Vorauszahlungen anpassen"}]');
+  INSERT INTO ablaeufe (art, titel, anlass, schritte) VALUES ('neuvermietung', 'Neuvermietung', 'Einzug am', '[{"tage": -45, "titel": "Exposé und Inserat erstellen (Kennwerte des Energieausweises angeben)"}, {"tage": -30, "titel": "Besichtigungen"}, {"tage": -21, "titel": "Selbstauskunft und Bonität prüfen"}, {"tage": -14, "titel": "Mietvertrag unterschreiben"}, {"tage": -3, "titel": "Kaution und erste Miete eingegangen?"}, {"tage": 0, "titel": "Einzug: Übergabe mit Protokoll, Zählerständen und Schlüsseln"}, {"tage": 7, "titel": "Wohnungsgeberbestätigung ausstellen (binnen zwei Wochen nach Einzug)"}]');
+  ALTER TABLE vorgaenge ADD COLUMN eltern_id INTEGER REFERENCES vorgaenge(id) ON DELETE CASCADE;
+  CREATE INDEX vorgaenge_eltern ON vorgaenge (eltern_id);`,
+  // How an item left: scrapped (its remaining book value is deducted) or sold (it is not).
+  `ALTER TABLE inventar ADD COLUMN abgang_art TEXT;`,
 ];
 
 // Tables without change time: the log itself, settings of this installation and page state.
@@ -934,6 +1006,10 @@ const TABLES = {
   schluessel: ['objekt_id', 'bezeichnung', 'nummer', 'anzahl', 'notiz'],
   schluesselausgaben: ['schluessel_id', 'person_id', 'anzahl', 'ausgabe', 'rueckgabe', 'notiz'],
   versicherungen: ['objekt_id', 'art', 'gesellschaft', 'police', 'beitrag_ct', 'faellig', 'kuendbar_bis', 'ablauf', 'notiz'],
+  pflichten: ['objekt_id', 'einheit_id', 'art', 'titel', 'intervall_monate', 'naechste', 'vorlauf_tage', 'firma_id', 'kategorie', 'aktiv', 'notiz'],
+  ablaeufe: ['titel', 'anlass', 'schritte'],
+  inventar: ['objekt_id', 'einheit_id', 'bezeichnung', 'kategorie', 'hersteller', 'modell', 'seriennr', 'kaufdatum', 'preis_ct', 'garantie_bis',
+    'nutzungsdauer_jahre', 'dokument_id', 'buchung_id', 'foto_id', 'abgang_am', 'abgang_art', 'notiz'],
   versammlungen: ['objekt_id', 'datum', 'uhrzeit', 'ort', 'art', 'einladung_am', 'leitung', 'protokoll', 'notiz'],
   tops: ['versammlung_id', 'nr', 'titel', 'erlaeuterung', 'beschlussvorschlag', 'abstimmungsart', 'ja', 'nein', 'enthaltung', 'ergebnis', 'beschluss_id'],
   beschluesse: ['objekt_id', 'nr', 'datum', 'art', 'titel', 'text', 'ergebnis', 'status', 'vermerk'],
@@ -943,7 +1019,7 @@ const TABLES = {
     'status', 'typ', 'betrag_ct', 'absender', 'rechnungsnr', 'iban', 'faellig', 'zusammenfassung', 'buchung_id', 'quelle', 'netto_ct', 'ust_ct',
     'steller', 'steuer', 'positionen', 'lohn_ct'],
   erhaltungsverteilung: ['objekt_id', 'jahr', 'betrag_ct', 'jahre', 'text'],
-  vorgaenge: ['objekt_id', 'person_id', 'einheit_id', 'titel', 'kategorie', 'status', 'prioritaet', 'faellig', 'beschreibung', 'projekt_id', 'zustaendig'],
+  vorgaenge: ['objekt_id', 'person_id', 'einheit_id', 'titel', 'kategorie', 'status', 'prioritaet', 'faellig', 'beschreibung', 'projekt_id', 'zustaendig', 'pflicht_id', 'eltern_id'],
   vorgangseintraege: ['vorgang_id', 'datum', 'art', 'text', 'von'],
   termine: ['objekt_id', 'person_id', 'vorgang_id', 'titel', 'datum', 'uhrzeit', 'dauer_min', 'ort', 'erledigt', 'notiz', 'projekt_id'],
   projekte: ['titel', 'beschreibung', 'status', 'objekt_id', 'einheit_id', 'kosten_konto_id', 'budget_ct', 'beginn', 'ende', 'notiz'],
@@ -1012,7 +1088,7 @@ function open(file, quelle = 'app', geraet = null, { ohneUpdateSicherung = false
 // Tables whose changes are logged, and columns left out of the log (large or derived).
 const PROTOKOLLIERT = ['interessenten', 'uebergaben', 'objekte', 'einheiten', 'personen', 'mietverhaeltnisse', 'eigentum', 'konten', 'buchungen', 'anpassungen',
   'kautionen', 'kautionsbewegungen', 'dokumente', 'darlehen', 'beschluesse', 'projekte', 'projektposten', 'zaehlerstaende', 'mahnungen', 'abrechnungen',
-  'ratenplaene', 'erhaltungsverteilung', 'selbstnutzung'];
+  'ratenplaene', 'erhaltungsverteilung', 'selbstnutzung', 'pflichten', 'pflicht_erledigt', 'inventar'];
 const NICHT_PROTOKOLLIEREN = new Set(['daten', 'erfasst', 'unterschrift_mieter', 'unterschrift_vermieter', 'erechnung', 'geaendert_am', 'geaendert_von']);
 // The recognised text of a document is large; the text of a booking or a dunning letter belongs in the log.
 const nichtProtokollieren = (tabelle, spalte) => NICHT_PROTOKOLLIEREN.has(spalte) || (tabelle === 'dokumente' && spalte === 'text');
@@ -1193,6 +1269,9 @@ function api(db) {
   const ar = archiv({ db, all, get, tx, PERSON_NAME });
   const mt = mitteilungenModul({ db, all, get, tx });
   const af = aufgabenModul({ db, all, get, tx, PERSON_NAME });
+  const pf = pflichtenModul({ db, all, get, tx, PERSON_NAME });
+  const iv = inventarModul({ db, all, get, tx });
+  const al = ablaeufeModul({ db, all, get, tx });
 
   // Master data changes can create or rename accounts.
   const SYNC = new Set(['objekte', 'einheiten', 'personen', 'mietverhaeltnisse', 'eigentum']);
@@ -1394,7 +1473,7 @@ function api(db) {
   const dl = darlehen({ db, all, get, tx, bh });
   const mw = mieterwechsel({ db, all, get, tx, PERSON_NAME });
   const kz = kennzahlen({ db, all, get, PERSON_NAME, bh, aw, ab, vw, dl });
-  const au = automatik({ db, all, get, tx, PERSON_NAME, bh, ab, vw, kz, einstellungen: basis.einstellungen });
+  const au = automatik({ db, all, get, tx, PERSON_NAME, bh, ab, vw, kz, pf, einstellungen: basis.einstellungen });
   const pr = pruefung({ all, get, PERSON_NAME, bh, aw, einstellungen: basis.einstellungen });
   // Undoes one entry of the change log: a new record is removed, a change reversed, a deleted record comes back. Only
   // while the record still looks as that entry left it – a later change has to be undone first. A booking is cancelled
@@ -1459,7 +1538,7 @@ function api(db) {
   };
 
   const alles = {
-    ...bh, ...ab, ...vw, ...ar, ...mt, ...af, ...au, ...pj, ...aw, ...ak, ...dl, ...mw, ...pr, ...kz, ...basis, ...vorschlaege,
+    ...bh, ...ab, ...vw, ...ar, ...mt, ...af, ...pf, ...iv, ...al, ...au, ...pj, ...aw, ...ak, ...dl, ...mw, ...pr, ...kz, ...basis, ...vorschlaege,
     protokollRueckgaengig: rueckgaengig,
     buchen: (b, ohneTx) => { buchungPruefen(b); return bh.buchen(b, ohneTx); },
     ablesung: (datum, werte, fotos) => { for (const [id, stand] of Object.entries(werte ?? {})) zaehlerPruefen(Number(id), datum, stand); return bh.ablesung(datum, werte, fotos); },

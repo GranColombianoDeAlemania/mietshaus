@@ -352,6 +352,47 @@ function client(url) {
     pruefe('Lesen löst kein Aktualisieren aus', ereignisse.join('').split('event: aktualisiert').length === vorherZahl);
   }
 
+  // ---------- 5''. a change sent twice with the same key is done once ----------
+  {
+    const senden = (schluessel, nutzer = anna) => nutzer.anfrage('/api/call', { methode: 'POST', kopf: { 'X-Vorgang': schluessel },
+      json: { fn: 'save', args: ['termine', { titel: 'Doppelt?', datum: '2026-12-01', objekt_id: o }] } });
+    const zaehlen = async () => (await anna.call('liste', 'termine')).filter((x) => x.titel === 'Doppelt?').length;
+    const [a, b] = await Promise.all([senden('schluessel-eins-123'), senden('schluessel-eins-123')]);
+    const c = await senden('schluessel-eins-123');
+    const ids = [(await a.json()).wert, (await b.json()).wert, (await c.json()).wert];
+    pruefe('Gleicher Schlüssel: einmal angelegt', await zaehlen() === 1 && ids.every((x) => x === ids[0]), JSON.stringify(ids));
+    pruefe('Gleicher Schlüssel: Wiederholung markiert', c.headers.get('x-wiederholt') === '1');
+    await senden('schluessel-zwei-456');
+    pruefe('Neuer Schlüssel: neu angelegt', await zaehlen() === 2);
+    // Keys belong to the user: another user's key never returns this answer.
+    const vonBen = await senden('schluessel-eins-123', ben);
+    pruefe('Schlüssel je Benutzer', vonBen.headers.get('x-wiederholt') === null && await zaehlen() === 3);
+    const r1 = await anna.anfrage('/api/call', { methode: 'POST', kopf: { 'X-Vorgang': 'lesen-schluessel-1' }, json: { fn: 'objekte', args: ['miete'] } });
+    const r2 = await anna.anfrage('/api/call', { methode: 'POST', kopf: { 'X-Vorgang': 'lesen-schluessel-1' }, json: { fn: 'objekte', args: ['miete'] } });
+    pruefe('Lesen wird nicht aufbewahrt', r1.ok && r2.headers.get('x-wiederholt') === null);
+  }
+
+  // ---------- 5'''. duties, inventory and workflows over the server ----------
+  {
+    const heute = new Date().toISOString().slice(0, 10);
+    const [pid] = await anna.call('pflichtenAnlegen', o, [{ art: 'rauchmelder', naechste: heute }]);
+    await anna.call('automatikLauf');
+    await anna.call('automatikLauf');
+    const offen = (await anna.call('aufgabenListe', {})).filter((v) => v.pflicht_id === pid && v.status !== 'erledigt');
+    pruefe('Pflicht: ein Vorgang, auch nach zwei Automatik-Läufen', offen.length === 1);
+    const up = await anna.anfrage(`/api/hochladen?name=rauchmelder.txt&opt=${encodeURIComponent(JSON.stringify({ objekt_id: o, status: 'abgelegt', typ: 'Protokoll' }))}`, { methode: 'POST', roh: Buffer.from('Protokoll Rauchmelder') });
+    const dok = up.ok ? (await up.json())?.[0] : null;
+    const r = await anna.call('pflichtErledigen', pid, { datum: heute, dokument_id: dok?.id ?? null });
+    const verlauf = await anna.call('pflichtVerlauf', pid);
+    pruefe('Pflicht erledigt: nächster Termin, Vorgang zu, Nachweis im Verlauf', r.naechste > heute && verlauf.length === 1 && (!dok || verlauf[0].dokument_id === dok.id)
+      && (await anna.call('aufgabenListe', {})).find((v) => v.id === offen[0].id).status === 'erledigt', JSON.stringify({ r, verlauf, up: up.status }));
+    const mw = (await anna.call('ablaeufe')).find((x) => x.art === 'schaden');
+    const haupt = await anna.call('ablaufStarten', mw.id, { objekt_id: o, stichtag: heute });
+    pruefe('Ablauf über den Server: Schritte als Unteraufgaben', (await anna.call('ablaufSchritte', haupt)).length === mw.schritte.length);
+    await anna.call('save', 'inventar', { objekt_id: o, bezeichnung: 'Heizungspumpe', kaufdatum: heute, preis_ct: 45000 });
+    pruefe('Inventar über den Server', (await anna.call('inventar', o)).some((x) => x.bezeichnung === 'Heizungspumpe' && x.gwg));
+  }
+
   // ---------- 5a. warnings about the server ----------
   {
     const w1 = await s.serverWarnungen({ frei: 1.5 * 1024 ** 3, gesamt: 1000 * 1024 ** 3 });

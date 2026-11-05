@@ -6,6 +6,7 @@ import { Chip, Dialog } from '../ui';
 import { absaetze, absenderAus, alsPdfAblegen, brief, esc, tabelle, empfaengerVon } from '../dokument';
 import { L } from '../navi';
 import { sollNachfrage } from './Sollstellung';
+import { bestaetigen } from '../frage';
 
 const plusMonate = (iso: string, n: number) => {
   const d = new Date(iso + 'T00:00:00Z');
@@ -132,6 +133,10 @@ export function Kuendigung(props: { vertrag: Row; einheit: Row; onClose: () => v
         { objekt_id: props.einheit.objekt_id, einheit_id: props.einheit.id, person_id: v.person_id, typ: 'Brief', titel: `${titel} ${v.name}` });
       await call('kuendigungDokument', v.id, dok.id);
       await window.hv.dokumentOeffnen(dok.datei);
+      if (zum && await bestaetigen(`Den Ablauf „Mieterwechsel“ zum ${datum(zum)} starten? Er legt die Schritte vom Bestätigen der Kündigung bis zur Kautionsabrechnung als Aufgaben an.`, { titel: 'Mieterwechsel vorbereiten', ja: 'Ablauf starten' })) {
+        const mw = (await call<Row[]>('ablaeufe')).find((a) => a.art === 'mieterwechsel');
+        if (mw) await call('ablaufStarten', mw.id, { objekt_id: props.einheit.objekt_id, einheit_id: props.einheit.id, person_id: v.person_id, stichtag: zum });
+      }
       props.onClose();
     } catch (e) {
       setFehler(fehlerText(e));
