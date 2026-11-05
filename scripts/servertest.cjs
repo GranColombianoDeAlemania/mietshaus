@@ -374,6 +374,19 @@ function client(adresse) {
     pruefe('Lesen wird nicht aufbewahrt', r1.ok && r2.headers.get('x-wiederholt') === null);
   }
 
+  // ---------- a receipt sent twice (connection lost while paying) is booked once ----------
+  {
+    const pr = await anna.call('save', 'projekte', { titel: 'Bon-Test', status: 'laufend' });
+    const art = [await anna.call('einkaufNeu', pr, { titel: 'Silikon', laden: 'Bauhaus', preis_ct: 900 }), await anna.call('einkaufNeu', pr, { titel: 'Fliesen', laden: 'Bauhaus', preis_ct: 5000 })];
+    await anna.call('einkaufWagen', art[0], true);
+    const bon = () => anna.anfrage('/api/call', { methode: 'POST', kopf: { 'X-Vorgang': 'bon-schluessel-1' },
+      json: { fn: 'einkaufAbschliessen', args: [{ ids: art, betrag_ct: 5900 }] } });
+    const [x, y] = await Promise.all([bon(), bon()]);
+    const posten = (await anna.call('projekt', pr)).posten;
+    pruefe('Kassenbon doppelt gesendet: eine Rechnung', x.ok && y.ok && posten.length === 1 && posten[0].betrag_ct === 5900, JSON.stringify(posten.map((p) => p.betrag_ct)));
+    pruefe('Kassenbon: Artikel erledigt, Liste leer', (await anna.call('einkaufsliste', pr)).offen === 0);
+  }
+
   // ---------- one user on two devices: a stale change from the other device is a conflict ----------
   {
     const auf = (geraet, row) => anna.anfrage('/api/call', { methode: 'POST', kopf: { 'X-Geraet': geraet }, json: { fn: 'save', args: ['objekte', row] } });

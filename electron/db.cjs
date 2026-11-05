@@ -954,6 +954,9 @@ const MIGRATIONS = [
    ALTER TABLE vorgaenge ADD COLUMN laden TEXT;
    ALTER TABLE vorgaenge ADD COLUMN preis_ct INTEGER;
    ALTER TABLE vorgaenge ADD COLUMN projektaufgabe_id INTEGER REFERENCES projektaufgaben(id) ON DELETE SET NULL;`,
+  // Shopping: ticked off in the shop („in the cart“) but not paid yet – the receipt for everything in the cart is taken
+  // once per shop (einkaufAbschliessen).
+  `ALTER TABLE vorgaenge ADD COLUMN im_wagen INTEGER NOT NULL DEFAULT 0;`,
 ];
 
 // Tables without change time: the log itself, settings of this installation and page state.

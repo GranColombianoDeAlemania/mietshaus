@@ -49,6 +49,8 @@ module.exports = function diktat({ all }) {
         // The tenant's unit when none was said.
         if (!einheit && person.einheit_id) { einheit = einheiten.find((e) => e.id === person.einheit_id) ?? all('SELECT id, bezeichnung, objekt_id FROM einheiten WHERE id = ?', person.einheit_id)[0] ?? null; if (einheit) erkannt.push(`Einheit ${einheit.bezeichnung} (Mieter)`); }
       }
+      // A unit found through its tenant belongs to its house as well.
+      if (einheit && !objekt && einheit.objekt_id) objekt = objekte.find((o) => o.id === einheit.objekt_id) ?? null;
 
       // Urgency and due date.
       let prioritaet = 2;

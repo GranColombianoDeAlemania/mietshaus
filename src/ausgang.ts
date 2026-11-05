@@ -29,7 +29,8 @@ export type Eintrag = {
 // Calls that change data and may wait for the connection; everything else needs the server (or a kept answer).
 const SCHREIBEND = new Set(['save', 'remove', 'dokumentSpeichern', 'dokumentZuordnen', 'vorgangStatus', 'vorgangKommentieren', 'aufgabeVerschieben',
   'hinweisSetzen', 'mitteilungGelesen', 'alleMitteilungenGelesen', 'ablesung', 'uebergabeSpeichern', 'begehungNeu', 'begehungSpeichern', 'begehungMangel',
-  'begehungAbschliessen', 'pflichtenAnlegen', 'pflichtErledigen', 'ablaufStarten', 'buchen', 'belegBuchen', 'stapelAblegen', 'einkaufNeu', 'einkaufGekauft']);
+  'begehungAbschliessen', 'pflichtenAnlegen', 'pflichtErledigen', 'ablaufStarten', 'buchen', 'belegBuchen', 'stapelAblegen', 'einkaufNeu', 'einkaufGekauft', 'einkaufWagen',
+  'einkaufAbschliessen']);
 // Calls that create a record and answer with its number.
 const neueNummer = (fn: string, args: unknown[]) => (fn === 'save' && !(args[1] as { id?: unknown } | undefined)?.id)
   || ['begehungNeu', 'begehungMangel', 'ablaufStarten', 'buchen', 'einkaufNeu'].includes(fn);
@@ -45,7 +46,8 @@ function titelVon(fn: string, args: unknown[]): string {
   return ({ vorgangStatus: 'Status einer Aufgabe', vorgangKommentieren: 'Kommentar', begehungSpeichern: 'Begehung', begehungNeu: 'Neue Begehung',
     begehungMangel: `Mangel „${a[2]?.text ?? ''}“`, begehungAbschliessen: 'Begehung abgeschlossen', ablesung: 'Zählerstände', pflichtErledigen: 'Pflicht erledigt',
     pflichtenAnlegen: 'Pflichten angelegt', dokumentSpeichern: 'Angaben zu einem Dokument', ablaufStarten: 'Ablauf gestartet', uebergabeSpeichern: 'Übergabeprotokoll',
-    buchen: 'Buchung', belegBuchen: 'Beleg gebucht', einkaufNeu: `Einkauf „${a[1]?.titel ?? ''}“`, einkaufGekauft: 'Einkauf gekauft' } as Record<string, string>)[fn] ?? fn;
+    buchen: 'Buchung', belegBuchen: 'Beleg gebucht', einkaufNeu: `Einkauf „${a[1]?.titel ?? ''}“`, einkaufGekauft: 'Einkauf gekauft',
+    einkaufWagen: 'Einkauf in den Wagen', einkaufAbschliessen: `Kassenbon (${a[0]?.ids?.length ?? 0} Artikel)` } as Record<string, string>)[fn] ?? fn;
 }
 
 // ---------- storage ----------

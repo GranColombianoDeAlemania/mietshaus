@@ -293,6 +293,18 @@ From the wish of 05.11.2026 („bei Projekten eine Kategorie Einkaufen … auch 
 | Gekauft | Ticking off (list or board) asks for the price paid and a photo of the receipt – it becomes a paid invoice of the project under „Kosten & Budget“ | done |
 | Zeitplan | „Material fehlt noch für …“ when a step starts within three days and purchases for it are open, with a link to the list | done |
 
+## Version 0.23 – tasks and shopping redone
+
+From the wish of 05.11.2026 („die Aufgaben- und Einkaufsseiten … sehr unintuitiv“, „die Informationen, die eingegeben werden können, nicht richtig angeordnet“). Distilled from Todoist, Things 3, Microsoft To Do, Linear, Bring!, AnyList, Apple Erinnerungen and work-order tools (MaintainX, Redlist, Latchel).
+
+| Area | Contents | Status |
+|------|----------|--------|
+| Liste nach Fälligkeit | Default view: Überfällig, Heute, Nächste 7 Tage, Später, Ohne Datum; a round tick per row (done at once, „Rückgängig“ for 8 s); on a phone swipe right = done, left = later (tomorrow, next week); steps without their own date only inside their task | done |
+| Ansichten statt Filter | Meine · Alle · Wartet · Einkaufen · Erledigt with counts; house and person behind one „Filter“, shown as removable chips and kept for the next visit; the board stays as a second view (on a phone one column at a time with tabs, no status menu on the cards) | done |
+| Schnellfeld | One line, typed or spoken: „Wasserhahn Meier morgen dringend“ – house, flat (also through the tenant), person, date and urgency are shown before Enter saves (the dictation parser); without a connection the text is saved as it is; templates, workflows and the full form in the „Neu“ menu | done |
+| Aufgabenblatt | One sheet to look at and to change (no separate edit form), saved at once: kind and status on top, title, details, steps (now also by hand), photos as a strip with camera and paperclip, history like a chat with the input at the bottom; where/who/when on the right (Wo: house › flat, Betrifft, Kümmert sich, Bis wann with Heute/Morgen/Nächste Woche, Wichtigkeit später/normal/dringend, Projekt); a new task shows only what is mostly needed, the rest on „+ …“; beside the list on a wide screen, full screen on a phone; also for the cases of a house | done |
+| Einkaufen | One field „Was brauchst du?“ (a known article gets its shop), „Schon mal gekauft“ to add with a tap, the list by shop; ticking off only puts an article in the cart (`vorgaenge.im_wagen`); per shop „Bezahlt: Kassenbon erfassen“ – the prices, one total, one photo: one paid invoice per project, a receipt with articles of several projects (or none) shared by the prices; only typed amounts are booked; the same list across all projects under Aufgaben → Einkaufen; an article opens as the task sheet with quantity, shop, price („zuletzt …“), step and photo | done |
+
 ## Development
 
 ```

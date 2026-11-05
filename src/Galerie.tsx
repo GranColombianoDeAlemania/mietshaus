@@ -1,5 +1,7 @@
-// Photos and documents of an object, a unit or a project: thumbnails, drop zone, lightbox.
+// Photos and documents of an object, a unit or a project: thumbnails, drop zone, lightbox. kompakt: one row of small
+// thumbnails with a camera and a paperclip tile at its end (a task, an article) – files can be dropped on it too.
 import { useEffect, useState } from 'react';
+import { Paperclip } from 'lucide-react';
 import { call, datum, type Row } from './api';
 import { useLoad } from './useLoad';
 import { DokumentDialog, dokUrl } from './views/Archiv';
@@ -10,7 +12,7 @@ const istBild = (datei: string) => /\.(png|jpe?g|gif|webp)$/i.test(datei);
 const Symbol = (props: { datei: string }) => { const S = dateiSymbol(props.datei); return <S size={34} strokeWidth={1.4} aria-hidden="true" />; };
 
 export function Galerie(props: { filter: { objekt_id?: number; einheit_id?: number; projekt_id?: number; person_id?: number; vorgang_id?: number };
-  hinweis?: string; ablage?: Record<string, unknown> }) {
+  hinweis?: string; ablage?: Record<string, unknown>; kompakt?: boolean; onGeaendert?: () => void }) {
   const [nurBilder, setNurBilder] = useState(false);
   const [liste, reload] = useLoad<Row[]>(() => call('galerie', { ...props.filter, nur_bilder: nurBilder }), [JSON.stringify(props.filter), nurBilder]);
   const [zone, setZone] = useState(false);
@@ -25,6 +27,7 @@ export function Galerie(props: { filter: { objekt_id?: number; einheit_id?: numb
     const r = files ? await window.hv.importieren(files, opt) : await window.hv.dateienImportieren(opt);
     for (const x of r) if (/\.(png|jpe?g|gif|webp|heic|heif)$/i.test(x.name)) await call('dokumentSpeichern', { id: x.id, typ: 'Foto', ...ziel });
     reload();
+    props.onGeaendert?.();
   }
 
   useEffect(() => {
@@ -38,12 +41,25 @@ export function Galerie(props: { filter: { objekt_id?: number; einheit_id?: numb
     return () => window.removeEventListener('keydown', k);
   }, [gross, bilder.length]);
 
+  const ziehen = {
+    onDragOver: (e: React.DragEvent) => { e.preventDefault(); e.stopPropagation(); setZone(true); window.dispatchEvent(new Event('hv-ziehen-aus')); },
+    onDragLeave: () => setZone(false),
+    onDrop: (e: React.DragEvent) => { e.preventDefault(); e.stopPropagation(); setZone(false); if (e.dataTransfer.files.length) hinzufuegen(e.dataTransfer.files); },
+  };
   return (
     <div>
-      <div className={`ablagezone${zone ? ' aktiv' : ''}`}
-        onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setZone(true); window.dispatchEvent(new Event('hv-ziehen-aus')); }}
-        onDragLeave={() => setZone(false)}
-        onDrop={(e) => { e.preventDefault(); e.stopPropagation(); setZone(false); if (e.dataTransfer.files.length) hinzufuegen(e.dataTransfer.files); }}>
+      {props.kompakt ? (
+        <div className={`fotostreifen${zone ? ' aktiv' : ''}`} {...ziehen}>
+          {liste?.map((d) => (
+            <button key={d.id} type="button" className="fotostreifen-bild" title={d.titel} aria-label={istBild(d.datei) ? `Foto „${d.titel}“ ansehen` : `„${d.titel}“ öffnen`}
+              style={istBild(d.datei) ? { backgroundImage: `url("${dokUrl(d.datei)}")` } : undefined}
+              onClick={() => (istBild(d.datei) ? setGross(bilder.findIndex((b) => b.id === d.id)) : setMeta(d))}>{istBild(d.datei) ? null : <Symbol datei={d.datei} />}</button>
+          ))}
+          <FotoKnopf opt={props.ablage ?? props.filter} onFertig={() => { reload(); props.onGeaendert?.(); }} klein />
+          <button type="button" className="icon" title="Datei anhängen" aria-label="Datei anhängen" onClick={() => hinzufuegen()}><Paperclip size={15} /></button>
+        </div>
+      ) : <>
+      <div className={`ablagezone${zone ? ' aktiv' : ''}`} {...ziehen}>
         Fotos und Dateien hierher ziehen – sie werden direkt hier abgelegt{props.hinweis ? ` (${props.hinweis})` : ''}. &nbsp;
         <button onClick={() => hinzufuegen()}>Dateien wählen…</button> <FotoKnopf opt={props.ablage ?? props.filter} onFertig={reload} />
         <label className="check" style={{ display: 'inline-flex', marginLeft: 12 }}><input type="checkbox" checked={nurBilder} onChange={(e) => setNurBilder(e.target.checked)} /> nur Fotos</label>
@@ -59,6 +75,7 @@ export function Galerie(props: { filter: { objekt_id?: number; einheit_id?: numb
           </div>
         ))}
       </div>
+      </>}
       {gross != null && bilder[gross] && (
         <div className="lightbox" onClick={(e) => e.target === e.currentTarget && setGross(null)}>
           <img src={dokUrl(bilder[gross].datei)} />
@@ -74,7 +91,7 @@ export function Galerie(props: { filter: { objekt_id?: number; einheit_id?: numb
           </div>
         </div>
       )}
-      {meta && <DokumentDialog id={meta.id} datei={meta.datei} onClose={() => { setMeta(null); reload(); }} />}
+      {meta && <DokumentDialog id={meta.id} datei={meta.datei} onClose={() => { setMeta(null); reload(); props.onGeaendert?.(); }} />}
     </div>
   );
 }

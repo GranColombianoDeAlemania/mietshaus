@@ -1,16 +1,15 @@
 // Letters and mail merge from templates, document archive, cases and appointments.
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState } from 'react';
 import { alleNamen, anrede, call, datum, euro, fehler, heute, inTagen, personName, type Modus, type Row } from '../api';
 import { useLoad } from '../useLoad';
 import { useAktion } from '../aktion';
 import { Liste } from '../Liste';
-import { Dialog, Tabs } from '../ui';
+import { Tabs } from '../ui';
 import { FormDialog, type Field } from '../Form';
 import { absaetze, absenderAus, alsPdf, brief, esc, empfaengerVon } from '../dokument';
 import { L } from '../navi';
 import { bestaetigen, hinweis } from '../frage';
-import { PflichtErledigen } from './Pflichten';
-import { Galerie } from '../Galerie';
+import { Aufgabenblatt } from './Aufgabenblatt';
 
 export const PLATZHALTER: [string, string][] = [
   ['anrede', 'Briefanrede („Sehr geehrte Frau …,“)'], ['name', 'Vollständiger Name'], ['vorname', 'Vorname'], ['nachname', 'Nachname'],
@@ -250,54 +249,31 @@ function Vorlagen() {
 }
 
 export const STATUS: [string, string][] = [['offen', 'offen'], ['in_arbeit', 'in Arbeit'], ['wartet', 'wartet auf Rückmeldung'], ['erledigt', 'erledigt']];
-const ARTEN: [string, string][] = [['kommentar', 'Kommentar'], ['notiz', 'Notiz'], ['anruf', 'Anruf'], ['email', 'E-Mail'], ['brief', 'Brief'], ['termin', 'Termin vor Ort'],
-  ['auftrag', 'Auftrag erteilt'], ['status', 'Verlauf']];
-
-// Fields of a case (task); objekte only where the house has to be chosen (the task board across all houses).
-// With the category „Einkauf“ (current: the values as entered) the form also asks for quantity, shop and price.
-export const vorgangFelder = (o: { einheiten?: Row[]; personen?: Row[]; benutzer?: Row[]; objekte?: Row[] }, current?: Row): Field[] => [
-  { key: 'titel', label: 'Titel', required: true, wide: true },
-  ...(o.objekte ? [{ key: 'objekt_id', label: 'Objekt', type: 'select', required: true, options: o.objekte.map((x) => [x.id, x.bezeichnung]) } as Field] : []),
-  { key: 'kategorie', label: 'Kategorie', type: 'select', options: ['Schaden / Reparatur', 'Einkauf', 'Mieteranfrage', 'Eigentümeranfrage', 'Beschwerde', 'Vermietung', 'Verwaltung', 'Sonstiges'].map((k) => [k, k]) },
-  { key: 'status', label: 'Status', type: 'select', required: true, options: STATUS },
-  { key: 'prioritaet', label: 'Priorität', type: 'select', required: true, options: [[1, 'hoch'], [2, 'normal'], [3, 'niedrig']] },
-  { key: 'faellig', label: 'Fällig / Wiedervorlage', type: 'date' },
-  ...(o.einheiten ? [{ key: 'einheit_id', label: 'Einheit', type: 'select', options: o.einheiten.map((e) => [e.id, `${e.nr} – ${e.bezeichnung}`]) } as Field] : []),
-  { key: 'person_id', label: 'Person', type: 'select', options: (o.personen ?? []).map((p) => [p.id, personName(p)]) },
-  ...(o.benutzer?.length ? [{ key: 'zustaendig', label: 'Zuständig', type: 'select', options: o.benutzer.filter((b) => b.aktiv).map((b) => [b.id, b.name]) } as Field] : []),
-  ...(current?.kategorie === 'Einkauf' ? [
-    { key: 'menge', label: 'Menge (z. B. 3 Sack)' }, { key: 'laden', label: 'Laden / Händler' }, { key: 'preis_ct', label: 'Geschätzter Preis', type: 'money' },
-  ] as Field[] : []),
-  { key: 'beschreibung', label: 'Beschreibung', type: 'textarea' },
-];
-
 export function Vorgaenge(props: { objekt: Row }) {
   const [nurOffen, setNurOffen] = useState(true);
   const [rows, reload] = useLoad<Row[]>(() => call('vorgaengeListe', props.objekt.id, nurOffen), [props.objekt.id, nurOffen]);
-  const [einheiten] = useLoad<Row[]>(() => call('einheiten', props.objekt.id), [props.objekt.id]);
-  const [personen] = useLoad<Row[]>(() => call('personen'), []);
   // Users of the server (none in local mode) to assign a case to.
   const [benutzer] = useLoad<Row[]>(() => call<Row[]>('benutzerListe').catch(() => []), []);
-  const [edit, setEdit] = useState<Row | null>(null);
+  // A case opens as one sheet to look at and to change (src/views/Aufgabenblatt.tsx); a new one starts in it too.
+  const [neu, setNeu] = useState<Row | null>(null);
   const [offen, setOffen] = useState<Row | null>(null);
-  useAktion('neuer-vorgang', () => setEdit({ objekt_id: props.objekt.id, status: 'offen', prioritaet: 2 }));
+  useAktion('neuer-vorgang', () => setNeu({ objekt_id: props.objekt.id, status: 'offen', prioritaet: 2 }));
   // A link to a single case opens it right away (also when it is already done).
   useEffect(() => {
     let id: number | null = null;
     try { const a = sessionStorage.getItem('aktion'); if (a?.startsWith('vorgang:')) { sessionStorage.removeItem('aktion'); id = Number(a.slice(8)); } } catch {}
     if (id) call('vorgaengeListe', props.objekt.id, false).then((alle: Row[]) => { const v = alle.find((x) => x.id === id); if (v) setOffen(v); });
   }, [props.objekt.id]);
-  const felder = (f: Row) => vorgangFelder({ einheiten: einheiten ?? [], personen: personen ?? [], benutzer: benutzer ?? [] }, f);
   return (
     <section>
       <div className="toolbar">
         <h1>Vorgänge</h1>
         <span className="spacer" />
         <label className="check"><input type="checkbox" checked={nurOffen} onChange={(e) => setNurOffen(e.target.checked)} /> nur offene</label>
-        <button className="primary" onClick={() => setEdit({ objekt_id: props.objekt.id, status: 'offen', prioritaet: 2 })}>Neuer Vorgang</button>
+        <button className="primary" onClick={() => setNeu({ objekt_id: props.objekt.id, status: 'offen', prioritaet: 2 })}>Neuer Vorgang</button>
       </div>
       <table>
-        <thead><tr><th>Fällig</th><th>Titel</th><th>Kategorie</th><th>Einheit / Person</th>{!!benutzer?.length && <th>Zuständig</th>}<th>Status</th><th className="num">Einträge</th><th /></tr></thead>
+        <thead><tr><th>Fällig</th><th>Titel</th><th>Kategorie</th><th>Einheit / Person</th>{!!benutzer?.length && <th>Zuständig</th>}<th>Status</th><th className="num">Einträge</th></tr></thead>
         <tbody>
           {rows?.map((r) => (
             <tr key={r.id} className={`klickbar${r.status === 'erledigt' ? ' inaktiv' : ''}`} data-ziel={`vorgang:${r.id}`} onClick={() => setOffen(r)}>
@@ -306,90 +282,15 @@ export function Vorgaenge(props: { objekt: Row }) {
               <td className="klein">{r.einheit_id && <L zu={{ einheit: r.einheit_id }}>{r.einheit}</L>}{r.einheit_id && r.person_id ? ' · ' : ''}{r.person_id && <L zu={{ person: r.person_id }}>{r.person}</L>}</td>
               {!!benutzer?.length && <td>{r.zustaendig_name ?? ''}</td>}
               <td>{STATUS.find(([s]) => s === r.status)?.[1]}</td><td className="num">{r.eintraege}</td>
-              <td className="aktionen"><button onClick={(e) => { e.stopPropagation(); setEdit(r); }}>Bearbeiten</button></td>
             </tr>
           ))}
           {rows && !rows.length && <tr><td colSpan={7} className="hinweis">Keine Vorgänge.</td></tr>}
         </tbody>
       </table>
-      {edit && <FormDialog title={edit.id ? 'Vorgang bearbeiten' : 'Neuer Vorgang'} row={edit} fields={felder}
-        onSave={(r) => call('save', 'vorgaenge', { ...r, objekt_id: props.objekt.id })} onDelete={() => call('remove', 'vorgaenge', edit.id)}
-        onClose={() => { setEdit(null); reload(); }} />}
-      {offen && <Vorgang v={offen} onClose={() => { setOffen(null); reload(); }} />}
+      {neu && <Aufgabenblatt vorlage={neu} onClose={() => setNeu(null)} onGeaendert={reload} />}
+      {offen && <Aufgabenblatt key={offen.id} v={offen} onClose={() => { setOffen(null); reload(); }} onGeaendert={reload} />}
     </section>
   );
-}
-
-// One case with its history: comments (the person in charge is notified), notes of calls and letters, status changes.
-// eingebettet: shown inside the work basket instead of a window.
-export function Vorgang(props: { v: Row; onClose: () => void; eingebettet?: boolean; aktionen?: ReactNode }) {
-  const [eintraege, reload] = useLoad<Row[]>(() => call('liste', 'vorgangseintraege', { vorgang_id: props.v.id }, 'datum DESC, id DESC'), [props.v.id]);
-  const [neu, setNeu] = useState({ art: 'kommentar', text: '', datum: heute() });
-  // A duty's case is done through the duty (date and proof, next date); others directly.
-  const [pflicht, setPflicht] = useState<Row | null>(null);
-  const [schritte, ladeSchritte] = useLoad<Row[]>(() => (props.v.schritte ? call('ablaufSchritte', props.v.id) : Promise.resolve([])), [props.v.id, props.v.schritte]);
-  const [geraete] = useLoad<Row[]>(() => (props.v.einheit_id ? call('inventarGarantie', props.v.einheit_id) : Promise.resolve([])), [props.v.einheit_id]);
-  const erledigt = props.v.status !== 'erledigt' && <button onClick={async () => {
-    if (props.v.pflicht_id) { setPflicht(await call('get', 'pflichten', props.v.pflicht_id)); return; }
-    await call('vorgangStatus', props.v.id, 'erledigt'); props.onClose();
-  }}>Als erledigt markieren</button>;
-  const inhalt = (
-    <>
-      {(props.v.einheit_id || props.v.person_id) && (
-        <p className="chips">{props.v.einheit_id && <span className="chip">Einheit <L zu={{ einheit: props.v.einheit_id }}>{props.v.einheit}</L></span>}
-          {props.v.person_id && <span className="chip">Person <L zu={{ person: props.v.person_id }}>{props.v.person}</L></span>}</p>
-      )}
-      {!!geraete?.length && (
-        <p className="chips" title="Geräte der Einheit aus dem Inventar – bei einem Defekt erst die Garantie prüfen">
-          {geraete.map((g) => <span key={g.id} className={`chip${g.garantie_bis && g.garantie_bis >= heute() ? ' gruen' : ''}`}>
-            {g.bezeichnung}{g.garantie_bis ? ` – Garantie ${g.garantie_bis >= heute() ? 'bis' : 'abgelaufen'} ${datum(g.garantie_bis)}` : ''}</span>)}
-        </p>
-      )}
-      {props.v.beschreibung && <p style={{ whiteSpace: 'pre-wrap' }}>{props.v.beschreibung}</p>}
-      {!!schritte?.length && (
-        <ul className="checkliste ablauf-schritte">
-          {schritte.map((s) => (
-            <li key={s.id} className={s.status === 'erledigt' ? 'fertig' : ''}>
-              <label className="check"><input type="checkbox" checked={s.status === 'erledigt'} onChange={async (e) => {
-                try { await call('vorgangStatus', s.id, e.target.checked ? 'erledigt' : 'offen'); ladeSchritte(); } catch (x) { fehler(x); }
-              }} /> <span className="text">{s.titel}</span></label>
-              <span className="klein hinweis">{datum(s.faellig)}</span>
-            </li>
-          ))}
-        </ul>
-      )}
-      {pflicht && <PflichtErledigen pflicht={pflicht} onClose={(ok) => { setPflicht(null); if (ok) props.onClose(); }} />}
-      <div className="toolbar">
-        <input type="date" value={neu.datum} onChange={(e) => setNeu({ ...neu, datum: e.target.value })} />
-        <select value={neu.art} onChange={(e) => setNeu({ ...neu, art: e.target.value })}>{ARTEN.filter(([a]) => a !== 'status').map(([a, l]) => <option key={a} value={a}>{l}</option>)}</select>
-        <input style={{ flex: 1 }} className="suche" placeholder={neu.art === 'kommentar' ? 'Kommentar schreiben …' : 'Was ist passiert?'} value={neu.text} onChange={(e) => setNeu({ ...neu, text: e.target.value })} />
-        <button className="primary" disabled={!neu.text.trim()} onClick={async () => {
-          try {
-            if (neu.art === 'kommentar') await call('vorgangKommentieren', props.v.id, neu.text);
-            else await call('save', 'vorgangseintraege', { ...neu, vorgang_id: props.v.id });
-            setNeu({ ...neu, text: '' }); reload();
-          } catch (e) { fehler(e); }
-        }}>Eintragen</button>
-      </div>
-      <table>
-        <tbody>{eintraege?.map((e) => (
-          <tr key={e.id} className={e.art === 'status' ? 'inaktiv' : ''}><td>{datum(e.datum)}</td><td><span className="tag">{ARTEN.find(([a]) => a === e.art)?.[1] ?? e.art}</span></td>
-            <td>{e.von && <b>{e.von}: </b>}{e.text}</td>
-            <td className="aktionen"><button onClick={async () => { await call('remove', 'vorgangseintraege', e.id); reload(); }}>×</button></td></tr>
-        ))}</tbody>
-      </table>
-      <h3>Fotos und Dokumente</h3>
-      <Galerie filter={{ vorgang_id: props.v.id }} ablage={{ vorgang_id: props.v.id, objekt_id: props.v.objekt_id, ...(props.v.einheit_id ? { einheit_id: props.v.einheit_id } : {}) }}
-        hinweis="am Vorgang" />
-    </>
-  );
-  if (props.eingebettet) return (
-    <div className="vorgang-eingebettet">
-      <div className="toolbar"><h2>{props.v.titel}</h2><span className="spacer" />{props.aktionen}{erledigt}</div>
-      {inhalt}
-    </div>
-  );
-  return <Dialog titel={props.v.titel} onClose={props.onClose} breit aktionen={<>{props.aktionen}{erledigt}</>}>{inhalt}</Dialog>;
 }
 
 // Fields of an appointment (list of appointments and calendar).

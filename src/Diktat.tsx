@@ -26,7 +26,8 @@ async function erlaubt() {
 }
 
 // The microphone button: while it listens the text so far is shown; at the end onText gets the result.
-export function DiktatKnopf(props: { onText: (text: string) => void; sofort?: boolean; label?: string }) {
+// klein: only the microphone (inside an input row); the words heard show beneath it.
+export function DiktatKnopf(props: { onText: (text: string) => void; sofort?: boolean; label?: string; klein?: boolean }) {
   const [hoert, setHoert] = useState(false);
   const [zwischen, setZwischen] = useState('');
   const erkennung = useRef<Erkennung | null>(null);
@@ -53,9 +54,9 @@ export function DiktatKnopf(props: { onText: (text: string) => void; sofort?: bo
   if (!K) return null;
   return (
     <span className="diktat">
-      <button type="button" className={hoert ? 'hoert' : ''} aria-pressed={hoert} title={hoert ? 'Zuhören beenden' : 'Sprechen statt tippen'}
-        onClick={() => (hoert ? erkennung.current?.stop() : starten())}>
-        {hoert ? <MicOff size={15} /> : <Mic size={15} />} {hoert ? 'Fertig' : props.label ?? 'Diktieren'}
+      <button type="button" className={`${hoert ? 'hoert' : ''}${props.klein ? ' icon' : ''}`} aria-pressed={hoert} title={hoert ? 'Zuhören beenden' : 'Sprechen statt tippen'}
+        aria-label={props.klein ? (hoert ? 'Zuhören beenden' : 'Sprechen statt tippen') : undefined} onClick={() => (hoert ? erkennung.current?.stop() : starten())}>
+        {hoert ? <MicOff size={15} /> : <Mic size={15} />}{props.klein ? null : <> {hoert ? 'Fertig' : props.label ?? 'Diktieren'}</>}
       </button>
       {hoert && <span className="klein hinweis diktat-text">{zwischen || 'Ich höre zu …'}</span>}
     </span>

@@ -1611,7 +1611,7 @@ Stadtsparkasse München | IBAN DE02 7015 0000 0000 1234 56 | BIC SSKMDEMMXXX`;
   gleich('Diktat: Person, Einheit über die Nummer, Haus, dringend', [d1.person_id, d1.einheit_id, d1.objekt_id, d1.prioritaet], [meier, e3, ob, 1]);
   gleich('Diktat: Titel ohne Name, Einheit und Dringlichkeit', d1.titel, 'Tropfender Wasserhahn');
   const d2 = t.diktatDeuten('Meier Heizung kalt morgen');
-  gleich('Diktat: Einheit des Mieters, wenn keine genannt; morgen fällig', [d2.einheit_id, d2.faellig, d2.titel], [e3, plus(1), 'Heizung kalt']);
+  gleich('Diktat: Einheit und Haus des Mieters, wenn keine genannt; morgen fällig', [d2.einheit_id, d2.objekt_id, d2.faellig, d2.titel], [e3, ob, plus(1), 'Heizung kalt']);
   const d3 = t.diktatDeuten('EG links Klingel defekt bei Gelegenheit', ob);
   gleich('Diktat: Einheit über den Namen, bei Gelegenheit', [d3.einheit_id, d3.prioritaet, d3.titel], [e1, 3, 'Klingel defekt']);
   const d4 = t.diktatDeuten('Lindenhaus Dachrinne verstopft in drei Tagen');
@@ -1667,6 +1667,52 @@ Stadtsparkasse München | IBAN DE02 7015 0000 0000 1234 56 | BIC SSKMDEMMXXX`;
   const haus = t.neuesObjekt({ bezeichnung: 'Einkaufshaus', art: 'miete', strasse: 'Weg 6', plz: '10115', ort: 'Berlin' });
   const e3 = t.einkaufNeu(null, { titel: '6 Stk Rauchmelder', objekt_id: haus });
   gleich('Einkauf für ein Haus ohne Projekt', [raw2.prepare('SELECT objekt_id, projekt_id, menge FROM vorgaenge WHERE id = ?').get(e3)].map((x) => [x.objekt_id, x.projekt_id, x.menge]), [[haus, null, '6 Stk']]);
+}
+
+// ---------- 0.23: cart, one receipt for several articles, the shop remembered, suggestions, steps by hand ----------
+{
+  const raw2 = open(':memory:');
+  const t = api(raw2);
+  const pa = t.save('projekte', { titel: 'Bad', status: 'laufend' });
+  const pb = t.save('projekte', { titel: 'Küche', status: 'laufend' });
+  const a1 = t.einkaufNeu(pa, { titel: 'Silikon weiß', laden: 'Bauhaus', preis_ct: 900 });
+  const a2 = t.einkaufNeu(pa, { titel: '2 Eimer Farbe', laden: 'Bauhaus', preis_ct: 5000 });
+  const b1 = t.einkaufNeu(pb, { titel: 'Spülmittel', laden: 'Bauhaus', preis_ct: 300 });
+  const o1 = t.einkaufNeu(null, { titel: 'Kaffee', laden: 'Bauhaus', preis_ct: 800 });
+  const wagen = (id) => raw2.prepare('SELECT im_wagen FROM vorgaenge WHERE id = ?').get(id).im_wagen;
+  gleich('Wagen: abgehakt, aber noch offen', [t.einkaufWagen(a1, true), wagen(a1), t.einkaufsliste(pa).offen], [true, 1, 2]);
+  gleich('Wagen: wieder herausgenommen', [t.einkaufWagen(a1, false), wagen(a1)], [true, 0]);
+  gleich('Liste aller Projekte: auch Artikel ohne Projekt, mit Projektname', t.einkaufsliste(null).liste.map((v) => [v.titel, v.projekt ?? null]).sort(),
+    [['Farbe', 'Bad'], ['Kaffee', null], ['Silikon weiß', 'Bad'], ['Spülmittel', 'Küche']]);
+  t.einkaufWagen(a1, true);
+  // One receipt of 69,00 € for 70,00 € of articles: Bad 59,00, Küche 3,00, no project 8,00 – shared by the prices.
+  t.einkaufAbschliessen({ ids: [a1, a2, b1, o1], betrag_ct: 6900, preise: { [a1]: 900, [a2]: 5000, [b1]: 300, [o1]: 800 }, datum: '2026-11-05' });
+  gleich('Kassenbon: je Projekt eine bezahlte Rechnung, nach den Artikelpreisen geteilt', [t.projekt(pa).posten.map((p) => [p.betrag_ct, p.status, p.datum]), t.projekt(pb).posten.map((p) => p.betrag_ct)],
+    [[[5816, 'bezahlt', '2026-11-05']], [296]]);
+  gleich('Kassenbon: Laden und Artikel im Titel', t.projekt(pa).posten[0].titel, 'Einkauf Bauhaus: Silikon weiß, 2 Eimer Farbe');
+  gleich('Kassenbon: alle erledigt, aus dem Wagen, Preis am Artikel', [a1, a2, b1, o1].map((id) => raw2.prepare('SELECT status, im_wagen, preis_ct FROM vorgaenge WHERE id = ?').get(id)).map((x) => [x.status, x.im_wagen, x.preis_ct]),
+    [['erledigt', 0, 900], ['erledigt', 0, 5000], ['erledigt', 0, 300], ['erledigt', 0, 800]]);
+  gleich('Wagen: ein gekaufter Artikel kommt nicht mehr hinein', t.einkaufWagen(a1, true), false);
+  const n = t.einkaufNeu(pa, { titel: 'silikon weiß ' });
+  gleich('Laden gemerkt: „silikon weiß“ wieder bei Bauhaus', raw2.prepare('SELECT laden FROM vorgaenge WHERE id = ?').get(n).laden, 'Bauhaus');
+  gleich('Zuletzt bezahlt steht am neuen Artikel', t.einkaufsliste(pa).liste.find((v) => v.id === n).zuletzt_ct, 900);
+  const vs = t.einkaufVorschlaege(null);
+  gleich('Vorschläge: Gekauftes, aber nicht, was schon wieder auf der Liste steht', vs.map((x) => x.titel).sort(), ['Farbe', 'Kaffee', 'Spülmittel']);
+  gleich('Vorschläge: mit Menge, Laden und letztem Preis', [vs.find((x) => x.titel === 'Farbe')].map((x) => [x.menge, x.laden, x.preis_ct]), [['2 Eimer', 'Bauhaus', 5000]]);
+  gleich('Bekannte Läden', t.einkaufLaeden(), ['Bauhaus']);
+  const k = t.einkaufNeu(pb, { titel: 'Topf' });
+  t.einkaufAbschliessen({ ids: [k] });
+  gleich('Kassenbon ohne Betrag: erledigt, aber keine Rechnung', [raw2.prepare('SELECT status FROM vorgaenge WHERE id = ?').get(k).status, t.projekt(pb).posten.length], ['erledigt', 1]);
+  const k2 = t.einkaufNeu(pb, { titel: 'Pfanne', preis_ct: 2000 });
+  t.einkaufAbschliessen({ ids: [k2] });
+  gleich('Nur geschätzter Preis: bucht nichts', t.projekt(pb).posten.length, 1);
+  gleich('Kassenbon ohne Artikel: Fehler', (() => { try { t.einkaufAbschliessen({ ids: [999] }); return 'kein Fehler'; } catch (e) { return e.message; } })(), 'Diese Einkäufe gibt es nicht mehr.');
+  // Steps added by hand to a task.
+  const h = t.save('vorgaenge', { titel: 'Wasserhahn tropft', status: 'offen', prioritaet: 2 });
+  t.save('vorgaenge', { titel: 'Handwerker anrufen', eltern_id: h, status: 'offen', prioritaet: 2 });
+  t.save('vorgaenge', { titel: 'Termin mit Mieter', eltern_id: h, status: 'erledigt', prioritaet: 2 });
+  const zeile = t.aufgabenListe(null, {}).find((v) => v.id === h);
+  gleich('Schritte von Hand: gezählt am Vorgang', [zeile.schritte, zeile.schritte_erledigt, t.ablaufSchritte(h).length], [2, 1, 2]);
 }
 
 console.log(`\nRechentest: ${ok} Prüfungen richtig, ${falsch} falsch.`);

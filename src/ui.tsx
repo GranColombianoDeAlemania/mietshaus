@@ -86,6 +86,7 @@ export function Auswahl(props: {
   neu?: { label: string; onClick: (text: string) => void };
   disabled?: boolean;
   platzhalter?: string;
+  label?: string;
 }) {
   const [suche, setSuche] = useState<string | null>(null);
   const [markiert, setMarkiert] = useState(0);
@@ -119,7 +120,7 @@ export function Auswahl(props: {
   return (
     <div className="kontowahl">
       <input value={offen ? suche : gewaehlt?.[1] ?? ''} placeholder={props.platzhalter ?? (props.pflicht ? '– bitte wählen –' : props.leer ?? '–')} disabled={props.disabled}
-        role="combobox" aria-expanded={offen} aria-autocomplete="list" title={gewaehlt?.[1]}
+        role="combobox" aria-expanded={offen} aria-autocomplete="list" title={gewaehlt?.[1]} aria-label={props.label}
         onFocus={(e) => { setSuche(''); setMarkiert(Math.max(0, treffer.findIndex(([v]) => String(v) === String(props.value ?? '')))); e.currentTarget.select(); }}
         onChange={(e) => { setSuche(e.target.value); setMarkiert(0); }}
         onBlur={() => setSuche(null)} onKeyDown={taste} />

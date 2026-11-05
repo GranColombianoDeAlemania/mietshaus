@@ -33,48 +33,124 @@ module.exports = function projekte({ db, all, get, tx, bh }) {
       .map((p) => { const sm = summen(p.id); return { ...p, ...sm, prognose_ct: prognose(p.id, sm) }; });
   }
 
-  // Shopping list of a project: tasks of the category „Einkauf“, open ones first (by shop), with their first photo.
-  const einkaeufe = (projektId) => all(`SELECT v.*, a.titel AS schritt, a.beginn AS schritt_beginn,
+  // Shopping list – of one project, or of all (projektId null: every open purchase, bought ones of the last 30 days):
+  // tasks of the category „Einkauf“, open ones first by shop, the ones in the cart at the end of their shop.
+  const einkaeufe = (projektId) => all(`SELECT v.*, a.titel AS schritt, a.beginn AS schritt_beginn, pr.titel AS projekt, o.bezeichnung AS objekt,
       (SELECT d.datei FROM dokumente d WHERE d.vorgang_id = v.id AND d.status <> 'papierkorb' AND (lower(d.datei) GLOB '*.jp*g' OR lower(d.datei) GLOB '*.png' OR lower(d.datei) GLOB '*.webp') ORDER BY d.id LIMIT 1) AS foto,
-      (SELECT count(*) FROM dokumente d WHERE d.vorgang_id = v.id AND d.status <> 'papierkorb') AS fotos
-    FROM vorgaenge v LEFT JOIN projektaufgaben a ON a.id = v.projektaufgabe_id
-    WHERE v.projekt_id = ? AND v.kategorie = 'Einkauf'
-    ORDER BY v.status = 'erledigt', coalesce(v.laden, '~'), coalesce(a.beginn, '9999'), v.id`, projektId);
+      (SELECT count(*) FROM dokumente d WHERE d.vorgang_id = v.id AND d.status <> 'papierkorb') AS fotos,
+      (SELECT x.preis_ct FROM vorgaenge x WHERE x.kategorie = 'Einkauf' AND x.status = 'erledigt' AND x.id <> v.id AND x.preis_ct IS NOT NULL
+        AND lower(trim(x.titel)) = lower(trim(v.titel)) ORDER BY x.id DESC LIMIT 1) AS zuletzt_ct,
+      (SELECT x.menge FROM vorgaenge x WHERE x.kategorie = 'Einkauf' AND x.status = 'erledigt' AND x.id <> v.id AND x.preis_ct IS NOT NULL
+        AND lower(trim(x.titel)) = lower(trim(v.titel)) ORDER BY x.id DESC LIMIT 1) AS zuletzt_menge
+    FROM vorgaenge v LEFT JOIN projektaufgaben a ON a.id = v.projektaufgabe_id LEFT JOIN projekte pr ON pr.id = v.projekt_id LEFT JOIN objekte o ON o.id = v.objekt_id
+    WHERE v.kategorie = 'Einkauf' AND (?1 IS NULL OR v.projekt_id = ?1)
+      AND (?1 IS NOT NULL OR v.status <> 'erledigt' OR coalesce(v.geaendert_am, v.erstellt) >= ?2)
+    ORDER BY v.status = 'erledigt', coalesce(v.laden, '~'), v.im_wagen, coalesce(a.beginn, '9999'), v.id`,
+  projektId ?? null, ortszeit.inTagen(-30));
+
+  // The shop an article was last bought in or written down for („Silikon“ → Bauhaus), the way a grocery list remembers.
+  const ladenFuer = (titel) => get(`SELECT laden FROM vorgaenge WHERE kategorie = 'Einkauf' AND laden IS NOT NULL AND lower(trim(titel)) = lower(trim(?))
+    ORDER BY status = 'erledigt' DESC, id DESC LIMIT 1`, titel)?.laden ?? null;
+
+  // Shops known from all purchases, the most used first – to choose with one tap.
+  const einkaufLaeden = () => all(`SELECT laden, count(*) AS n FROM vorgaenge WHERE kategorie = 'Einkauf' AND laden IS NOT NULL AND trim(laden) <> ''
+    GROUP BY lower(laden) ORDER BY n DESC, max(id) DESC LIMIT 12`).map((x) => x.laden);
+
+  // Shares of one receipt for the projects whose articles are on it (and for the articles of no project, which nobody
+  // books): by the articles' prices, by their number without any prices; the cents left over by rounding go to the last
+  // share, so the shares add up to the receipt exactly.
+  function aufteilen(summe, gruppen) {
+    const preise = gruppen.reduce((x, g) => x + g.preis, 0);
+    const basis = preise ? gruppen.map((g) => g.preis) : gruppen.map((g) => g.artikel.length);
+    const gesamt = basis.reduce((x, y) => x + y, 0);
+    const anteile = gruppen.map((g, i) => Math.round(summe * basis[i] / gesamt));
+    anteile[anteile.length - 1] += summe - anteile.reduce((x, y) => x + y, 0);
+    return anteile;
+  }
+
+  // Paid at the till: every article bought gets its price (as typed, else its estimate) and is done; the receipt – one
+  // amount and one photo for everything – becomes one paid invoice per project („Kosten & Budget“). Articles of no project
+  // are only marked done.
+  const einkaufAbschliessen = ({ ids = [], betrag_ct = null, dokument_id = null, datum = null, preise = {} } = {}) => tx(() => {
+    const liste = [...new Set(ids.map(Number))].map((id) => get(`SELECT * FROM vorgaenge WHERE id = ? AND kategorie = 'Einkauf'`, id)).filter(Boolean);
+    if (!liste.length) throw new Error('Diese Einkäufe gibt es nicht mehr.');
+    const tag = datum || ortszeit.heute();
+    // Paid is only what was typed (the total, else the articles' prices); an estimate alone books nothing.
+    let bezahlt = 0;
+    for (const v of liste) {
+      const p = preise?.[v.id] ?? preise?.[String(v.id)];
+      if (p != null && p !== '') { v.preis_ct = Math.round(Number(p)); bezahlt += v.preis_ct; }
+      db.prepare(`UPDATE vorgaenge SET status = 'erledigt', im_wagen = 0, preis_ct = ? WHERE id = ?`).run(v.preis_ct ?? null, v.id);
+      if (v.status !== 'erledigt') db.prepare(`INSERT INTO vorgangseintraege (vorgang_id, datum, art, text) VALUES (?, ?, 'status', ?)`).run(v.id, tag, 'Gekauft');
+    }
+    const summe = betrag_ct != null && betrag_ct !== '' ? Math.round(Number(betrag_ct)) : bezahlt;
+    const gruppen = [];
+    for (const v of liste) {
+      let g = gruppen.find((x) => x.projekt_id === (v.projekt_id ?? null));
+      if (!g) gruppen.push(g = { projekt_id: v.projekt_id ?? null, artikel: [], preis: 0 });
+      g.artikel.push(v);
+      g.preis += v.preis_ct ?? 0;
+    }
+    const posten = [];
+    const projekte = gruppen.filter((g) => g.projekt_id);
+    if (projekte.length && (summe || dokument_id)) {
+      const anteile = aufteilen(summe, gruppen);
+      gruppen.forEach((g, i) => {
+        if (!g.projekt_id) return;
+        const laeden = [...new Set(g.artikel.map((v) => v.laden).filter(Boolean))];
+        const schritte = [...new Set(g.artikel.map((v) => v.projektaufgabe_id))];
+        const namen = g.artikel.map((v) => `${v.menge ? `${v.menge} ` : ''}${v.titel}`).join(', ');
+        posten.push(Number(db.prepare(`INSERT INTO projektposten (projekt_id, art, datum, firma, titel, betrag_ct, status, bezahlt_am, aufgabe_id, dokument_id, notiz)
+          VALUES (?, 'rechnung', ?, ?, ?, ?, 'bezahlt', ?, ?, ?, ?)`).run(g.projekt_id, tag, laeden.length === 1 ? laeden[0] : null,
+          `Einkauf${laeden.length === 1 ? ` ${laeden[0]}` : ''}: ${namen}`.slice(0, 200), anteile[i], tag, schritte.length === 1 ? schritte[0] ?? null : null,
+          dokument_id ?? null, gruppen.length > 1 ? 'aus der Einkaufsliste – Anteil an einem gemeinsamen Kassenbon' : 'aus der Einkaufsliste').lastInsertRowid));
+      });
+    }
+    if (dokument_id) db.prepare('UPDATE dokumente SET projekt_id = coalesce(projekt_id, ?), vorgang_id = coalesce(vorgang_id, ?) WHERE id = ?')
+      .run(projekte[0]?.projekt_id ?? null, liste[0].id, dokument_id);
+    return { posten, summe_ct: summe };
+  });
 
   return {
     projektListe,
-    einkaufsliste: (projektId) => {
+    einkaufsliste: (projektId = null) => {
       const liste = einkaeufe(projektId);
       const offen = liste.filter((v) => v.status !== 'erledigt');
-      return { liste, offen: offen.length, offen_geschaetzt_ct: offen.reduce((s, v) => s + (v.preis_ct ?? 0), 0) };
+      return { liste, offen: offen.length, offen_geschaetzt_ct: offen.reduce((s, v) => s + (v.preis_ct ?? 0), 0), laeden: einkaufLaeden() };
     },
-    // Quick entry: „3 Sack Fliesenkleber“ – a leading quantity with its unit is split off.
+    einkaufLaeden,
+    // Articles bought before and not on the list now, the most frequent first: added again with one tap, with their
+    // shop, quantity and last price.
+    einkaufVorschlaege: (projektId = null, anzahl = 10) => all(`SELECT v.titel, v.menge, v.laden, v.preis_ct, h.n, h.zuletzt FROM vorgaenge v
+      JOIN (SELECT lower(trim(titel)) AS k, max(id) AS id, count(*) AS n, max(coalesce(geaendert_am, erstellt)) AS zuletzt FROM vorgaenge
+        WHERE kategorie = 'Einkauf' AND status = 'erledigt' GROUP BY lower(trim(titel))) h ON h.id = v.id
+      WHERE NOT EXISTS (SELECT 1 FROM vorgaenge o WHERE o.kategorie = 'Einkauf' AND o.status <> 'erledigt' AND lower(trim(o.titel)) = h.k
+        AND (?1 IS NULL OR o.projekt_id = ?1))
+      ORDER BY h.n DESC, h.zuletzt DESC LIMIT ?2`, projektId ?? null, anzahl),
+    // Quick entry: „3 Sack Fliesenkleber“ – a leading quantity with its unit is split off; without a shop, the one the
+    // article was bought in last time.
     einkaufNeu: (projektId, { titel, menge = null, laden = null, preis_ct = null, projektaufgabe_id = null, objekt_id = null }) => {
       let t = String(titel ?? '').trim(), m = menge;
       if (!t) throw new Error('Was soll gekauft werden?');
-      const z = !m && t.match(/^(\d+(?:[.,]\d+)?\s*(?:x|×|stk\.?|stück|sack|säcke|eimer|rollen?|pakete?|kartons?|m²|m2|qm|m|l|liter|kg|g)?)\s+(.+)$/i);
+      const z = !m && t.match(/^(\d+(?:[.,]\d+)?\s*(?:x|×|stk\.?|stück|sack|säcke|eimer|rollen?|pakete?|kartons?|dosen?|tuben?|kartuschen?|m²|m2|qm|m|l|liter|kg|g)?)\s+(.+)$/i);
       if (z) { m = z[1].trim(); t = z[2].trim(); }
       const p = projektId ? get('SELECT objekt_id FROM projekte WHERE id = ?', projektId) : null;
       return Number(db.prepare(`INSERT INTO vorgaenge (objekt_id, projekt_id, titel, kategorie, status, prioritaet, menge, laden, preis_ct, projektaufgabe_id, faellig)
         VALUES (?, ?, ?, 'Einkauf', 'offen', 2, ?, ?, ?, ?, (SELECT date(beginn, '-1 day') FROM projektaufgaben WHERE id = ?))`)
-        .run(objekt_id ?? p?.objekt_id ?? null, projektId ?? null, t.slice(0, 200), m || null, laden || null, preis_ct ?? null, projektaufgabe_id ?? null, projektaufgabe_id ?? null).lastInsertRowid);
+        .run(objekt_id ?? p?.objekt_id ?? null, projektId ?? null, t.slice(0, 200), m || null, (laden || ladenFuer(t)) ?? null, preis_ct ?? null,
+          projektaufgabe_id ?? null, projektaufgabe_id ?? null).lastInsertRowid);
     },
-    // Bought: the task is done; with a receipt (or a price) the purchase becomes an invoice of the project, paid today.
-    einkaufGekauft: (id, { betrag_ct = null, dokument_id = null, datum = null } = {}) => tx(() => {
-      const v = get(`SELECT * FROM vorgaenge WHERE id = ? AND kategorie = 'Einkauf'`, id);
-      if (!v) throw new Error('Diesen Einkauf gibt es nicht mehr.');
-      const tag = datum || ortszeit.heute();
-      db.prepare(`UPDATE vorgaenge SET status = 'erledigt' WHERE id = ?`).run(id);
-      db.prepare(`INSERT INTO vorgangseintraege (vorgang_id, datum, art, text) VALUES (?, ?, 'status', ?)`).run(id, tag, 'Gekauft');
-      let posten = null;
-      if (v.projekt_id && (betrag_ct || dokument_id)) {
-        posten = Number(db.prepare(`INSERT INTO projektposten (projekt_id, art, datum, firma, titel, betrag_ct, status, bezahlt_am, aufgabe_id, dokument_id, notiz)
-          VALUES (?, 'rechnung', ?, ?, ?, ?, 'bezahlt', ?, ?, ?, ?)`).run(v.projekt_id, tag, v.laden ?? null, `Einkauf: ${v.titel}${v.menge ? ` (${v.menge})` : ''}`,
-          betrag_ct ?? v.preis_ct ?? 0, tag, v.projektaufgabe_id ?? null, dokument_id ?? null, 'aus der Einkaufsliste').lastInsertRowid);
-        if (dokument_id) db.prepare('UPDATE dokumente SET projekt_id = coalesce(projekt_id, ?), vorgang_id = coalesce(vorgang_id, ?) WHERE id = ?').run(v.projekt_id, id, dokument_id);
-      }
-      return { posten };
-    }),
+    // Ticked off in the shop: in the cart (or out again) – paid later for the whole cart with einkaufAbschliessen.
+    einkaufWagen: (id, an = true) => {
+      const r = db.prepare(`UPDATE vorgaenge SET im_wagen = ? WHERE id = ? AND kategorie = 'Einkauf' AND status <> 'erledigt'`).run(an ? 1 : 0, id);
+      return r.changes > 0;
+    },
+    einkaufAbschliessen,
+    // One article bought (from the board or an older device): the same as a receipt for this article alone.
+    einkaufGekauft: (id, { betrag_ct = null, dokument_id = null, datum = null } = {}) => {
+      const r = einkaufAbschliessen({ ids: [id], betrag_ct, dokument_id, datum });
+      return { posten: r.posten[0] ?? null };
+    },
     // Steps of the schedule that start within `tage` days while material for them is still to buy.
     materialFehlt: (projektId, tage = 3) => all(`SELECT a.id, a.titel, a.beginn, count(v.id) AS offen FROM projektaufgaben a
       JOIN vorgaenge v ON v.projektaufgabe_id = a.id AND v.kategorie = 'Einkauf' AND v.status <> 'erledigt'
