@@ -282,6 +282,17 @@ From the wish of 05.11.2026 („das muss gebaut werden, das ist wichtig, nicht d
 
 Open: font sizes (22 values) and radii (18 values) could become a scale of tokens – a larger visual change, only on request.
 
+## Version 0.22 – shopping
+
+From the wish of 05.11.2026 („bei Projekten eine Kategorie Einkaufen … auch mit zu den anderen Aufgaben, ein Foto dort hinzufügen“).
+
+| Area | Contents | Status |
+|------|----------|--------|
+| Einkaufsliste | Project page „Einkaufen“: quick entry („3 Sack Fliesenkleber“ splits the quantity off), shop (remembered), estimated price, step of the schedule it is for (due the day before); grouped by shop, sum of what is open; a photo per item (old part, label) with the camera; spoken entry | done |
+| Bei den Aufgaben | Purchases are tasks of the category „Einkauf“ (`vorgaenge.menge/laden/preis_ct/projektaufgabe_id`): on the board with a cart, the project's name and the shop; filter „Einkaufen“ for the shop, sorted by shop; also for a house without a project („6 Stk Rauchmelder“); the task form asks for quantity, shop and price with this category; offline like every other change | done |
+| Gekauft | Ticking off (list or board) asks for the price paid and a photo of the receipt – it becomes a paid invoice of the project under „Kosten & Budget“ | done |
+| Zeitplan | „Material fehlt noch für …“ when a step starts within three days and purchases for it are open, with a link to the list | done |
+
 ## Development
 
 ```

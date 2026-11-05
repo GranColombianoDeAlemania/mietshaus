@@ -60,6 +60,8 @@ const Versicherungen = ansicht(vMieteExtras, 'Versicherungen');
 const vPflichten = () => import('./views/Pflichten');
 const vInventar = () => import('./views/Inventar');
 const vBegehung = () => import('./views/Begehung');
+const vEinkauf = () => import('./views/Einkauf');
+const ProjektEinkauf = ansicht(vEinkauf, 'ProjektEinkauf');
 const Begehungen = ansicht(vBegehung, 'Begehungen');
 const Inventar = ansicht(vInventar, 'Inventar');
 const Pflichten = ansicht(vPflichten, 'Pflichten');
@@ -112,13 +114,13 @@ const Aufgaben = ansicht(vAufgaben, 'Aufgaben');
 const vorladen = () => { for (const l of [vArchiv, vUebersicht, vKommunikation, vKalender, vAufgaben]) l().catch(() => {}); };
 // All other pages a little later: then the service worker keeps every part, and each page opens without a connection too.
 const ALLE_SEITEN = [vObjekte, vEinheiten, vVertraege, vSchluessel, vPersonen, vZaehler, vKonten, vBuchen, vSollstellung, vOffenePosten, vBank, vEinstellungen,
-  vNkAbrechnung, vWegAbrechnung, vWirtschaftsplan, vRuecklagen, vMieteExtras, vPflichten, vInventar, vBegehung, vWegExtras, vExport, vProtokoll, vVorschlaege,
+  vNkAbrechnung, vWegAbrechnung, vWirtschaftsplan, vRuecklagen, vMieteExtras, vPflichten, vInventar, vBegehung, vEinkauf, vWegExtras, vExport, vProtokoll, vVorschlaege,
   vStatus, vUebergabe, vVermietung, vAuswertungen, vSteckbrief, vAkten, vProjekte, vPruefbericht];
 const allesVorladen = () => { for (const l of ALLE_SEITEN) l().catch(() => {}); };
 
 // One icon per page; unknown ids fall back to a neutral dot.
 const ICON: Record<string, I.LucideIcon> = {
-  uebersicht: I.Gauge, pcockpit: I.Gauge, aufgaben: I.SquareKanban, projekte: I.FolderKanban, zeitplan: I.CalendarRange, pkosten: I.HandCoins, pdok: I.Image,
+  uebersicht: I.Gauge, pcockpit: I.Gauge, aufgaben: I.SquareKanban, projekte: I.FolderKanban, zeitplan: I.CalendarRange, pkosten: I.HandCoins, pdok: I.Image, einkauf: I.ShoppingCart,
   objekte: I.Building2, steckbrief: I.House, einheiten: I.LayoutGrid, vertraege: I.Users, zaehler: I.Gauge, schluessel: I.Scale, personen: I.Contact,
   postfach: I.Inbox, vorschlaege: I.Sparkles, archiv: I.Archive, rechnungen: I.Receipt,
   buchen: I.BookOpen, konten: I.Landmark, soll: I.Repeat, op: I.BadgeEuro, bank: I.Wallet, darlehen: I.PiggyBank,
@@ -149,6 +151,7 @@ const SEITEN: Seite[] = [
   { id: 'pcockpit', label: 'Cockpit', gruppe: 'Start', modi: ['projekt'], render: (c) => <ProjektCockpit oeffne={c.oeffne} /> },
   { id: 'projekte', label: 'Alle Projekte', gruppe: 'Projekte', modi: ['projekt'], render: (c) => <ProjektListe reload={c.ladeObjekte} oeffne={c.oeffne} /> },
   { id: 'zeitplan', label: 'Zeitplan', gruppe: 'Projekte', objekt: true, modi: ['projekt'], render: (c) => <ProjektZeitplan key={c.objekt.id} projekt={c.objekt} /> },
+  { id: 'einkauf', label: 'Einkaufen', gruppe: 'Projekte', objekt: true, modi: ['projekt'], render: (c) => <ProjektEinkauf key={c.objekt.id} projekt={c.objekt} /> },
   { id: 'pkosten', label: 'Kosten & Budget', gruppe: 'Projekte', objekt: true, modi: ['projekt'], render: (c) => <ProjektKosten key={c.objekt.id} projekt={c.objekt} /> },
   { id: 'pdok', label: 'Fotos & Dokumente', gruppe: 'Projekte', objekt: true, modi: ['projekt'], render: (c) => <ProjektDokumente key={c.objekt.id} projekt={c.objekt} /> },
   { id: 'uebersicht', label: 'Cockpit', gruppe: 'Start', render: (c) => <Uebersicht modus={c.modus} objekte={c.objekte} oeffne={c.oeffne} /> },

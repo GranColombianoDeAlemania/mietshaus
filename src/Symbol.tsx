@@ -8,12 +8,12 @@ export const SYMBOLE = ['cockpit', 'aufgaben', 'objekte', 'steckbrief', 'einheit
   'vorschlaege', 'archiv', 'rechnungen', 'buchungen', 'konten', 'sollstellung', 'op', 'bank', 'darlehen', 'betriebskosten', 'jahresabrechnung',
   'wirtschaftsplan', 'ruecklagen', 'rendite', 'kaution', 'anpassung', 'vermietung', 'uebergabe', 'versammlung', 'beschluesse', 'kontakte',
   'schluessel', 'versicherung', 'briefe', 'vorgaenge', 'kalender', 'pruefung', 'status', 'protokoll', 'export', 'einstellungen', 'glocke',
-  'kamera', 'mehr', 'miete', 'projekte', 'zeitplan', 'kosten', 'fotos', 'suche', 'pflichten', 'inventar', 'begehung'] as const;
+  'kamera', 'mehr', 'miete', 'projekte', 'zeitplan', 'kosten', 'fotos', 'suche', 'pflichten', 'inventar', 'begehung', 'einkauf'] as const;
 export type SymbolName = typeof SYMBOLE[number];
 
 // The symbol of each page (ids of SEITEN in App.tsx) and of the three modes.
 export const SEITEN_SYMBOL: Record<string, SymbolName> = {
-  uebersicht: 'cockpit', pcockpit: 'cockpit', aufgaben: 'aufgaben', projekte: 'projekte', zeitplan: 'zeitplan', pkosten: 'kosten', pdok: 'fotos',
+  uebersicht: 'cockpit', pcockpit: 'cockpit', aufgaben: 'aufgaben', projekte: 'projekte', zeitplan: 'zeitplan', pkosten: 'kosten', pdok: 'fotos', einkauf: 'einkauf',
   objekte: 'objekte', steckbrief: 'steckbrief', einheiten: 'einheiten', vertraege: 'mieter', zaehler: 'zaehler', schluessel: 'umlage', personen: 'adressbuch',
   postfach: 'postfach', vorschlaege: 'vorschlaege', archiv: 'archiv', rechnungen: 'rechnungen',
   buchen: 'buchungen', konten: 'konten', soll: 'sollstellung', op: 'op', bank: 'bank', darlehen: 'darlehen',

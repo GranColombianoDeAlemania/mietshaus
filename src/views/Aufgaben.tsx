@@ -1,7 +1,7 @@
 // Tasks across all houses: a board (Offen → In Arbeit → Wartet → Erledigt, cards dragged between columns or moved with
 // the status menu on a phone) or a work basket to go through them one by one. Filters: mine, a house, a person.
 import { useState, type DragEvent } from 'react';
-import { CalendarClock, Check, Columns3, ImageIcon, List, MessageSquare } from 'lucide-react';
+import { CalendarClock, Check, Columns3, ImageIcon, List, MessageSquare, ShoppingCart } from 'lucide-react';
 import { call, datum, fehler, heute, type Row } from '../api';
 import { useLoad } from '../useLoad';
 import { useAktion } from '../aktion';
@@ -13,6 +13,7 @@ import { PflichtErledigen } from './Pflichten';
 import { AblaufStarten, AblaufVorlagen } from './Ablaeufe';
 import { bestaetigen } from '../frage';
 import { DiktatKnopf, diktatMoeglich } from '../Diktat';
+import { Gekauft } from './Einkauf';
 
 const SPALTEN: [string, string][] = [['offen', 'Offen'], ['in_arbeit', 'In Arbeit'], ['wartet', 'Wartet'], ['erledigt', 'Erledigt']];
 const faelligKlasse = (v: Row) => (v.status === 'erledigt' || !v.faellig ? '' : v.faellig < heute() ? 'ueberfaellig' : v.faellig === heute() ? 'heute' : '');
@@ -25,6 +26,9 @@ export function Aufgaben(props: { objekte: Row[] }) {
   const [objektId, setObjektId] = useState<number | ''>('');
   const [zustaendig, setZustaendig] = useState<number | ''>('');
   const [nurFaellig, setNurFaellig] = useState(false);
+  // In the shop: only the purchases, sorted by shop.
+  const [nurEinkauf, setNurEinkauf] = useState(false);
+  const [gekauft, setGekauft] = useState<Row | null>(null);
   const [rows, reload] = useLoad<Row[]>(() => call('aufgabenListe', { nur_meine: nurMeine, objekt_id: objektId || null, zustaendig: zustaendig || null }),
     [nurMeine, objektId, zustaendig]);
   const [benutzer] = useLoad<Row[]>(() => call<Row[]>('benutzerListe').catch(() => []), []);
@@ -35,7 +39,9 @@ export function Aufgaben(props: { objekte: Row[] }) {
   const [ziel, setZiel] = useState<string | null>(null);
   const neu = () => setEdit({ status: 'offen', prioritaet: 2, objekt_id: props.objekte[0]?.id });
   useAktion('neue-aufgabe', neu);
-  const liste = (rows ?? []).filter((v) => !nurFaellig || (v.status !== 'erledigt' && v.faellig && v.faellig <= heute()));
+  const liste = (rows ?? []).filter((v) => !nurFaellig || (v.status !== 'erledigt' && v.faellig && v.faellig <= heute()))
+    .filter((v) => !nurEinkauf || v.kategorie === 'Einkauf')
+    .sort((a, b) => (nurEinkauf ? String(a.laden ?? '~').localeCompare(String(b.laden ?? '~')) : 0));
 
   // Done: a short check pops up (src/styles.css .geschafft; not with "reduce motion").
   const [geschafft, setGeschafft] = useState(0);
@@ -47,6 +53,8 @@ export function Aufgaben(props: { objekte: Row[] }) {
   const [sofortDiktat, setSofortDiktat] = useState(false);
   const setzeStatus = async (v: Row, status: string) => {
     try {
+      // A purchase is done through „Gekauft“: price and receipt go to the project's costs.
+      if (status === 'erledigt' && v.kategorie === 'Einkauf') { setGekauft(v); return; }
       if (status === 'erledigt' && v.pflicht_id) {
         const p = await call<Row>('get', 'pflichten', v.pflicht_id);
         if (p) { setPflicht(p); return; }
@@ -71,10 +79,11 @@ export function Aufgaben(props: { objekte: Row[] }) {
   };
   const karte = (v: Row) => (
     <>
-      <span className="karte-titel">{v.prioritaet === 1 && <span className="tag fehlertext">!</span>}{v.titel}
+      <span className="karte-titel">{v.prioritaet === 1 && <span className="tag fehlertext">!</span>}
+        {v.kategorie === 'Einkauf' && <ShoppingCart size={14} className="karte-symbol" aria-label="Einkauf" />}{v.menge ? `${v.menge} ` : ''}{v.titel}
         {!!v.schritte && <span className="tag" title="Erledigte Schritte des Ablaufs">{v.schritte_erledigt}/{v.schritte}</span>}</span>
       {v.eltern_titel && <span className="klein hinweis">↳ {v.eltern_titel}</span>}
-      <span className="klein hinweis">{[v.objekt, v.einheit, v.person].filter(Boolean).join(' · ')}</span>
+      <span className="klein hinweis">{[v.projekt, v.objekt, v.einheit, v.person, v.kategorie === 'Einkauf' && v.laden].filter(Boolean).join(' · ')}</span>
       <span className="karte-fuss klein">
         {v.faellig && <span className={`faellig ${faelligKlasse(v)}`}><CalendarClock size={13} aria-hidden="true" /> {datum(v.faellig)}</span>}
         {!!v.eintraege && <span title="Kommentare und Einträge"><MessageSquare size={13} aria-hidden="true" /> {v.eintraege}</span>}
@@ -108,6 +117,7 @@ export function Aufgaben(props: { objekte: Row[] }) {
           <option value="">alle Personen</option>{benutzer.filter((b) => b.aktiv).map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
         </select>}
         <label className="check"><input type="checkbox" checked={nurFaellig} onChange={(e) => setNurFaellig(e.target.checked)} /> nur fällige</label>
+        <label className="check"><input type="checkbox" checked={nurEinkauf} onChange={(e) => setNurEinkauf(e.target.checked)} /> Einkaufen</label>
         <span className="hinweis klein">{liste.filter((v) => v.status !== 'erledigt').length} offen</span>
       </div>
 
@@ -144,7 +154,7 @@ export function Aufgaben(props: { objekte: Row[] }) {
       {offen && <Vorgang v={offen} onClose={() => { setOffen(null); reload(); }}
         aktionen={<button onClick={() => { setEdit(offen); setOffen(null); }}>Bearbeiten</button>} />}
       {edit && <FormDialog title={edit.id ? 'Aufgabe bearbeiten' : 'Neue Aufgabe'} row={edit}
-        fields={vorgangFelder({ personen: personen ?? [], benutzer: benutzer ?? [], objekte: alleObjekte ?? props.objekte })}
+        fields={(f) => vorgangFelder({ personen: personen ?? [], benutzer: benutzer ?? [], objekte: alleObjekte ?? props.objekte }, f)}
         onSave={(r) => call('save', 'vorgaenge', { ...r, ...(diktiert?.einheit_id && !r.einheit_id ? { einheit_id: diktiert.einheit_id } : {}) })}
         onDelete={() => call('remove', 'vorgaenge', edit.id)} onClose={() => { setEdit(null); setDiktiert(null); setSofortDiktat(false); reload(); }}
         extra={edit.id ? undefined : (f, setze) => (
@@ -160,6 +170,7 @@ export function Aufgaben(props: { objekte: Row[] }) {
             {!!diktiert?.erkannt?.length && <span className="klein hinweis">Erkannt: {diktiert.erkannt.join(' · ')} – bitte prüfen.</span>}
           </div>
         )} />}
+      {gekauft && <Gekauft einkauf={gekauft} onClose={(ok) => { setGekauft(null); if (ok) { reload(); const t = Date.now(); setGeschafft(t); setTimeout(() => setGeschafft((x) => (x === t ? 0 : x)), 1200); } }} />}
       {ablauf === 'starten' && <AblaufStarten onClose={(id) => { setAblauf(null); if (id) reload(); }} />}
       {ablauf === 'vorlagen' && <AblaufVorlagen onClose={() => setAblauf(null)} />}
       {pflicht && <PflichtErledigen pflicht={pflicht} onClose={(ok) => { setPflicht(null); if (ok) { reload(); const t = Date.now(); setGeschafft(t); setTimeout(() => setGeschafft((x) => (x === t ? 0 : x)), 1200); } }} />}

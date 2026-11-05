@@ -12,14 +12,14 @@ module.exports = function aufgaben({ db, all, get, tx, PERSON_NAME }) {
   return {
     // The board: open tasks and those done in the last 14 days, with counts of comments and photos.
     aufgabenListe: (benutzerId, { nur_meine = false, objekt_id = null, zustaendig = null } = {}) => all(`SELECT v.*, ${PERSON_NAME} AS person,
-        e.bezeichnung AS einheit, o.bezeichnung AS objekt, o.art AS objekt_art, b.name AS zustaendig_name,
+        e.bezeichnung AS einheit, o.bezeichnung AS objekt, o.art AS objekt_art, b.name AS zustaendig_name, pr.titel AS projekt,
         (SELECT count(*) FROM vorgangseintraege x WHERE x.vorgang_id = v.id AND x.art NOT IN ('status')) AS eintraege,
         (SELECT count(*) FROM dokumente d WHERE d.vorgang_id = v.id AND d.status <> 'papierkorb') AS fotos,
         (SELECT count(*) FROM vorgaenge c WHERE c.eltern_id = v.id) AS schritte,
         (SELECT count(*) FROM vorgaenge c WHERE c.eltern_id = v.id AND c.status = 'erledigt') AS schritte_erledigt,
         (SELECT x.titel FROM vorgaenge x WHERE x.id = v.eltern_id) AS eltern_titel
       FROM vorgaenge v LEFT JOIN personen p ON p.id = v.person_id LEFT JOIN einheiten e ON e.id = v.einheit_id
-      LEFT JOIN objekte o ON o.id = v.objekt_id LEFT JOIN benutzer b ON b.id = v.zustaendig
+      LEFT JOIN objekte o ON o.id = v.objekt_id LEFT JOIN benutzer b ON b.id = v.zustaendig LEFT JOIN projekte pr ON pr.id = v.projekt_id
       WHERE (v.status <> 'erledigt' OR coalesce(v.geaendert_am, v.erstellt) >= ?1)
         AND (?2 = 0 OR v.zustaendig = ?3) AND (?4 IS NULL OR v.objekt_id = ?4) AND (?5 IS NULL OR v.zustaendig = ?5)
       ORDER BY v.prioritaet, coalesce(v.faellig, '9999'), v.id DESC`,

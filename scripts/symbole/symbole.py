@@ -968,6 +968,30 @@ def begehung():
     return s
 
 
+def einkauf():
+    # A shopping cart with a box and a tube in it: buying material.
+    s = Symbol()
+    s.unten.append(boden(66, 112, 44, 6))
+    korb = P([(26, 40), (108, 40), (98, 80), (38, 80)])
+    s.k(f'<path d="{korb}"/>', '<path d="M10 28 L24 28 L40 86 L96 86" stroke-width="12" fill="none"/>', '<circle cx="46" cy="100" r="9"/>', '<circle cx="90" cy="100" r="9"/>',
+        '<rect x="44" y="20" width="26" height="24" rx="2"/>', '<path d="M74 44 L90 18" stroke-width="16" fill="none"/>')
+    s += rechteck(44, 20, 26, 24, HOLZ[0], 2)
+    s += flaeche(P([(60, 20), (70, 20), (70, 44), (60, 44)]), HOLZ[1])
+    s += linie('M44 28 L70 28', 1.6, HOLZ[1])
+    s += linie('M74 44 L90 18', 9, HIMMEL[0]) + linie('M88 21 L91 16', 9, ANTHRAZIT[0])
+    s += pfad(korb, STAHL[0])
+    s += flaeche(P([(70, 40), (108, 40), (98, 80), (64, 80)]), STAHL[1], 0.55)
+    for x in (44, 58, 72, 86):
+        s += linie(f'M{x} 42 L{x - 3 if x > 60 else x + 1} 78', 1.4, ANTHRAZIT[1], 0.6)
+    s += linie('M30 54 L104 54 M34 67 L101 67', 1.4, ANTHRAZIT[1], 0.6)
+    s += linie('M10 28 L24 28 L40 86 L96 86', 5, ANTHRAZIT[0])
+    for x in (46, 90):
+        s += kreis(x, 100, 9, ANTHRAZIT[0])
+        s += kreis(x, 100, 3.2, STAHL[0], 1.2)
+    s += glanz('M30 44 L102 44', 1.6)
+    return s
+
+
 SYMBOLE = {
     'cockpit': ('Cockpit', cockpit), 'aufgaben': ('Aufgaben', aufgaben), 'objekte': ('Objekte', objekte), 'steckbrief': ('Steckbrief', steckbrief),
     'einheiten': ('Einheiten / WEG', einheiten), 'mieter': ('Mieter / Eigentümer', mieter), 'zaehler': ('Zähler', zaehler), 'umlage': ('Umlageschlüssel', umlage),
@@ -982,7 +1006,7 @@ SYMBOLE = {
     'protokoll': ('Änderungsprotokoll', protokoll), 'export': ('Export & Steuer', export), 'einstellungen': ('Einstellungen', einstellungen),
     'glocke': ('Mitteilungen', glocke), 'kamera': ('Foto', kamera), 'mehr': ('Mehr', mehr), 'miete': ('Miete (Modus)', miete), 'projekte': ('Projekte', projekte),
     'zeitplan': ('Zeitplan', zeitplan), 'kosten': ('Kosten & Budget', kosten), 'fotos': ('Fotos & Dokumente', fotos), 'suche': ('Suche', suche),
-    'pflichten': ('Pflichten', pflichten), 'inventar': ('Inventar', inventar), 'begehung': ('Begehungen', begehung),
+    'pflichten': ('Pflichten', pflichten), 'inventar': ('Inventar', inventar), 'begehung': ('Begehungen', begehung), 'einkauf': ('Einkaufen', einkauf),
 }
 
 if __name__ == '__main__':

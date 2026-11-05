@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import { betrag, call, datum, diesesJahr, euro, fehler, heute, personName, type Row } from '../api';
 import { useLoad } from '../useLoad';
-import { L } from '../navi';
+import { L, useNavi } from '../navi';
 import { FormDialog, type Field } from '../Form';
 import { Gantt, type GanttZeile } from '../Gantt';
 import { Tabs } from '../ui';
@@ -134,6 +134,9 @@ export function ProjektListe(props: { reload: () => void; oeffne: (seite: string
 export function ProjektZeitplan(props: { projekt: Row }) {
   const [p, reload] = useLoad<Row>(() => call('projekt', props.projekt.id), [props.projekt.id]);
   const [personen] = useLoad<Row[]>(() => call('personen'), []);
+  // Material still to buy for steps that start within three days (shopping list).
+  const [fehlt] = useLoad<Row[]>(() => call('materialFehlt', props.projekt.id, 3), [props.projekt.id]);
+  const navi = useNavi();
   const [edit, setEdit] = useState<Row | null>(null);
   if (!p) return null;
   const felder: Field[] = [
@@ -152,6 +155,12 @@ export function ProjektZeitplan(props: { projekt: Row }) {
         <span className="spacer" />
         <button className="primary" onClick={() => setEdit({ beginn: letzte ? naechsterTag(letzte.ende) : p.beginn ?? heute(), ende: letzte ? naechsterTag(letzte.ende, 7) : naechsterTag(heute(), 7), fortschritt: 0, nach_id: letzte?.id, sort: p.aufgaben.length })}>Aufgabe hinzufügen</button>
       </div>
+      {!!fehlt?.length && (
+        <div className="hinweisbox klein">
+          Material fehlt noch für {fehlt.map((a: Row) => `„${a.titel}“ (ab ${datum(a.beginn)}, ${a.offen} offen)`).join(', ')}.{' '}
+          <button className="link klein" onClick={() => navi.zu({ seite: 'einkauf', objektId: p.id })}>Zur Einkaufsliste</button>
+        </div>
+      )}
       <div className="kacheln">
         <div className="kachel"><div className="wert">{p.fortschritt ?? 0} %</div><div className="label">Fortschritt</div></div>
         <div className="kachel"><div className="wert">{datum(p.plan_ende ?? p.ende) || '–'}</div><div className="label">geplantes Ende</div></div>

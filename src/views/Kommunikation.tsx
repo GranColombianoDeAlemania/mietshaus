@@ -254,16 +254,20 @@ const ARTEN: [string, string][] = [['kommentar', 'Kommentar'], ['notiz', 'Notiz'
   ['auftrag', 'Auftrag erteilt'], ['status', 'Verlauf']];
 
 // Fields of a case (task); objekte only where the house has to be chosen (the task board across all houses).
-export const vorgangFelder = (o: { einheiten?: Row[]; personen?: Row[]; benutzer?: Row[]; objekte?: Row[] }): Field[] => [
+// With the category „Einkauf“ (current: the values as entered) the form also asks for quantity, shop and price.
+export const vorgangFelder = (o: { einheiten?: Row[]; personen?: Row[]; benutzer?: Row[]; objekte?: Row[] }, current?: Row): Field[] => [
   { key: 'titel', label: 'Titel', required: true, wide: true },
   ...(o.objekte ? [{ key: 'objekt_id', label: 'Objekt', type: 'select', required: true, options: o.objekte.map((x) => [x.id, x.bezeichnung]) } as Field] : []),
-  { key: 'kategorie', label: 'Kategorie', type: 'select', options: ['Schaden / Reparatur', 'Mieteranfrage', 'Eigentümeranfrage', 'Beschwerde', 'Vermietung', 'Verwaltung', 'Sonstiges'].map((k) => [k, k]) },
+  { key: 'kategorie', label: 'Kategorie', type: 'select', options: ['Schaden / Reparatur', 'Einkauf', 'Mieteranfrage', 'Eigentümeranfrage', 'Beschwerde', 'Vermietung', 'Verwaltung', 'Sonstiges'].map((k) => [k, k]) },
   { key: 'status', label: 'Status', type: 'select', required: true, options: STATUS },
   { key: 'prioritaet', label: 'Priorität', type: 'select', required: true, options: [[1, 'hoch'], [2, 'normal'], [3, 'niedrig']] },
   { key: 'faellig', label: 'Fällig / Wiedervorlage', type: 'date' },
   ...(o.einheiten ? [{ key: 'einheit_id', label: 'Einheit', type: 'select', options: o.einheiten.map((e) => [e.id, `${e.nr} – ${e.bezeichnung}`]) } as Field] : []),
   { key: 'person_id', label: 'Person', type: 'select', options: (o.personen ?? []).map((p) => [p.id, personName(p)]) },
   ...(o.benutzer?.length ? [{ key: 'zustaendig', label: 'Zuständig', type: 'select', options: o.benutzer.filter((b) => b.aktiv).map((b) => [b.id, b.name]) } as Field] : []),
+  ...(current?.kategorie === 'Einkauf' ? [
+    { key: 'menge', label: 'Menge (z. B. 3 Sack)' }, { key: 'laden', label: 'Laden / Händler' }, { key: 'preis_ct', label: 'Geschätzter Preis', type: 'money' },
+  ] as Field[] : []),
   { key: 'beschreibung', label: 'Beschreibung', type: 'textarea' },
 ];
 
@@ -283,7 +287,7 @@ export function Vorgaenge(props: { objekt: Row }) {
     try { const a = sessionStorage.getItem('aktion'); if (a?.startsWith('vorgang:')) { sessionStorage.removeItem('aktion'); id = Number(a.slice(8)); } } catch {}
     if (id) call('vorgaengeListe', props.objekt.id, false).then((alle: Row[]) => { const v = alle.find((x) => x.id === id); if (v) setOffen(v); });
   }, [props.objekt.id]);
-  const felder = vorgangFelder({ einheiten: einheiten ?? [], personen: personen ?? [], benutzer: benutzer ?? [] });
+  const felder = (f: Row) => vorgangFelder({ einheiten: einheiten ?? [], personen: personen ?? [], benutzer: benutzer ?? [] }, f);
   return (
     <section>
       <div className="toolbar">

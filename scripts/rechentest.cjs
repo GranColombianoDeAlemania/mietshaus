@@ -1640,6 +1640,35 @@ Stadtsparkasse München | IBAN DE02 7015 0000 0000 1234 56 | BIC SSKMDEMMXXX`;
   gleich('Bildsuche: die Volltextsuche findet das Foto über das Stichwort', raw2.prepare(`SELECT rowid FROM dokumente_fts WHERE dokumente_fts MATCH 'heizung'`).all().map((r) => r.rowid), [d]);
 }
 
+// ---------- 0.22: shopping in projects ----------
+{
+  const raw2 = open(':memory:');
+  const t = api(raw2);
+  const heute = require('../electron/zeit.cjs').heute();
+  const plus = (n) => new Date(Date.parse(`${heute}T12:00:00Z`) + n * 864e5).toISOString().slice(0, 10);
+  const pid = t.save('projekte', { titel: 'Bad sanieren', status: 'laufend', budget_ct: 1000000 });
+  const fliesen = t.save('projektaufgaben', { projekt_id: pid, titel: 'Bad fliesen', beginn: plus(2), ende: plus(5) });
+  const e1 = t.einkaufNeu(pid, { titel: '3 Sack Fliesenkleber', laden: 'Bauhaus', preis_ct: 4500, projektaufgabe_id: fliesen });
+  const e2 = t.einkaufNeu(pid, { titel: 'Silikon weiß', preis_ct: 900 });
+  let l = t.einkaufsliste(pid);
+  gleich('Einkauf: Menge aus „3 Sack …“ abgetrennt', [l.liste.find((x) => x.id === e1).titel, l.liste.find((x) => x.id === e1).menge], ['Fliesenkleber', '3 Sack']);
+  gleich('Einkauf: offen und geschätzte Summe', [l.offen, l.offen_geschaetzt_ct], [2, 5400]);
+  gleich('Einkauf: fällig am Tag vor dem Arbeitsschritt', l.liste.find((x) => x.id === e1).faellig, plus(1));
+  gleich('Zeitplan: Material fehlt für Schritt in 2 Tagen', t.materialFehlt(pid).map((x) => [x.titel, x.offen]), [['Bad fliesen', 1]]);
+  gleich('Board: Einkauf mit Projektname', t.aufgabenListe(null, {}).find((v) => v.id === e1).projekt, 'Bad sanieren');
+  t.einkaufGekauft(e1, { betrag_ct: 4870 });
+  l = t.einkaufsliste(pid);
+  const p = t.projekt(pid);
+  gleich('Gekauft: erledigt, Rechnung im Projekt, bezahlt', [l.offen, p.posten[0].art, p.posten[0].betrag_ct, p.posten[0].status, p.posten[0].firma], [1, 'rechnung', 4870, 'bezahlt', 'Bauhaus']);
+  gleich('Gekauft: Kosten im Budget gezählt', p.rechnungen_ct, 4870);
+  gleich('Zeitplan: nichts fehlt mehr', t.materialFehlt(pid).length, 0);
+  t.einkaufGekauft(e2);
+  gleich('Gekauft ohne Bon und Preisangabe: keine Rechnung', t.projekt(pid).posten.length, 1);
+  const haus = t.neuesObjekt({ bezeichnung: 'Einkaufshaus', art: 'miete', strasse: 'Weg 6', plz: '10115', ort: 'Berlin' });
+  const e3 = t.einkaufNeu(null, { titel: '6 Stk Rauchmelder', objekt_id: haus });
+  gleich('Einkauf für ein Haus ohne Projekt', [raw2.prepare('SELECT objekt_id, projekt_id, menge FROM vorgaenge WHERE id = ?').get(e3)].map((x) => [x.objekt_id, x.projekt_id, x.menge]), [[haus, null, '6 Stk']]);
+}
+
 console.log(`\nRechentest: ${ok} Prüfungen richtig, ${falsch} falsch.`);
 if (falsch) process.exitCode = 1;
 // The click test reuses the sample data.
