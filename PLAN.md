@@ -269,7 +269,18 @@ From the wish of 05.11.2026 („das muss gebaut werden, das ist wichtig, nicht d
 | Offline | Working without a connection (`src/ausgang.ts`): changes and files are kept on the device (IndexedDB, never cleared at logout) and sent in their order when the connection is back; provisional numbers for new records are rewritten to the real ones; the server keeps the keys of done changes 60 days (`vorgangsschluessel`, also across restarts); a conflict (another user or the same user on another device changed it meanwhile) or an error stops the sending at that entry – decided in the traffic light (send anyway, or discard after asking); the page itself and all its parts are kept by the service worker, so the app also starts without a connection; inspection, duty proof and handover photos work offline with a preview from the device | done |
 | Robustheit | A broken image no longer stops the server (OCR error handler); conflicts also between two devices of one user | done |
 
-Next: CSS audit with the design-system skill, accessibility review of the phone screens.
+
+## Version 0.21.2 – CSS audit and accessibility of the phone screens
+
+| Area | Contents | Status |
+|------|----------|--------|
+| CSS-Konflikte | `.zustand` was both the status chips (0.20) and the button group of handover/inspection – chips now `.statusmarke`; `.leer` was both the empty page (80 px top margin) and the empty row of the searchable lists („–“, „Nichts passt zu …“) – the page is now `.leerseite`; double base rules merged (`.ampel`, `.fehlertext`, `.kz-kopf`); unused rules removed (`dokliste`, `einheitenraster`, `einheitkarte`) | done |
+| Farb-Tokens | `--auf-farbe`, `--auf-hell`, `--abzeichen`, `--ampel-*`, `--miete-text`, `--weg-text` instead of fixed colours | done |
+| Kontrast (WCAG 2.1 AA) | white on the accent 4.46 → 5.05 (buttons, active menu item, mode button); rent/WEG chips 3.5/3.9 → 5.5/6.0; green marks 4.35 → 5.55; accent chips 4.2 → 4.9; red badges in dark mode 2.3 → 5.5; the light's count 1.9 (dark) → 7.2; tab counts and month labels in the readable grey | done |
+| Tippflächen | touch screens: top-bar buttons and the light get a 44 px area, the status menu of board cards 36 px (was 21), small buttons 34 px, area names in the inspection 36 px | done |
+| Geprüft ohne Befund | every button and field has a name for screen readers; visible keyboard focus everywhere (`:focus-visible`) | done |
+
+Open: font sizes (22 values) and radii (18 values) could become a scale of tokens – a larger visual change, only on request.
 
 ## Development
 

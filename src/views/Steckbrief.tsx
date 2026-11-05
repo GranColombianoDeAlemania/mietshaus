@@ -25,11 +25,11 @@ export function ObjektKacheln(props: { modus: Modus; oeffne: (seite: string, id?
           <div className="text">
             <b>{o.bezeichnung}</b>
             <span className="klein hinweis">{[o.strasse, o.ort].filter(Boolean).join(', ')} · {o.einheiten} {o.einheiten === 1 ? 'Einheit' : 'Einheiten'}{o.flaeche ? ` · ${zahl(o.flaeche)} m²` : ''}</span>
-            <div className="zustaende">
-              {o.rueckstand_ct > 0 ? <span className="zustand rot">Rückstand {euro(o.rueckstand_ct)}</span> : <span className="zustand gruen">keine Rückstände</span>}
-              {o.leer > 0 && <span className="zustand orange">{o.leer} {props.modus === 'weg' ? 'ohne Eigentümer' : 'leer'}</span>}
-              {o.selbst > 0 && props.modus !== 'weg' && <span className="zustand">{o.selbst} selbst genutzt</span>}
-              {o.vorgaenge > 0 && <span className="zustand">{o.vorgaenge} offene Vorgänge</span>}
+            <div className="statusmarken">
+              {o.rueckstand_ct > 0 ? <span className="statusmarke rot">Rückstand {euro(o.rueckstand_ct)}</span> : <span className="statusmarke gruen">keine Rückstände</span>}
+              {o.leer > 0 && <span className="statusmarke orange">{o.leer} {props.modus === 'weg' ? 'ohne Eigentümer' : 'leer'}</span>}
+              {o.selbst > 0 && props.modus !== 'weg' && <span className="statusmarke">{o.selbst} selbst genutzt</span>}
+              {o.vorgaenge > 0 && <span className="statusmarke">{o.vorgaenge} offene Vorgänge</span>}
             </div>
             <Hausansicht etagen={o.haus} mini weg={props.modus === 'weg'} />
           </div>

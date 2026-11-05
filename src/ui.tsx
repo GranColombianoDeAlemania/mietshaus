@@ -291,7 +291,7 @@ export class Fehlergrenze extends Component<{ children: ReactNode }, { fehler: E
   render() {
     if (!this.state.fehler) return this.props.children;
     return (
-      <div className="leer ablagezone">
+      <div className="leerseite ablagezone">
         <p><b>Diese Seite konnte nicht angezeigt werden.</b></p>
         <p className="hinweis">{String(this.state.fehler.message ?? this.state.fehler)}</p>
         <div className="buttons" style={{ justifyContent: 'center' }}>

@@ -34,7 +34,7 @@ export function Vorschlaege() {
         lassen sich im Änderungsprotokoll rückgängig machen. Abschalten kannst du die Freigabe unter Einstellungen → Claude Desktop.
       </p>
       {meldung && <p className="meldung">{meldung}</p>}
-      {liste && !liste.length && <div className="leer"><p>{status === 'offen' ? 'Keine offenen Vorschläge.' : 'Keine Einträge.'}</p></div>}
+      {liste && !liste.length && <div className="leerseite"><p>{status === 'offen' ? 'Keine offenen Vorschläge.' : 'Keine Einträge.'}</p></div>}
       <ul className="vorschlagliste">
         {liste?.map((v) => (
           <li key={v.id} className="panel">

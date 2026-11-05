@@ -146,7 +146,7 @@ export function BegehungEditor(props: { id: number; onClose: () => void }) {
             {r.fotos?.length > 0 && <div className="galerie begehung-fotos">{r.fotos.map((f: Row) => {
               const url = f.datei ? dokUrl(f.datei) : f.vorschau;
               return url ? <a key={f.id} href={url} target="_blank" rel="noreferrer" className="kachelbild"><div className="bild" style={{ backgroundImage: `url("${url}")` }} /></a>
-                : <div key={f.id} className="kachelbild"><div className="bild leer klein hinweis">wird übertragen</div></div>;
+                : <div key={f.id} className="kachelbild"><div className="bild wartet klein hinweis">wird übertragen</div></div>;
             })}</div>}
             {r.maengel?.length > 0 && <ul className="maengel">{r.maengel.map((m: Row, j: number) => (
               <li key={j}><I.TriangleAlert size={14} aria-hidden="true" /> <L zu={{ vorgang: m.vorgang_id, objektId: b.objekt_id }}>{m.text}</L></li>))}</ul>}

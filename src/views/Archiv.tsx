@@ -71,7 +71,7 @@ export function Vorschau(props: { datei: string; id?: number }) {
   if (xml && d?.erechnung) return <div className="vorschau"><ERechnungAnsicht e={JSON.parse(d.erechnung)} /></div>;
   if (istBild(props.datei)) return <div className="vorschau"><img src={dokUrl(props.datei)} /></div>;
   if (/\.pdf$/i.test(props.datei)) return <iframe className="vorschau" src={dokUrl(props.datei)} />;
-  return <div className="vorschau leer"><p>Keine Vorschau für diesen Dateityp.</p><button onClick={() => window.hv.dokumentOeffnen(props.datei)}>Mit Standardprogramm öffnen</button></div>;
+  return <div className="vorschau leerseite"><p>Keine Vorschau für diesen Dateityp.</p><button onClick={() => window.hv.dokumentOeffnen(props.datei)}>Mit Standardprogramm öffnen</button></div>;
 }
 
 const analyseText = (a: string) => (a === 'offen' ? 'wird gelesen…' : a === 'fertig' ? '' : 'Lesen fehlgeschlagen');
@@ -306,7 +306,7 @@ export function Postfach() {
         einzeln rechts, oder mehrere links anhaken und gemeinsam zuordnen. Alternativ in Claude Desktop: „Arbeite das Postfach im Mietshaus ab“.
       </p>
       {liste && !liste.length ? (
-        <div className="leer ablagezone alles-erledigt">
+        <div className="leerseite ablagezone alles-erledigt">
           <Bild name="postfach" groesse={96} className="leer-bild" />
           <p><b>Alles erledigt – das Postfach ist leer.</b></p>
           <p className="hinweis">Rechnungen, Bescheide und Scans einfach hierher ziehen – oder einen Eingangsordner bzw. ein E-Mail-Postfach
@@ -475,7 +475,7 @@ export function DokumentDialog(props: { id: number; datei?: string; onClose: () 
     <Fenster onClose={props.onClose}>
       <div className="dialog sehrbreit">
         <div className="postfach-raster zwei">
-          {d?.datei ? <Vorschau datei={d.datei} id={props.id} /> : <div className="vorschau leer">Dokument nicht gefunden.</div>}
+          {d?.datei ? <Vorschau datei={d.datei} id={props.id} /> : <div className="vorschau leerseite">Dokument nicht gefunden.</div>}
           <div>
             <div className="toolbar"><FensterTitel className="sr-only">{d?.titel ?? 'Dokument'}</FensterTitel><span className="spacer" /><button onClick={props.onClose}>Schließen</button></div>
             <DokumentFormular id={props.id} onFertig={props.onClose} />
