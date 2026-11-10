@@ -356,7 +356,8 @@ async function starten(o) {
     // The calendar marks the cases of the signed-in user (filter "nur meine").
     const args = fn === 'kalender' ? [argumente[0], argumente[1], w.benutzer?.id ?? null]
       // The bell shows only the signed-in user's notifications, and creating them is the server's business.
-      : MEINE.has(fn) ? [w.benutzer?.id ?? null, ...argumente] : argumente;
+      // Private finances: every fin… function works on the signed-in user's rows only (electron/finanzen.cjs).
+      : MEINE.has(fn) || /^fin[A-Z]/.test(String(fn)) ? [w.benutzer?.id ?? null, ...argumente] : argumente;
     if (fn === 'mitteilungAnlegen') throw new Fehler(403, 'Nicht erlaubt.');
     if (NUR_SERVER.has(fn)) return [await fachlich(() => serverFunktion(fn, args, w)), {}];
     if (typeof fn !== 'string' || typeof roh[fn] !== 'function') throw new Fehler(400, `Unbekannte Funktion: ${fn}`);

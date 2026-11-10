@@ -18,6 +18,7 @@ const mitteilungenModul = require('./mitteilungen.cjs');
 const aufgabenModul = require('./aufgaben.cjs');
 const pflichtenModul = require('./pflichten.cjs');
 const inventarModul = require('./inventar.cjs');
+const finanzenModul = require('./finanzen.cjs');
 const ablaeufeModul = require('./ablaeufe.cjs');
 const begehungModul = require('./begehung.cjs');
 const diktatModul = require('./diktat.cjs');
@@ -957,6 +958,141 @@ const MIGRATIONS = [
   // Shopping: ticked off in the shop („in the cart“) but not paid yet – the receipt for everything in the cart is taken
   // once per shop (einkaufAbschliessen).
   `ALTER TABLE vorgaenge ADD COLUMN im_wagen INTEGER NOT NULL DEFAULT 0;`,
+  // Private finances (mode „Finanzen“): every row belongs to one user (benutzer; 0 = the local mode without users).
+  // The tables are not in TABLES, so the generic save/liste/get never reach them – only the fin… functions do, and the
+  // server puts the signed-in user in front of their arguments (electron/finanzen.cjs).
+  `CREATE TABLE fin_konten (
+    id INTEGER PRIMARY KEY,
+    benutzer INTEGER NOT NULL DEFAULT 0,
+    name TEXT NOT NULL,
+    art TEXT NOT NULL DEFAULT 'giro' CHECK (art IN ('giro','spar','bar','karte','depot','kredit','sonstig')),
+    bank TEXT, iban TEXT,
+    anfang_ct INTEGER NOT NULL DEFAULT 0,
+    anfang_datum TEXT,
+    archiviert INTEGER NOT NULL DEFAULT 0,
+    sort INTEGER NOT NULL DEFAULT 0,
+    geaendert_am TEXT, geaendert_von TEXT, geaendert_benutzer INTEGER
+  );
+  CREATE INDEX fin_konten_b ON fin_konten (benutzer);
+  CREATE TABLE fin_kategorien (
+    id INTEGER PRIMARY KEY,
+    benutzer INTEGER NOT NULL DEFAULT 0,
+    name TEXT NOT NULL,
+    art TEXT NOT NULL CHECK (art IN ('einnahme','ausgabe')),
+    eltern_id INTEGER REFERENCES fin_kategorien(id) ON DELETE SET NULL,
+    fix INTEGER NOT NULL DEFAULT 0,
+    steuer TEXT,
+    archiviert INTEGER NOT NULL DEFAULT 0,
+    geaendert_am TEXT, geaendert_von TEXT, geaendert_benutzer INTEGER
+  );
+  CREATE INDEX fin_kategorien_b ON fin_kategorien (benutzer);
+  CREATE TABLE fin_dauer (
+    id INTEGER PRIMARY KEY,
+    benutzer INTEGER NOT NULL DEFAULT 0,
+    konto_id INTEGER NOT NULL REFERENCES fin_konten(id) ON DELETE CASCADE,
+    gegenkonto_id INTEGER REFERENCES fin_konten(id) ON DELETE SET NULL,
+    empfaenger TEXT NOT NULL,
+    zweck TEXT,
+    betrag_ct INTEGER NOT NULL,
+    kategorie_id INTEGER REFERENCES fin_kategorien(id) ON DELETE SET NULL,
+    rhythmus_monate INTEGER NOT NULL DEFAULT 1,
+    naechste TEXT NOT NULL,
+    ende TEXT,
+    kuendbar_bis TEXT,
+    aktiv INTEGER NOT NULL DEFAULT 1,
+    geaendert_am TEXT, geaendert_von TEXT, geaendert_benutzer INTEGER
+  );
+  CREATE INDEX fin_dauer_b ON fin_dauer (benutzer);
+  CREATE TABLE fin_buchungen (
+    id INTEGER PRIMARY KEY,
+    benutzer INTEGER NOT NULL DEFAULT 0,
+    konto_id INTEGER NOT NULL REFERENCES fin_konten(id) ON DELETE CASCADE,
+    datum TEXT NOT NULL,
+    betrag_ct INTEGER NOT NULL,
+    empfaenger TEXT,
+    zweck TEXT,
+    kategorie_id INTEGER REFERENCES fin_kategorien(id) ON DELETE SET NULL,
+    notiz TEXT,
+    umbuchung_id INTEGER,
+    dauer_id INTEGER REFERENCES fin_dauer(id) ON DELETE SET NULL,
+    import_ref TEXT,
+    ziel_art TEXT CHECK (ziel_art IN ('buchung','projektposten')),
+    ziel_id INTEGER,
+    richtung TEXT CHECK (richtung IN ('hin','her')),
+    erfasst TEXT NOT NULL DEFAULT (datetime('now')),
+    geaendert_am TEXT, geaendert_von TEXT, geaendert_benutzer INTEGER
+  );
+  CREATE INDEX fin_buchungen_k ON fin_buchungen (konto_id, datum);
+  CREATE INDEX fin_buchungen_b ON fin_buchungen (benutzer, datum);
+  CREATE UNIQUE INDEX fin_buchungen_ref ON fin_buchungen (konto_id, import_ref) WHERE import_ref IS NOT NULL;
+  CREATE TABLE fin_budgets (
+    benutzer INTEGER NOT NULL DEFAULT 0,
+    kategorie_id INTEGER NOT NULL REFERENCES fin_kategorien(id) ON DELETE CASCADE,
+    betrag_ct INTEGER NOT NULL,
+    PRIMARY KEY (benutzer, kategorie_id)
+  ) WITHOUT ROWID;
+  CREATE TABLE fin_regeln (
+    id INTEGER PRIMARY KEY,
+    benutzer INTEGER NOT NULL DEFAULT 0,
+    muster TEXT NOT NULL,
+    kategorie_id INTEGER NOT NULL REFERENCES fin_kategorien(id) ON DELETE CASCADE,
+    geaendert_am TEXT, geaendert_von TEXT, geaendert_benutzer INTEGER
+  );
+  CREATE INDEX fin_regeln_b ON fin_regeln (benutzer);`,
+  // Private finances in depth: split bookings (parts of one movement with their own categories), expected movements and
+  // the „new“ mark of imported ones, labels; account reconciliation, overdraft and minimum, loan terms; budgets per
+  // month, quarter or year with sub-categories and the forecast; contract terms with renewal and notice period; rules
+  // with conditions; securities of a depot with their price history.
+  `ALTER TABLE fin_buchungen ADD COLUMN valuta TEXT;
+   ALTER TABLE fin_buchungen ADD COLUMN split_von INTEGER REFERENCES fin_buchungen(id) ON DELETE CASCADE;
+   ALTER TABLE fin_buchungen ADD COLUMN kennzeichen TEXT;
+   ALTER TABLE fin_buchungen ADD COLUMN neu INTEGER NOT NULL DEFAULT 0;
+   ALTER TABLE fin_buchungen ADD COLUMN vorgemerkt INTEGER NOT NULL DEFAULT 0;
+   CREATE INDEX fin_buchungen_split ON fin_buchungen (split_von) WHERE split_von IS NOT NULL;
+   ALTER TABLE fin_konten ADD COLUMN gruppe TEXT;
+   ALTER TABLE fin_konten ADD COLUMN dispo_ct INTEGER;
+   ALTER TABLE fin_konten ADD COLUMN min_ct INTEGER;
+   ALTER TABLE fin_konten ADD COLUMN bank_saldo_ct INTEGER;
+   ALTER TABLE fin_konten ADD COLUMN bank_saldo_datum TEXT;
+   ALTER TABLE fin_konten ADD COLUMN zins_prozent REAL;
+   ALTER TABLE fin_konten ADD COLUMN rate_ct INTEGER;
+   ALTER TABLE fin_konten ADD COLUMN zinsbindung_bis TEXT;
+   ALTER TABLE fin_budgets ADD COLUMN intervall_monate INTEGER NOT NULL DEFAULT 1;
+   ALTER TABLE fin_budgets ADD COLUMN mit_unter INTEGER NOT NULL DEFAULT 1;
+   ALTER TABLE fin_budgets ADD COLUMN prognose INTEGER NOT NULL DEFAULT 0;
+   ALTER TABLE fin_dauer ADD COLUMN typ TEXT;
+   ALTER TABLE fin_dauer ADD COLUMN vertragsnummer TEXT;
+   ALTER TABLE fin_dauer ADD COLUMN kundennummer TEXT;
+   ALTER TABLE fin_dauer ADD COLUMN beginn TEXT;
+   ALTER TABLE fin_dauer ADD COLUMN laufzeit_bis TEXT;
+   ALTER TABLE fin_dauer ADD COLUMN verlaengerung_monate INTEGER;
+   ALTER TABLE fin_dauer ADD COLUMN kuendigungsfrist_tage INTEGER;
+   ALTER TABLE fin_dauer ADD COLUMN gekuendigt_am TEXT;
+   ALTER TABLE fin_dauer ADD COLUMN variabel INTEGER NOT NULL DEFAULT 0;
+   ALTER TABLE fin_dauer ADD COLUMN notiz TEXT;
+   ALTER TABLE fin_regeln ADD COLUMN feld TEXT NOT NULL DEFAULT 'beide';
+   ALTER TABLE fin_regeln ADD COLUMN betrag_von_ct INTEGER;
+   ALTER TABLE fin_regeln ADD COLUMN betrag_bis_ct INTEGER;
+   ALTER TABLE fin_regeln ADD COLUMN konto_id INTEGER REFERENCES fin_konten(id) ON DELETE CASCADE;
+   ALTER TABLE fin_regeln ADD COLUMN kennzeichen TEXT;
+   ALTER TABLE fin_regeln ADD COLUMN rang INTEGER NOT NULL DEFAULT 0;
+   CREATE TABLE fin_wertpapiere (
+     id INTEGER PRIMARY KEY,
+     benutzer INTEGER NOT NULL DEFAULT 0,
+     konto_id INTEGER NOT NULL REFERENCES fin_konten(id) ON DELETE CASCADE,
+     name TEXT NOT NULL, isin TEXT,
+     stueck REAL NOT NULL DEFAULT 0,
+     einstand_ct INTEGER NOT NULL DEFAULT 0,
+     kurs_ct INTEGER, kurs_datum TEXT,
+     geaendert_am TEXT, geaendert_von TEXT, geaendert_benutzer INTEGER
+   );
+   CREATE INDEX fin_wertpapiere_b ON fin_wertpapiere (benutzer);
+   CREATE TABLE fin_kurse (
+     wertpapier_id INTEGER NOT NULL REFERENCES fin_wertpapiere(id) ON DELETE CASCADE,
+     datum TEXT NOT NULL,
+     kurs_ct INTEGER NOT NULL,
+     PRIMARY KEY (wertpapier_id, datum)
+   ) WITHOUT ROWID;`,
 ];
 
 // Tables without change time: the log itself, settings of this installation and page state.
@@ -1513,6 +1649,7 @@ function api(db) {
     },
   };
   const pj = projekte({ db, all, get, tx, bh });
+  const fi = finanzenModul({ db, all, get, tx, bh });
   const aw = auswertung({ db, all, get, tx, bh, ab });
   const ak = akten({ db, all, get, PERSON_NAME, bh });
   const dl = darlehen({ db, all, get, tx, bh });
@@ -1583,7 +1720,7 @@ function api(db) {
   };
 
   const alles = {
-    ...bh, ...ab, ...vw, ...ar, ...mt, ...af, ...pf, ...iv, ...al, ...bg, ...dk, ...au, ...pj, ...aw, ...ak, ...dl, ...mw, ...pr, ...kz, ...basis, ...vorschlaege,
+    ...bh, ...ab, ...vw, ...ar, ...mt, ...af, ...pf, ...iv, ...fi, ...al, ...bg, ...dk, ...au, ...pj, ...aw, ...ak, ...dl, ...mw, ...pr, ...kz, ...basis, ...vorschlaege,
     protokollRueckgaengig: rueckgaengig,
     buchen: (b, ohneTx) => { buchungPruefen(b); return bh.buchen(b, ohneTx); },
     ablesung: (datum, werte, fotos) => { for (const [id, stand] of Object.entries(werte ?? {})) zaehlerPruefen(Number(id), datum, stand); return bh.ablesung(datum, werte, fotos); },

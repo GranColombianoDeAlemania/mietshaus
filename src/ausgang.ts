@@ -33,8 +33,9 @@ const SCHREIBEND = new Set(['save', 'remove', 'dokumentSpeichern', 'dokumentZuor
   'einkaufAbschliessen']);
 // Calls that create a record and answer with its number.
 const neueNummer = (fn: string, args: unknown[]) => (fn === 'save' && !(args[1] as { id?: unknown } | undefined)?.id)
-  || ['begehungNeu', 'begehungMangel', 'ablaufStarten', 'buchen', 'einkaufNeu'].includes(fn);
-export const schreibend = (fn: string) => SCHREIBEND.has(fn);
+  || ['begehungNeu', 'begehungMangel', 'ablaufStarten', 'buchen', 'einkaufNeu'].includes(fn) || (fn === 'finBuchungSpeichern' && !(args[0] as { id?: unknown } | undefined)?.id);
+// Private finances: saving a movement may wait for the connection as well.
+export const schreibend = (fn: string) => SCHREIBEND.has(fn) || fn === 'finBuchungSpeichern' || fn === 'finKategorisieren';
 export const istVorlaeufig = (x: unknown) => typeof x === 'number' && x <= VORLAEUFIG_AB;
 
 const TABELLE: Record<string, string> = { vorgaenge: 'Aufgabe', termine: 'Termin', zaehlerstaende: 'Zählerstand', inventar: 'Inventar', pflichten: 'Pflicht',
@@ -47,7 +48,7 @@ function titelVon(fn: string, args: unknown[]): string {
     begehungMangel: `Mangel „${a[2]?.text ?? ''}“`, begehungAbschliessen: 'Begehung abgeschlossen', ablesung: 'Zählerstände', pflichtErledigen: 'Pflicht erledigt',
     pflichtenAnlegen: 'Pflichten angelegt', dokumentSpeichern: 'Angaben zu einem Dokument', ablaufStarten: 'Ablauf gestartet', uebergabeSpeichern: 'Übergabeprotokoll',
     buchen: 'Buchung', belegBuchen: 'Beleg gebucht', einkaufNeu: `Einkauf „${a[1]?.titel ?? ''}“`, einkaufGekauft: 'Einkauf gekauft',
-    einkaufWagen: 'Einkauf in den Wagen', einkaufAbschliessen: `Kassenbon (${a[0]?.ids?.length ?? 0} Artikel)` } as Record<string, string>)[fn] ?? fn;
+    einkaufWagen: 'Einkauf in den Wagen', finBuchungSpeichern: `Private Buchung „${a[0]?.empfaenger ?? ''}“`, finKategorisieren: 'Kategorie gesetzt', einkaufAbschliessen: `Kassenbon (${a[0]?.ids?.length ?? 0} Artikel)` } as Record<string, string>)[fn] ?? fn;
 }
 
 // ---------- storage ----------

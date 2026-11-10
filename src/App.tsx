@@ -109,6 +109,14 @@ const ProjektListe = ansicht(vProjekte, 'ProjektListe');
 const ProjektZeitplan = ansicht(vProjekte, 'ProjektZeitplan');
 const vPruefbericht = () => import('./views/Pruefbericht');
 const Pruefbericht = ansicht(vPruefbericht, 'Pruefbericht');
+const vFinanzen = () => import('./views/Finanzen');
+const FinCockpit = ansicht(vFinanzen, 'FinCockpit');
+const FinBuchungen = ansicht(vFinanzen, 'FinBuchungen');
+const FinBudget = ansicht(vFinanzen, 'FinBudget');
+const FinDauer = ansicht(vFinanzen, 'FinDauer');
+const FinAuswertung = ansicht(vFinanzen, 'FinAuswertung');
+const FinStammdaten = ansicht(vFinanzen, 'FinStammdaten');
+const FinVermoegen = ansicht(vFinanzen, 'FinVermoegen');
 const vAufgaben = () => import('./views/Aufgaben');
 const Aufgaben = ansicht(vAufgaben, 'Aufgaben');
 const vorladen = () => { for (const l of [vArchiv, vUebersicht, vKommunikation, vKalender, vAufgaben]) l().catch(() => {}); };
@@ -128,6 +136,7 @@ const ICON: Record<string, I.LucideIcon> = {
   kaution: I.Shield, anpassung: I.TrendingUp, vermietung: I.UserPlus, uebergabe: I.ClipboardCheck, versammlungen: I.Gavel, beschluesse: I.ScrollText,
   kontakte: I.Phone, schluesselv: I.KeyRound, versicherungen: I.Umbrella, pflichten: I.ClipboardCheck, inventar: I.WashingMachine, begehungen: I.SearchCheck,
   briefe: I.Mail, vorgaenge: I.ListChecks, termine: I.CalendarDays, kalender: I.CalendarDays,
+  fcockpit: I.Gauge, fbuchungen: I.ArrowLeftRight, fbudget: I.Target, fdauer: I.Repeat, fauswertung: I.ChartColumn, fvermoegen: I.TrendingUp, fstamm: I.Landmark,
   pruefung: I.ShieldCheck, status: I.Activity, protokoll: I.History, export: I.Download, einstellungen: I.Settings,
 };
 
@@ -148,6 +157,14 @@ const SEITEN: Seite[] = [
   { id: 'vorschlaege', label: 'Vorschläge von Claude', gruppe: 'Dokumente', alle: true, render: () => <Vorschlaege /> },
   { id: 'archiv', label: 'Archiv & Suche', gruppe: 'Dokumente', alle: true, render: (c) => <Archiv objekt={c.modus === 'projekt' ? undefined : c.objekt} /> },
   { id: 'rechnungen', label: 'Rechnungen', gruppe: 'Dokumente', alle: true, render: (c) => <Rechnungen objekt={c.modus === 'projekt' ? undefined : c.objekt} /> },
+  // Private finances: per user, without a house (src/views/Finanzen.tsx).
+  { id: 'fcockpit', label: 'Übersicht', gruppe: 'Start', modi: ['finanz'], render: (c) => <FinCockpit oeffne={c.oeffne} /> },
+  { id: 'fbuchungen', label: 'Buchungen', gruppe: 'Finanzen', modi: ['finanz'], render: () => <FinBuchungen /> },
+  { id: 'fbudget', label: 'Budgets', gruppe: 'Finanzen', modi: ['finanz'], render: () => <FinBudget /> },
+  { id: 'fdauer', label: 'Verträge', gruppe: 'Finanzen', modi: ['finanz'], render: () => <FinDauer /> },
+  { id: 'fauswertung', label: 'Auswertung', gruppe: 'Finanzen', modi: ['finanz'], render: () => <FinAuswertung /> },
+  { id: 'fvermoegen', label: 'Depot & Kredite', gruppe: 'Finanzen', modi: ['finanz'], render: () => <FinVermoegen /> },
+  { id: 'fstamm', label: 'Konten & Kategorien', gruppe: 'Finanzen', modi: ['finanz'], render: () => <FinStammdaten /> },
   { id: 'pcockpit', label: 'Cockpit', gruppe: 'Start', modi: ['projekt'], render: (c) => <ProjektCockpit oeffne={c.oeffne} /> },
   { id: 'projekte', label: 'Alle Projekte', gruppe: 'Projekte', modi: ['projekt'], render: (c) => <ProjektListe reload={c.ladeObjekte} oeffne={c.oeffne} /> },
   { id: 'zeitplan', label: 'Zeitplan', gruppe: 'Projekte', objekt: true, modi: ['projekt'], render: (c) => <ProjektZeitplan key={c.objekt.id} projekt={c.objekt} /> },
@@ -196,7 +213,7 @@ const SEITEN: Seite[] = [
   { id: 'einstellungen', label: 'Einstellungen', gruppe: 'System', alle: true, render: () => <Einstellungen /> },
 ];
 
-const REIHENFOLGE = ['Start', 'Projekte', 'Stammdaten', 'Dokumente', 'Buchhaltung', 'Abrechnung', 'Verwaltung', 'Kommunikation', 'System'];
+const REIHENFOLGE = ['Start', 'Finanzen', 'Projekte', 'Stammdaten', 'Dokumente', 'Buchhaltung', 'Abrechnung', 'Verwaltung', 'Kommunikation', 'System'];
 // Detail pages highlight the list they belong to.
 const LISTE_ZU_DETAIL: Record<string, string> = { person: 'personen', einheit: 'einheiten', vertrag: 'vertraege', konto: 'konten' };
 // Pages without their own menu entry light up the entry they belong to.
@@ -205,13 +222,16 @@ const MENUE_FUER: Record<string, string> = { steckbrief: 'objekte' };
 const lesen = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
 const schreiben = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch {} };
 
-const sichtbarIn = (s: Seite, m: Modus) => s.alle || (s.modi ? s.modi.includes(m) : m !== 'projekt');
+// Modes without a house: projects and the private finances.
+const ohneHaus = (m: Modus) => m === 'projekt' || m === 'finanz';
+const startSeite = (m: Modus) => (m === 'projekt' ? 'pcockpit' : m === 'finanz' ? 'fcockpit' : 'uebersicht');
+const sichtbarIn = (s: Seite, m: Modus) => s.alle || (s.modi ? s.modi.includes(m) : !ohneHaus(m));
 const labelVon = (s: Seite, m: Modus) => (typeof s.label === 'function' ? s.label(m) : s.label);
 
 function startOrt(): Ort {
   const m = lesen('modus');
-  const modus: Modus = m === 'weg' || m === 'projekt' ? m : 'miete';
-  const seite = lesen(`seite_${modus}`) ?? lesen('seite') ?? (modus === 'projekt' ? 'pcockpit' : 'uebersicht');
+  const modus: Modus = m === 'weg' || m === 'projekt' || m === 'finanz' ? m : 'miete';
+  const seite = lesen(`seite_${modus}`) ?? (ohneHaus(modus) ? null : lesen('seite')) ?? startSeite(modus);
   // "Termine" became the calendar (0.13).
   return { modus, seite: seite === 'termine' ? 'kalender' : seite, objektId: Number(lesen(`objekt_${modus}`)) || null };
 }
@@ -222,7 +242,7 @@ export default function App(props: { benutzer?: Row | null }) {
   const ort = nav.verlauf[nav.pos];
   const { modus, seite, objektId } = ort;
   // In project mode the header selects a project instead of an object.
-  const [objekte, ladeObjekte] = useLoad<Row[]>(() => (modus === 'projekt' ? call('projektListe') : call('objekte', modus)), [modus]);
+  const [objekte, ladeObjekte] = useLoad<Row[]>(() => (modus === 'projekt' ? call('projektListe') : modus === 'finanz' ? Promise.resolve([]) : call('objekte', modus)), [modus]);
   // All houses with their kind, to know which mode shows a house that a link points to.
   const [alleObjekte] = useLoad<Row[]>(async () => [...await call('objekte', 'miete'), ...await call('objekte', 'weg')], []);
   const [pfad, setPfad] = useState<PfadTeil[] | null>(null);
@@ -252,12 +272,12 @@ export default function App(props: { benutzer?: Row | null }) {
     if (art === 'weg') return 'weg';
     if (art === 'miete') return 'miete';
     const m = wunsch ?? modus;
-    return m === 'projekt' ? 'miete' : m;
+    return ohneHaus(m) ? 'miete' : m;
   };
 
   const zu = useCallback((z: Ziel) => {
     window.dispatchEvent(new Event('hv-navigiert'));
-    const neutral: Modus = modus === 'projekt' ? 'miete' : modus;
+    const neutral: Modus = ohneHaus(modus) ? 'miete' : modus;
     if ('dokument' in z) return setDokOffen({ id: z.dokument, datei: z.datei });
     if ('person' in z) return gehe({ seite: 'person', param: String(z.person), modus: neutral });
     if ('einheit' in z) return gehe({ seite: 'einheit', param: String(z.einheit), modus: neutral });
@@ -275,7 +295,7 @@ export default function App(props: { benutzer?: Row | null }) {
     let m = z.modus ?? modus;
     if (s && !sichtbarIn(s, m)) m = s.modi?.[0] ?? 'miete';
     const oid = z.objektId !== undefined ? z.objektId : objektId;
-    if (s?.objekt && m !== 'projekt' && oid) m = modusFuer(oid, m);
+    if (s?.objekt && !ohneHaus(m) && oid) m = modusFuer(oid, m);
     gehe({ seite: z.seite, objektId: m === modus || m === 'projekt' ? oid : (oid ?? (Number(lesen(`objekt_${m}`)) || null)), modus: m });
   }, [gehe, modus, objektId, alleObjekte]);
 
@@ -311,7 +331,7 @@ export default function App(props: { benutzer?: Row | null }) {
 
   function wechsle(m: Modus) {
     if (m === modus) return;
-    gehe({ modus: m, seite: lesen(`seite_${m}`) ?? (m === 'projekt' ? 'pcockpit' : 'uebersicht'), objektId: Number(lesen(`objekt_${m}`)) || null, param: undefined });
+    gehe({ modus: m, seite: lesen(`seite_${m}`) ?? startSeite(m), objektId: Number(lesen(`objekt_${m}`)) || null, param: undefined });
   }
 
   // ---------- back / forward: keys, mouse buttons, trackpad swipe ----------
@@ -483,7 +503,7 @@ export default function App(props: { benutzer?: Row | null }) {
   const favSeiten = favoriten.map((id) => sichtbar.find((s) => s.id === (id === 'termine' ? 'kalender' : id))).filter((s): s is Seite => !!s);
 
   // Units of the current house in the sidebar (tree under "Einheiten").
-  const [baumEinheiten] = useLoad<Row[]>(() => (objektId && modus !== 'projekt' ? call('einheiten', objektId) : Promise.resolve([])), [objektId, modus]);
+  const [baumEinheiten] = useLoad<Row[]>(() => (objektId && !ohneHaus(modus) ? call('einheiten', objektId) : Promise.resolve([])), [objektId, modus]);
   const baumOffen = !zugeklappt.includes('baum');
   const aktiveEinheit = seite === 'einheit' ? Number(ort.param) : null;
 
@@ -494,7 +514,7 @@ export default function App(props: { benutzer?: Row | null }) {
 
   const befehle: Befehl[] = [
     { label: 'Dokumente ablegen', stichworte: 'hochladen import scan', icon: I.FilePlus2, run: schnellAblegen },
-    ...(modus !== 'projekt' ? [
+    ...(!ohneHaus(modus) ? [
       { label: 'Neue Buchung', stichworte: 'buchen rechnung zahlung', icon: I.BookOpen, run: () => zu({ seite: 'buchen', aktion: 'neue-buchung' }) },
       { label: 'Mahnlauf / offene Posten', stichworte: 'mahnung rückstand', icon: I.BadgeEuro, run: () => zu({ seite: 'op' }) },
       { label: 'Kontoauszug importieren', stichworte: 'bank camt mt940 csv', icon: I.Wallet, run: () => zu({ seite: 'bank' }) },
@@ -508,6 +528,7 @@ export default function App(props: { benutzer?: Row | null }) {
     { label: 'Zur Mietverwaltung', icon: I.KeyRound, run: () => wechsle('miete') },
     { label: 'Zur WEG-Verwaltung', icon: I.Building2, run: () => wechsle('weg') },
     { label: 'Zu den Projekten', icon: I.Hammer, run: () => wechsle('projekt') },
+    { label: 'Zu den Finanzen', stichworte: 'privat konto budget geld', icon: I.PiggyBank, run: () => wechsle('finanz') },
     { label: 'Zurück', stichworte: 'verlauf', icon: I.ChevronLeft, run: zurueck },
     { label: 'Hell / Dunkel umschalten', stichworte: 'dunkelmodus farbschema', icon: I.Moon,
       run: () => anzeige.setzeThema(document.documentElement.dataset.thema === 'dunkel' ? 'hell' : 'dunkel') },
@@ -551,7 +572,7 @@ export default function App(props: { benutzer?: Row | null }) {
         <aside className={`seitenleiste${menueOffen ? ' offen' : ''}`} onClick={(e) => { if ((e.target as Element).closest('.eintrag')) setMenueOffen(false); }}>
           <div className="marke"><img src="/logo.svg" alt="" width={30} height={30} /><span>Mietshaus</span></div>
           <div className="modi" role="tablist">
-            {([['miete', 'Miete', I.KeyRound], ['weg', 'WEG', I.Building2], ['projekt', 'Projekte', I.Hammer]] as [Modus, string, I.LucideIcon][]).map(([m, l, Icon]) => (
+            {([['miete', 'Miete', I.KeyRound], ['weg', 'WEG', I.Building2], ['projekt', 'Projekte', I.Hammer], ['finanz', 'Finanzen', I.PiggyBank]] as [Modus, string, I.LucideIcon][]).map(([m, l, Icon]) => (
               <button key={m} role="tab" className={`modus-${m}`} aria-selected={modus === m} onClick={() => wechsle(m)}><Bild name={MODUS_SYMBOL[m]} groesse={26} ersatz={Icon} /><span>{l}</span></button>
             ))}
           </div>
@@ -624,7 +645,7 @@ export default function App(props: { benutzer?: Row | null }) {
             ))}
           </nav>
           <Suche befehle={befehle} onDokument={(d) => setDokOffen({ id: d.id, datei: d.datei })} />
-          <div className="objektwahl" aria-label={modus === 'projekt' ? 'Projekt wählen' : 'Objekt wählen'}>
+          <div className="objektwahl" hidden={modus === 'finanz'} aria-label={modus === 'projekt' ? 'Projekt wählen' : 'Objekt wählen'}>
             <I.Building2 size={15} />
             <Auswahl pflicht value={objektId ?? ''} disabled={!objekte?.length}
               platzhalter={!objekte ? 'lädt …' : !objekte.length ? (modus === 'projekt' ? '– noch keine Projekte –' : '– noch keine Objekte –') : undefined}

@@ -374,6 +374,18 @@ function client(adresse) {
     pruefe('Lesen wird nicht aufbewahrt', r1.ok && r2.headers.get('x-wiederholt') === null);
   }
 
+  // ---------- private finances: the server puts the signed-in user in front, nobody reaches another user's money ----------
+  {
+    const k = await anna.call('finKontoSpeichern', { name: 'Annas Giro', anfang_ct: 12300 });
+    const bu = await anna.call('finBuchungSpeichern', { konto_id: k, datum: '2026-11-01', betrag_ct: -500, empfaenger: 'Bäcker' });
+    pruefe('Finanzen: Anna sieht ihr Konto', (await anna.call('finKonten')).map((x) => x.saldo_ct).join() === '11800');
+    pruefe('Finanzen: Ben sieht nichts davon', (await ben.call('finKonten')).length === 0 && (await ben.call('finBuchungen')).length === 0 && (await ben.call('finUebersicht')).vermoegen_ct === 0);
+    pruefe('Finanzen: Ben kann Annas Buchung nicht löschen', await ben.call('finBuchungLoeschen', bu).then(() => false, (e) => /gibt es nicht/.test(e.message)));
+    pruefe('Finanzen: Ben kann nicht auf Annas Konto buchen', await ben.call('finBuchungSpeichern', { konto_id: k, datum: '2026-11-01', betrag_ct: 1 }).then(() => false, (e) => /gibt es nicht/.test(e.message)));
+    pruefe('Finanzen: ein mitgeschickter Benutzer wird nicht als Benutzer genommen', await ben.call('finKonten', 1).then((l) => l.length === 0, () => true));
+    pruefe('Finanzen: nicht über die allgemeine Liste lesbar', await ben.call('liste', 'fin_buchungen').then(() => false, (e) => /Unbekannte Tabelle/.test(e.message)));
+  }
+
   // ---------- a receipt sent twice (connection lost while paying) is booked once ----------
   {
     const pr = await anna.call('save', 'projekte', { titel: 'Bon-Test', status: 'laufend' });

@@ -21,8 +21,9 @@ export const SEITEN_SYMBOL: Record<string, SymbolName> = {
   kaution: 'kaution', anpassung: 'anpassung', vermietung: 'vermietung', uebergabe: 'uebergabe', versammlungen: 'versammlung', beschluesse: 'beschluesse',
   kontakte: 'kontakte', schluesselv: 'schluessel', versicherungen: 'versicherung', pflichten: 'pflichten', inventar: 'inventar', begehungen: 'begehung', briefe: 'briefe', vorgaenge: 'vorgaenge', kalender: 'kalender',
   pruefung: 'pruefung', status: 'status', protokoll: 'protokoll', export: 'export', einstellungen: 'einstellungen',
+  fcockpit: 'cockpit', fbuchungen: 'buchungen', fbudget: 'wirtschaftsplan', fdauer: 'sollstellung', fauswertung: 'rendite', fvermoegen: 'darlehen', fstamm: 'konten',
 };
-export const MODUS_SYMBOL: Record<string, SymbolName> = { miete: 'miete', weg: 'einheiten', projekt: 'projekte' };
+export const MODUS_SYMBOL: Record<string, SymbolName> = { miete: 'miete', weg: 'einheiten', projekt: 'projekte', finanz: 'konten' };
 
 export function Bild(props: { name: SymbolName; groesse?: number; ersatz?: LucideIcon; className?: string }) {
   const stil = useSymbolStil();

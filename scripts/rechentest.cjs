@@ -1715,6 +1715,197 @@ Stadtsparkasse München | IBAN DE02 7015 0000 0000 1234 56 | BIC SSKMDEMMXXX`;
   gleich('Schritte von Hand: gezählt am Vorgang', [zeile.schritte, zeile.schritte_erledigt, t.ablaufSchritte(h).length], [2, 1, 2]);
 }
 
+// ---------- 0.24: private finances per user, hand-over to houses and projects ----------
+{
+  const raw2 = open(':memory:');
+  const t = api(raw2);
+  t.setzeEinstellungen({ auto_soll: '0' });
+  const heute = require('../electron/zeit.cjs').heute();
+  const monat = heute.slice(0, 7);
+  const A = 1, Bn = 2;
+  const giro = t.finKontoSpeichern(A, { name: 'Giro', art: 'giro', anfang_ct: 100000 });
+  const spar = t.finKontoSpeichern(A, { name: 'Tagesgeld', art: 'spar', anfang_ct: 500000 });
+  const fremd = t.finKontoSpeichern(Bn, { name: 'Giro B', anfang_ct: 7700 });
+  const kat = (b, name) => t.finKategorien(b).find((c) => c.name === name).id;
+  gleich('Finanzen: Startkategorien je Benutzer', [t.finKategorien(A).length > 15, t.finKategorien(Bn).every((c) => c.benutzer === Bn)], [true, true]);
+  const essen = t.finBuchungSpeichern(A, { konto_id: giro, datum: `${monat}-03`, betrag_ct: -4250, empfaenger: 'REWE Markt', kategorie_id: kat(A, 'Lebensmittel') });
+  t.finBuchungSpeichern(A, { konto_id: giro, datum: `${monat}-01`, betrag_ct: 300000, empfaenger: 'Arbeitgeber GmbH', kategorie_id: kat(A, 'Gehalt') });
+  const um = t.finBuchungSpeichern(A, { konto_id: giro, gegenkonto_id: spar, datum: `${monat}-02`, betrag_ct: -50000 });
+  gleich('Kontostände: Anfang plus Buchungen, Umbuchung auf beiden Seiten', t.finKonten(A).map((k) => [k.name, k.saldo_ct]), [['Giro', 345750], ['Tagesgeld', 550000]]);
+  const u = t.finUebersicht(A);
+  gleich('Übersicht: Vermögen; Umbuchung ist weder Einnahme noch Ausgabe', [u.vermoegen_ct, u.ein_ct, u.aus_ct, u.sparquote], [895750, 300000, 4250, 98.6]);
+  gleich('Verlauf: zwölf Monate, letzter ist heute', [u.verlauf.length, u.verlauf[11].vermoegen_ct, u.verlauf[10].vermoegen_ct], [12, 895750, 600000]);
+  gleich('Benutzer B sieht nichts von A', [t.finKonten(Bn).map((k) => k.name), t.finBuchungen(Bn).length, t.finUebersicht(Bn).vermoegen_ct], [['Giro B'], 0, 7700]);
+  const fehlerVon = (f) => { try { f(); return 'kein Fehler'; } catch (e) { return e.message; } };
+  gleich('B kann A nicht buchen, ändern oder löschen', [fehlerVon(() => t.finBuchungSpeichern(Bn, { konto_id: giro, datum: heute, betrag_ct: -1 })),
+    fehlerVon(() => t.finBuchungLoeschen(Bn, essen)), fehlerVon(() => t.finKontoSpeichern(Bn, { id: giro, name: 'meins' })), fehlerVon(() => t.finBuchungSpeichern(Bn, { konto_id: fremd, datum: heute, betrag_ct: -1, kategorie_id: kat(A, 'Gehalt') }))],
+    Array(4).fill('Diesen Eintrag gibt es nicht (mehr).'));
+  gleich('Finanztabellen sind über save/liste nicht erreichbar', [fehlerVon(() => t.liste('fin_buchungen')), fehlerVon(() => t.save('fin_konten', { name: 'x' }))], ['Unbekannte Tabelle: fin_buchungen', 'Unbekannte Tabelle: fin_konten']);
+  t.finBuchungLoeschen(A, um);
+  gleich('Umbuchung löschen entfernt beide Seiten', t.finKonten(A).map((k) => k.saldo_ct), [395750, 500000]);
+  // Rules and import.
+  t.finKategorisieren(A, [essen], kat(A, 'Lebensmittel'), 'rewe');
+  const imp = t.finImport(A, giro, [{ ref: 'r1', datum: `${monat}-05`, betrag_ct: -1999, name: 'REWE Sagt Danke', zweck: 'Einkauf' }, { ref: 'r2', datum: `${monat}-06`, betrag_ct: -5000, name: 'Tankstelle', zweck: '' }]);
+  gleich('Import: neu, Regel greift', [imp.neu, imp.doppelt, imp.kategorisiert], [2, 0, 1]);
+  gleich('Import zweimal: nichts doppelt', t.finImport(A, giro, [{ ref: 'r1', datum: `${monat}-05`, betrag_ct: -1999, name: 'REWE Sagt Danke' }]).neu, 0);
+  gleich('Ohne Kategorie: nur die Tankstelle', t.finBuchungen(A, { ohne_kategorie: true }).map((x) => x.empfaenger), ['Tankstelle']);
+  t.finRegelSpeichern(A, { muster: 'Tankstelle', kategorie_id: kat(A, 'Mobilität') });
+  gleich('Regeln nachträglich anwenden', [t.finRegelnAnwenden(A), t.finUebersicht(A).ohne_kategorie], [1, 0]);
+  // Budget.
+  t.finBudgetSetzen(A, kat(A, 'Lebensmittel'), 5000);
+  gleich('Budget: Ist und Rest (überzogen)', t.finBudgets(A, monat).map((g) => [g.name, g.ist_ct, g.rest_ct]), [['Lebensmittel', 6249, -1249]]);
+  t.finBudgetSetzen(A, kat(A, 'Lebensmittel'), 0);
+  gleich('Budget 0 entfernt es', t.finBudgets(A, monat).length, 0);
+  // Standing orders and forecast.
+  const tag1 = (n) => { const d = new Date(Date.UTC(Number(heute.slice(0, 4)), Number(heute.slice(5, 7)) - 1 + n, 1)); return d.toISOString().slice(0, 10); };
+  const miete = t.finDauerSpeichern(A, { konto_id: giro, empfaenger: 'Vermieter', betrag_ct: -80000, rhythmus_monate: 1, naechste: tag1(1), kategorie_id: kat(A, 'Wohnen') });
+  t.finDauerSpeichern(A, { konto_id: giro, empfaenger: 'Kfz-Versicherung', betrag_ct: -60000, rhythmus_monate: 12, naechste: tag1(2) });
+  const pr = t.finPrognose(A, 3);
+  gleich('Prognose: Miete ab nächstem Monat, Versicherung im übernächsten', pr.map((p) => p.aus_ct), [0, 80000, 140000]);
+  gleich('Prognose: Kontostand am Ende', pr[2].stand_ct, 888751 - 220000);
+  gleich('Feste Ausgaben je Monat (jährlich durch 12)', t.finUebersicht(A).fix_monat_ct, 85000);
+  t.finDauerBuchen(A, miete);
+  const d = t.finDauer(A).find((x) => x.id === miete);
+  gleich('Dauerauftrag gebucht: Termin einen Monat weiter, Buchung mit Kategorie', [d.naechste, t.finBuchungen(A, { suche: 'Vermieter' }).map((x) => [x.betrag_ct, x.kategorie])], [tag1(2), [[-80000, 'Wohnen']]]);
+  // Auswertung.
+  const aw = t.finAuswertung(A, { von: `${monat}-01`, bis: `${monat}-28` });
+  gleich('Auswertung: Summen, größte Ausgabe zuerst', [aw.ein_ct, aw.aus_ct, aw.ausgaben[0].name, aw.ausgaben[0].summe_ct], [300000, 11249, 'Lebensmittel', 6249]);
+  // Hand-over to a project and to a house, and back.
+  const projekt = t.save('projekte', { titel: 'Bad', status: 'laufend' });
+  const fliesen = t.finBuchungSpeichern(A, { konto_id: giro, datum: heute, betrag_ct: -25000, empfaenger: 'Fliesen Müller', zweck: 'Rechnung 12' });
+  t.finUebergeben(A, fliesen, { ziel: 'projekt', projekt_id: projekt });
+  gleich('An Projekt übergeben: bezahlte Rechnung', t.projekt(projekt).posten.map((p) => [p.titel, p.betrag_ct, p.status, p.firma]), [['Fliesen Müller – Rechnung 12', 25000, 'bezahlt', 'Fliesen Müller']]);
+  gleich('Zweimal übergeben geht nicht', fehlerVon(() => t.finUebergeben(A, fliesen, { ziel: 'projekt', projekt_id: projekt })), 'Diese Buchung wurde schon übergeben.');
+  gleich('B kann A-Buchungen nicht übergeben', fehlerVon(() => t.finUebergeben(Bn, essen, { ziel: 'projekt', projekt_id: projekt })), 'Diesen Eintrag gibt es nicht (mehr).');
+  const haus = t.neuesObjekt({ bezeichnung: 'Finanzhaus', art: 'miete', strasse: 'Weg 7', plz: '10115', ort: 'Berlin' });
+  const kosten = t.finObjektKonten(A, haus).find((k) => k.klasse === 'kosten' && /Instandhaltung/.test(k.bezeichnung)).id;
+  const klempner = t.finBuchungSpeichern(A, { konto_id: giro, datum: heute, betrag_ct: -18000, empfaenger: 'Klempner' });
+  const r = t.finUebergeben(A, klempner, { ziel: 'objekt', objekt_id: haus, konto_id: kosten });
+  const bu = raw2.prepare('SELECT b.betrag_ct, s.id AS soll, h.kategorie AS haben FROM buchungen b JOIN konten s ON s.id = b.soll_id JOIN konten h ON h.id = b.haben_id WHERE b.id = ?').get(r.ziel_id);
+  gleich('An Haus übergeben: Kosten an Privatkonto', [bu.betrag_ct, bu.soll, bu.haben], [18000, kosten, 'privat']);
+  const bank = raw2.prepare(`SELECT id FROM konten WHERE objekt_id = ? AND klasse = 'geld' AND kategorie = 'giro'`).get(haus).id;
+  const privat = raw2.prepare(`SELECT id FROM konten WHERE objekt_id = ? AND kategorie = 'privat'`).get(haus).id;
+  const entnahme = t.buchen({ objekt_id: haus, datum: heute, text: 'Entnahme', positionen: [{ soll_id: privat, haben_id: bank, betrag_ct: 40000 }] });
+  gleich('Übernehmbar: die Entnahme vom Objektkonto als Einnahme (Privat-gegen-Kosten zählt nicht)', t.finUebernehmbar(A, { objekt_id: haus }).map((q) => [q.id, q.betrag_ct]), [[entnahme, 40000]]);
+  const eink = raw2.prepare(`SELECT id FROM konten WHERE objekt_id = ? AND klasse = 'einnahme' LIMIT 1`).get(haus).id;
+  const auszahlung = t.buchen({ objekt_id: haus, datum: heute, text: 'Auszahlung Überschuss', positionen: [{ soll_id: eink, haben_id: bank, betrag_ct: 40000 }] });
+  gleich('Übernehmbar: Geld verlässt das Objektkonto', t.finUebernehmbar(A, { objekt_id: haus }).map((q) => [q.id, q.betrag_ct]), [[auszahlung, 40000], [entnahme, 40000]]);
+  const ueb = t.finUebernehmen(A, { quelle: 'buchung', id: auszahlung, konto_id: giro, kategorie_id: kat(A, 'Mieteinnahmen') });
+  gleich('Übernommen: private Einnahme, nur einmal', [t.finBuchungen(A).find((x) => x.id === ueb).betrag_ct, t.finUebernehmbar(A, { objekt_id: haus }).length,
+    fehlerVon(() => t.finUebernehmen(A, { quelle: 'buchung', id: auszahlung, konto_id: giro }))], [40000, 1, 'Das wurde schon übernommen.']);
+  gleich('B sieht beide Zahlungen des Hauses, aber nicht die privat bezahlte Rechnung von A', t.finUebernehmbar(Bn, { objekt_id: haus }).length, 2);
+  gleich('Konto mit Buchungen wird archiviert, leeres gelöscht', [t.finKontoLoeschen(A, giro), t.finKontoLoeschen(A, t.finKontoSpeichern(A, { name: 'leer' }))], ['archiviert', 'geloescht']);
+}
+
+// ---------- 0.24: finances in depth – splits, sub-categories, budgets, contracts, rules, reconciliation, loan, depot ----------
+{
+  const raw2 = open(':memory:');
+  const t = api(raw2);
+  const heute = require('../electron/zeit.cjs').heute();
+  const monat = heute.slice(0, 7), jahr = heute.slice(0, 4);
+  const plusT = (n) => new Date(Date.parse(`${heute}T12:00:00Z`) + n * 864e5).toISOString().slice(0, 10);
+  const U = 5;
+  const fehlerVon = (f) => { try { f(); return 'kein Fehler'; } catch (e) { return e.message; } };
+  const giro = t.finKontoSpeichern(U, { name: 'Giro', anfang_ct: 200000, dispo_ct: 50000, min_ct: 30000 });
+  const kat = (name) => t.finKategorien(U).find((c) => c.name === name).id;
+  // Sub-categories.
+  const auto = t.finKategorieSpeichern(U, { name: 'Tanken', art: 'ausgabe', eltern_id: kat('Mobilität') });
+  gleich('Unterkategorie: Pfad, nur eine Ebene, gleiche Art', [t.finKategorien(U).find((c) => c.id === auto).pfad,
+    fehlerVon(() => t.finKategorieSpeichern(U, { name: 'Diesel', art: 'ausgabe', eltern_id: auto })), fehlerVon(() => t.finKategorieSpeichern(U, { name: 'X', art: 'einnahme', eltern_id: kat('Mobilität') }))],
+    ['Mobilität › Tanken', 'Unterkategorien gehen nur eine Ebene tief.', 'Haupt- und Unterkategorie müssen beide Einnahme oder beide Ausgabe sein.']);
+  // Split booking: one purchase, two categories.
+  const einkauf = t.finBuchungSpeichern(U, { konto_id: giro, datum: `${monat}-02`, betrag_ct: -10000, empfaenger: 'Supermarkt' });
+  gleich('Split: Teile müssen zum Betrag passen', fehlerVon(() => t.finBuchungTeilen(U, einkauf, [{ betrag_ct: -6000, kategorie_id: kat('Lebensmittel') }, { betrag_ct: -3000, kategorie_id: kat('Kleidung') }])),
+    'Die Teile ergeben -90,00 €, die Buchung hat -100,00 €.');
+  t.finBuchungTeilen(U, einkauf, [{ betrag_ct: -6000, kategorie_id: kat('Lebensmittel') }, { betrag_ct: -4000, kategorie_id: kat('Kleidung') }]);
+  t.finBuchungSpeichern(U, { konto_id: giro, datum: `${monat}-03`, betrag_ct: -5000, empfaenger: 'Tankstelle', kategorie_id: auto });
+  gleich('Split: Kontostand zählt die Buchung einmal', t.finKonten(U)[0].saldo_ct, 185000);
+  const aw = t.finAuswertung(U, { von: `${monat}-01`, bis: `${monat}-28` });
+  gleich('Split: Auswertung nach den Teilen; Unterkategorie unter der Hauptkategorie', [aw.aus_ct, aw.ausgaben.map((k) => [k.name, k.summe_ct, k.unter.map((u) => u.name)])],
+    [15000, [['Lebensmittel', 6000, []], ['Mobilität', 5000, ['Tanken']], ['Kleidung', 4000, []]]]);
+  gleich('Split: in der Liste eine Zeile mit den Kategorien der Teile', t.finBuchungen(U, { suche: 'Supermarkt' }).map((x) => [x.teile, x.teil_kategorien, x.betrag_ct]), [[2, 'Lebensmittel, Kleidung', -10000]]);
+  gleich('Split: über die Kategorie eines Teils gefunden; Betrag ändern verlangt neue Aufteilung', [t.finBuchungen(U, { kategorie_id: kat('Kleidung') }).length,
+    fehlerVon(() => t.finBuchungSpeichern(U, { id: einkauf, konto_id: giro, datum: `${monat}-02`, betrag_ct: -12000 }))], [1, 'Diese Buchung ist aufgeteilt. Ändere zuerst die Aufteilung, damit die Teile wieder zum Betrag passen.']);
+  // Budgets: with sub-categories, per quarter, with the forecast.
+  t.finBudgetSetzen(U, { kategorie_id: kat('Mobilität'), betrag_ct: 20000, intervall_monate: 1, mit_unter: 1 });
+  t.finBudgetSetzen(U, { kategorie_id: kat('Kleidung'), betrag_ct: 30000, intervall_monate: 12 });
+  const bud = t.finBudgets(U, monat);
+  gleich('Budget: Unterkategorie zählt mit; Jahresbudget über das Jahr', bud.map((g) => [g.name, g.ist_ct, g.rest_ct, g.von.slice(0, 4) === jahr && g.von.slice(5), g.bis.slice(5)]).sort(),
+    [['Kleidung', 4000, 26000, '01-01', '12-31'], ['Mobilität', 5000, 15000, `${monat.slice(5)}-01`, bud.find((g) => g.name === 'Mobilität').bis.slice(5)]]);
+  t.finBudgetSetzen(U, { kategorie_id: kat('Mobilität'), betrag_ct: 20000, mit_unter: 0 });
+  gleich('Budget ohne Unterkategorien', t.finBudgets(U, monat).find((g) => g.name === 'Mobilität').ist_ct, 0);
+  // Rules with conditions.
+  t.finRegelSpeichern(U, { muster: 'amazon', kategorie_id: kat('Freizeit') });
+  t.finRegelSpeichern(U, { muster: 'amazon', kategorie_id: kat('Beruf und Fortbildung'), betrag_von_ct: 50000, kennzeichen: 'Steuer', rang: 5 });
+  t.finRegelSpeichern(U, { muster: 'miete', kategorie_id: kat('Wohnen'), feld: 'zweck' });
+  const imp = t.finImport(U, giro, [{ ref: 'a', datum: `${monat}-04`, betrag_ct: -2000, name: 'AMAZON EU', zweck: 'Buch' }, { ref: 'b', datum: `${monat}-04`, betrag_ct: -80000, name: 'Amazon EU', zweck: 'Laptop' },
+    { ref: 'c', datum: `${monat}-05`, betrag_ct: -1000, name: 'Miete & Co KG', zweck: 'Blumen' }]);
+  const nach = Object.fromEntries(t.finBuchungen(U, { nur_neue: true }).map((x) => [x.zweck, [x.kategorie, x.kennzeichen]]));
+  gleich('Regeln: Betragsgrenze und Rang, Kennzeichen, Feld „Zweck“ greift beim Empfänger nicht', [imp.kategorisiert, nach.Buch, nach.Laptop, nach.Blumen],
+    [2, ['Freizeit', null], ['Beruf und Fortbildung', 'Steuer'], [null, null]]);
+  gleich('Neu-Markierung: drei neue, nach „gesehen“ keine', [t.finUebersicht(U).neue, t.finGesehen(U), t.finUebersicht(U).neue], [3, 3, 0]);
+  gleich('Kennzeichen-Liste', t.finKennzeichen(U), [{ kennzeichen: 'Steuer', anzahl: 1 }]);
+  // Expected movement confirmed by the statement instead of doubled.
+  const erwartet = t.finBuchungSpeichern(U, { konto_id: giro, datum: `${monat}-10`, betrag_ct: -4990, empfaenger: 'Zahnarzt', kategorie_id: kat('Gesundheit'), vorgemerkt: 1 });
+  gleich('Vorgemerkt: steht in der Übersicht', [t.finUebersicht(U).vorgemerkt.n, t.finUebersicht(U).vorgemerkt.summe_ct], [1, -4990]);
+  const imp2 = t.finImport(U, giro, [{ ref: 'd', datum: `${monat}-12`, betrag_ct: -4990, name: 'Dr. Zahn', zweck: 'Rechnung 7' }]);
+  const z = t.finBuchungen(U, { suche: 'Zahnarzt' })[0];
+  gleich('Vorgemerkt: vom Kontoauszug bestätigt, nicht doppelt; Kategorie bleibt', [imp2.bestaetigt, imp2.neu, z.id, z.vorgemerkt, z.datum, z.kategorie, z.zweck], [1, 0, erwartet, 0, `${monat}-12`, 'Gesundheit', 'Rechnung 7']);
+  // Reconciliation.
+  const stand = t.finKonten(U)[0].saldo_ct;
+  gleich('Abgleich: Bank zeigt 12,34 € weniger', t.finAbgleich(U, giro, { bank_saldo_ct: stand - 1234, datum: `${monat}-28` }).abgleich_ct, -1234);
+  gleich('Abgleich ausgleichen: Korrekturbuchung, Differenz 0', [t.finAbgleich(U, giro, { bank_saldo_ct: stand - 1234, datum: `${monat}-28`, ausgleichen: true }).abgleich_ct, t.finKonten(U)[0].saldo_ct], [0, stand - 1234]);
+  // Transfer seen from both sides.
+  const spar = t.finKontoSpeichern(U, { name: 'Tagesgeld', art: 'spar' });
+  t.finImport(U, giro, [{ ref: 'u1', datum: `${monat}-15`, betrag_ct: -30000, name: 'Übertrag', zweck: '' }]);
+  t.finImport(U, spar, [{ ref: 'u2', datum: `${monat}-16`, betrag_ct: 30000, name: 'Übertrag', zweck: '' }]);
+  const vor = t.finUmbuchungVorschlaege(U);
+  gleich('Umbuchung erkannt: beide Hälften aus zwei Kontoauszügen', vor.map((v) => [v.von_konto, v.nach_konto, v.betrag_ct]), [['Giro', 'Tagesgeld', -30000]]);
+  const ausVorher = t.finAuswertung(U, { von: `${monat}-01`, bis: `${monat}-28` }).aus_ct;
+  t.finUmbuchungVerbinden(U, vor[0].von_id, vor[0].nach_id);
+  gleich('Umbuchung verbunden: keine Ausgabe mehr, kein Vorschlag mehr', [ausVorher - t.finAuswertung(U, { von: `${monat}-01`, bis: `${monat}-28` }).aus_ct, t.finUmbuchungVorschlaege(U).length], [30000, 0]);
+  // Contracts: renewal and notice period.
+  const v = (row) => { const id = t.finDauerSpeichern(U, { konto_id: giro, betrag_ct: -3000, naechste: plusT(10), ...row }); return t.finDauer(U).find((d) => d.id === id); };
+  const handy = v({ empfaenger: 'Mobilfunk', laufzeit_bis: plusT(100), verlaengerung_monate: 12, kuendigungsfrist_tage: 90 });
+  gleich('Vertrag: Kündigung bis Laufzeitende minus Frist, bald fällig', [handy.kuendigen_bis, handy.vertragsstand], [plusT(10), 'bald']);
+  const alt = v({ empfaenger: 'Fitness', laufzeit_bis: plusT(-20), verlaengerung_monate: 12, kuendigungsfrist_tage: 30 });
+  gleich('Vertrag: abgelaufene Laufzeit hat sich verlängert', [alt.laufzeit_ende > heute, alt.vertragsstand], [true, 'ok']);
+  const weg = v({ empfaenger: 'Zeitung', laufzeit_bis: plusT(40), verlaengerung_monate: 12, kuendigungsfrist_tage: 30, gekuendigt_am: heute });
+  gleich('Vertrag gekündigt: keine Frist mehr, Zahlungen enden mit der Laufzeit', [weg.vertragsstand, weg.kuendigen_bis, t.finKontoPrognose(U, giro, 400).punkte.filter((p) => p.text === 'Zeitung').length], ['gekuendigt', null, 2]);
+  gleich('Übersicht: Kündigungsfrist steht an', t.finUebersicht(U).kuendigen.map((d) => d.empfaenger), ['Mobilfunk']);
+  // Variable amount and history.
+  const strom = t.finDauerSpeichern(U, { konto_id: giro, empfaenger: 'Stadtwerke', betrag_ct: -9000, naechste: `${monat}-20`, variabel: 1, kategorie_id: kat('Strom, Gas, Wasser') });
+  t.finDauerBuchen(U, strom, -9500);
+  gleich('Variabler Betrag gebucht; Verlauf des Vertrags', [t.finDauerVerlauf(U, strom).zeilen.map((x) => x.betrag_ct), t.finDauerVerlauf(U, strom).jahre[0].summe_ct], [[-9500], -9500]);
+  // Account forecast: lowest point against the minimum.
+  const leer = t.finKontoSpeichern(U, { name: 'Zweitkonto', anfang_ct: 10000, min_ct: 0 });
+  t.finDauerSpeichern(U, { konto_id: leer, empfaenger: 'Rate', betrag_ct: -6000, naechste: plusT(5) });
+  const kp = t.finKontoPrognose(U, leer, 60);
+  gleich('Kontoprognose: Tiefststand und Warnung', [kp.tief.stand_ct, kp.warnung, kp.punkte.length], [-2000, 'min', 2]);
+  // Loan: repayment plan.
+  const kredit = t.finKontoSpeichern(U, { name: 'Autokredit', art: 'kredit', anfang_ct: -1200000, zins_prozent: '6', rate_ct: 50000 });
+  const plan = t.finTilgungsplan(U, kredit);
+  gleich('Tilgungsplan: erster Monat 60 € Zinsen, 440 € Tilgung', [plan.zeilen[0].zins_ct, plan.zeilen[0].tilgung_ct, plan.zeilen[0].rest_ct], [6000, 44000, 1156000]);
+  gleich('Tilgungsplan: läuft aus, Rest 0, Summe stimmt', [plan.zeilen[plan.zeilen.length - 1].rest_ct, plan.zeilen.reduce((s2, r) => s2 + r.tilgung_ct, 0), plan.zinsen_ct === plan.zeilen.reduce((s2, r) => s2 + r.zins_ct, 0)], [0, 1200000, true]);
+  const sonder = t.finTilgungsplan(U, kredit, { sonder_ct: 200000 });
+  gleich('Sondertilgung spart Zinsen und Monate', [sonder.zinsen_ct < plan.zinsen_ct, sonder.zeilen.length < plan.zeilen.length], [true, true]);
+  gleich('Rate deckt die Zinsen nicht: kein Plan', t.finTilgungsplan(U, kredit, { rate_ct: 5000 }).tilgt, false);
+  // Depot.
+  const depot = t.finKontoSpeichern(U, { name: 'Depot', art: 'depot' });
+  gleich('Wertpapier nur im Depot', fehlerVon(() => t.finWertpapierSpeichern(U, { konto_id: giro, name: 'ETF' })), 'Wertpapiere gehören in ein Konto der Art „Depot“.');
+  const etf = t.finWertpapierSpeichern(U, { konto_id: depot, name: 'Welt-ETF', isin: 'ie00b4l5y983', stueck: '12,5', einstand_ct: 100000, kurs_ct: 9000, kurs_datum: `${monat}-01` });
+  t.finWertpapierSpeichern(U, { id: etf, konto_id: depot, name: 'Welt-ETF', isin: 'IE00B4L5Y983', stueck: 12.5, einstand_ct: 100000, kurs_ct: 10000, kurs_datum: `${monat}-20` });
+  const w = t.finWertpapiere(U)[0];
+  gleich('Depot: Wert, Gewinn, Kursverlauf', [w.wert_ct, w.gewinn_ct, w.gewinn_prozent, w.isin, t.finKurse(U, etf).map((k) => k.kurs_ct)], [125000, 25000, 25, 'IE00B4L5Y983', [10000, 9000]]);
+  gleich('Depot zählt zum Vermögen des Kontos', t.finKonten(U).find((k) => k.id === depot).wert_ct, 125000);
+  // Comparison of two periods.
+  t.finBuchungSpeichern(U, { konto_id: giro, datum: `${Number(jahr) - 1}-06-10`, betrag_ct: -9000, empfaenger: 'Laden', kategorie_id: kat('Lebensmittel') });
+  const vg = t.finVergleich(U, { von: `${monat}-01`, bis: `${monat}-28`, von2: `${Number(jahr) - 1}-06-01`, bis2: `${Number(jahr) - 1}-06-30` }).zeilen.find((r) => r.name === 'Lebensmittel');
+  gleich('Vergleich zweier Zeiträume', [vg.a_ct, vg.b_ct, vg.diff_ct, vg.prozent], [6000, 9000, -3000, -33.3]);
+  gleich('Anderer Benutzer: weder Teile noch Depot noch Tilgungsplan', [fehlerVon(() => t.finBuchungTeile(9, einkauf)), fehlerVon(() => t.finKurse(9, etf)), fehlerVon(() => t.finTilgungsplan(9, kredit)), t.finWertpapiere(9).length],
+    ['Diesen Eintrag gibt es nicht (mehr).', 'Diesen Eintrag gibt es nicht (mehr).', 'Diesen Eintrag gibt es nicht (mehr).', 0]);
+}
+
 console.log(`\nRechentest: ${ok} Prüfungen richtig, ${falsch} falsch.`);
 if (falsch) process.exitCode = 1;
 // The click test reuses the sample data.

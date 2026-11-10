@@ -78,8 +78,8 @@ app.whenReady().then(async () => {
   // Buttons that would remove the sample data needed later are left out.
   const NICHT = /löschen|entfernen|storn|zurücksetzen|wiederherstellen|sicherung|festschreib|ausblenden|verbinden|abrufen|eingangsordner|beenden|kündigung|abschließen/i;
   let seitenZahl = 0, knopfZahl = 0, dialogZahl = 0;
-  for (const [modus, objektId] of process.env.KLICK === '0' ? [] : [['miete', o], ['weg', w], ['projekt', null]]) {
-    await zu({ seite: modus === 'projekt' ? 'pcockpit' : 'uebersicht', modus, ...(objektId ? { objektId } : {}) });
+  for (const [modus, objektId] of process.env.KLICK === '0' ? [] : [['miete', o], ['weg', w], ['projekt', null], ['finanz', null]]) {
+    await zu({ seite: modus === 'projekt' ? 'pcockpit' : modus === 'finanz' ? 'fcockpit' : 'uebersicht', modus, ...(objektId ? { objektId } : {}) });
     // The click round may have chosen "Schlicht" or glass "Aus" in the settings: back to the defaults for each mode.
     await js(`localStorage.removeItem('symbole'); localStorage.removeItem('glas'); Object.assign(document.documentElement.dataset, { symbole: 'illustriert', glas: 'an' }); window.dispatchEvent(new Event('hv-anzeige'))`);
     // Every illustrated symbol (sidebar, modes, cockpit tiles) loads.

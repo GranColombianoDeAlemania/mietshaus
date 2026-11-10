@@ -305,6 +305,32 @@ From the wish of 05.11.2026 („die Aufgaben- und Einkaufsseiten … sehr unintu
 | Aufgabenblatt | One sheet to look at and to change (no separate edit form), saved at once: kind and status on top, title, details, steps (now also by hand), photos as a strip with camera and paperclip, history like a chat with the input at the bottom; where/who/when on the right (Wo: house › flat, Betrifft, Kümmert sich, Bis wann with Heute/Morgen/Nächste Woche, Wichtigkeit später/normal/dringend, Projekt); a new task shows only what is mostly needed, the rest on „+ …“; beside the list on a wide screen, full screen on a phone; also for the cases of a house | done |
 | Einkaufen | One field „Was brauchst du?“ (a known article gets its shop), „Schon mal gekauft“ to add with a tap, the list by shop; ticking off only puts an article in the cart (`vorgaenge.im_wagen`); per shop „Bezahlt: Kassenbon erfassen“ – the prices, one total, one photo: one paid invoice per project, a receipt with articles of several projects (or none) shared by the prices; only typed amounts are booked; the same list across all projects under Aufgaben → Einkaufen; an article opens as the task sheet with quantity, shop, price („zuletzt …“), step and photo | done |
 
+## Version 0.24 – private finances
+
+From the wish of 10.11.2026: a fourth mode „Finanzen“ beside Miete, WEG and Projekte; every user keeps their own finances; movements go to and come from the other areas. An own design after what personal finance programs publicly do (accounts, categories, budgets, rules, standing orders, evaluations, forecast) – no code or internal structures of another program were taken over.
+
+| Area | Contents | Status |
+|------|----------|--------|
+| Je Benutzer | Tables `fin_*` carry the user (`benutzer`, 0 in local mode); they are not in `TABLES`, only the `fin…` functions reach them, and the server puts the signed-in user in front of their arguments (`electron/finanzen.cjs`, `server/server.cjs`). Server and calculation tests: another user neither sees nor changes anything. The server's administrator (database file, backups) can technically read everything | done |
+| Konten, Buchungen | Accounts (giro, savings, cash, card, depot, loan) with opening balance; income, expense, transfer between own accounts (two linked rows); bank statement import (CAMT, MT940, CSV) once per reference; search and filters; several movements categorised at once | done |
+| Kategorien, Regeln | Starting categories per user (fixed costs, tax tags); rules „text in payee or purpose → category“, learnt when a payee is categorised, applied on import and afterwards | done |
+| Budgets | Monthly budget per expense category with spent/left | done |
+| Verträge & Daueraufträge | Rhythm, next payment, cancellable until; „Buchen“ enters the payment and moves the date on; regular payments are recognised from the history; fixed costs per month and year | done |
+| Übersicht, Auswertung | Net worth with twelve months back, this month with savings rate, due in 30 days, budgets, uncategorised; evaluation by category, month and payee, fixed against variable, sums of the tax tags; forecast of the balance from the standing orders | done |
+| Zwischen den Bereichen | A private expense → paid invoice of a project; a private payment → the house's ledger against its account „Privat (Einlagen und Entnahmen)“ (created when first needed); the other way: payments over a house's bank accounts and project invoices are taken into a private account – each only once per user | done |
+| Splitbuchungen | One movement, several categories (`fin_buchungen.split_von`): the balance counts the movement once, evaluations and budgets count its parts; the parts must add up; found by a part's category | done |
+| Unterkategorien | Two levels (`eltern_id`); evaluations gather them under the main category, budgets may include them | done |
+| Budgets vertieft | Per month, quarter or year; with sub-categories; with the forecast (standing orders still due in the period); „schneller als geplant“ when spending runs ahead of the days gone | done |
+| Verträge vertieft | Contract kind, numbers, term, automatic renewal and notice period: the last day for the notice is computed and rolls on when a term renewed; notice given ends the payments with the term; varying amounts are asked for when booking; history and yearly sum of a contract | done |
+| Regeln vertieft | Conditions: search in payee, purpose or both, account, amount range; priority; a rule may set a label too | done |
+| Kontoauszug vertieft | Imported movements are „neu“ until looked at; an expected („vorgemerkt“) movement of the same amount within a week is confirmed instead of doubled; a transfer that appears on two own accounts is offered to be linked; labels (Kennzeichen) | done |
+| Abgleich, Grenzen | The bank's balance on a day against the own movements (difference shown, optional correction booking); overdraft limit and minimum balance with warnings | done |
+| Depot, Kredite, Prognose | Securities in a depot account with purchase cost, price and price history (value counts into net worth); repayment plan of a loan account with remaining debt at the end of the fixed-interest period and the saving of an extra repayment; each account over the next 90 days with its lowest point | done |
+| Vergleich | Expenses of a period against the same period a year before, by main category | done |
+| Offen | Bank access (FinTS) for private accounts, live prices, tax estimate, import of exports from other programs (QIF), documents at a movement | open |
+
+How the depth was found: the installer of a personal finance program the user owns was unpacked and its shipped .NET metadata read (module names and the entity model's table and column names) to learn which concepts such a program covers. Nothing was executed, and no code, text or schema was copied; tables, names and logic here are our own.
+
 ## Development
 
 ```

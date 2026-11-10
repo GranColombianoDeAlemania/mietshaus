@@ -1,6 +1,6 @@
 import { hinweis } from './frage';
 import type { DbFn } from './dbtypen';
-export type Modus = 'miete' | 'weg' | 'projekt';
+export type Modus = 'miete' | 'weg' | 'projekt' | 'finanz';
 export type Row = Record<string, any>;
 
 type DateiFilter = { name: string; extensions: string[] };
