@@ -1898,6 +1898,25 @@ Stadtsparkasse München | IBAN DE02 7015 0000 0000 1234 56 | BIC SSKMDEMMXXX`;
   const w = t.finWertpapiere(U)[0];
   gleich('Depot: Wert, Gewinn, Kursverlauf', [w.wert_ct, w.gewinn_ct, w.gewinn_prozent, w.isin, t.finKurse(U, etf).map((k) => k.kurs_ct)], [125000, 25000, 25, 'IE00B4L5Y983', [10000, 9000]]);
   gleich('Depot zählt zum Vermögen des Kontos', t.finKonten(U).find((k) => k.id === depot).wert_ct, 125000);
+  // A standing order and the bank statement: booked by hand it is confirmed, not doubled; unbooked, the statement's
+  // payment is its run and the contract moves on.
+  const k2 = t.finKontoSpeichern(U, { name: 'Auszugskonto', anfang_ct: 500000 });
+  t.finImport(U, k2, [{ ref: 'x0', datum: plusT(-40), betrag_ct: -100, name: 'Kiosk', zweck: '' }]);
+  const versich = t.finDauerSpeichern(U, { konto_id: k2, empfaenger: 'Allsicher', betrag_ct: -4500, naechste: plusT(-2), kategorie_id: kat('Versicherungen') });
+  const vb = t.finDauerBuchen(U, versich);
+  gleich('Dauerauftrag auf einem Konto mit Kontoauszügen: vorgemerkt gebucht', t.finBuchungen(U, { konto_id: k2 }).find((x) => x.id === vb).vorgemerkt, 1);
+  const i3 = t.finImport(U, k2, [{ ref: 'x1', datum: plusT(-1), betrag_ct: -4500, name: 'ALLSICHER VERSICHERUNG AG', zweck: 'Beitrag' }]);
+  gleich('… und vom Auszug bestätigt statt verdoppelt', [i3.bestaetigt, i3.neu, t.finBuchungen(U, { konto_id: k2, suche: 'Allsicher' }).length], [1, 0, 1]);
+  const naechste = t.finDauer(U).find((d) => d.id === versich).naechste;
+  const i4 = t.finImport(U, k2, [{ ref: 'x2', datum: naechste, betrag_ct: -4600, name: 'Allsicher Versicherung AG', zweck: 'Beitrag' }, { ref: 'x3', datum: naechste, betrag_ct: -4500, name: 'Baumarkt', zweck: '' }]);
+  const zug = t.finBuchungen(U, { konto_id: k2, suche: 'Beitrag' }).find((x) => x.import_ref === 'x2');
+  gleich('Ungebuchter Lauf kommt über den Auszug: Vertrag zugeordnet, Kategorie, Termin weiter; fremder Empfänger nicht', [i4.zugeordnet, zug.dauer_id, zug.kategorie, t.finDauer(U).find((d) => d.id === versich).naechste > naechste],
+    [1, versich, 'Versicherungen', true]);
+  gleich('Konto mit Vertrag, aber ohne Buchungen: archiviert statt gelöscht; Sparauftrag aufs selbe Konto abgelehnt', (() => {
+    const k3 = t.finKontoSpeichern(U, { name: 'Leer mit Vertrag' });
+    const d3 = t.finDauerSpeichern(U, { konto_id: k3, empfaenger: 'Abo', betrag_ct: -500, naechste: heute });
+    return [t.finKontoLoeschen(U, k3), t.finDauer(U).some((d) => d.id === d3), fehlerVon(() => t.finDauerSpeichern(U, { konto_id: k3, gegenkonto_id: k3, empfaenger: 'Sparen', betrag_ct: -100, naechste: heute }))];
+  })(), ['archiviert', true, 'Bitte zwei verschiedene Konten wählen.']);
   // Comparison of two periods.
   t.finBuchungSpeichern(U, { konto_id: giro, datum: `${Number(jahr) - 1}-06-10`, betrag_ct: -9000, empfaenger: 'Laden', kategorie_id: kat('Lebensmittel') });
   const vg = t.finVergleich(U, { von: `${monat}-01`, bis: `${monat}-28`, von2: `${Number(jahr) - 1}-06-01`, bis2: `${Number(jahr) - 1}-06-30` }).zeilen.find((r) => r.name === 'Lebensmittel');

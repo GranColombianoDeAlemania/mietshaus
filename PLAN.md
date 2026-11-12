@@ -329,6 +329,15 @@ From the wish of 10.11.2026: a fourth mode „Finanzen“ beside Miete, WEG and 
 | Vergleich | Expenses of a period against the same period a year before, by main category | done |
 | Offen | Bank access (FinTS) for private accounts, live prices, tax estimate, import of exports from other programs (QIF), documents at a movement | open |
 
+### 0.24.1 – fixes from a review of the finance module
+
+- A standing order booked by hand on an account fed by bank statements (or for a day to come) is only expected („vorgemerkt“), so the statement confirms it instead of doubling it.
+- A standing order's payment that arrives only through the statement is recognised (payee, amount within 10 %, date near the next run): it gets the contract's category and the contract moves on instead of staying overdue.
+- The amount of a varying payment is asked in the app's own window (the browser's prompt does not exist in the Mac app).
+- An account without movements but with contracts or securities is archived, not deleted (the delete would have taken them along).
+- A savings order onto its own account is refused when saved.
+- Phone: the movement list shows the amount (category under the payee, row buttons stacked).
+
 How the depth was found: the installer of a personal finance program the user owns was unpacked and its shipped .NET metadata read (module names and the entity model's table and column names) to learn which concepts such a program covers. Nothing was executed, and no code, text or schema was copied; tables, names and logic here are our own.
 
 ## Development

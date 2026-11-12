@@ -150,7 +150,7 @@ export function FinBuchungen() {
       const zeilen = leseKontoauszug(Uint8Array.from(atob(f.base64), (c) => c.charCodeAt(0)));
       const r = await call<Row>('finImport', ziel, zeilen);
       reload(); ladeUmb();
-      hinweis(`${r.neu} neue Buchungen übernommen${r.doppelt ? `, ${r.doppelt} waren schon da` : ''}${r.bestaetigt ? `, ${r.bestaetigt} vorgemerkte bestätigt` : ''}. ${r.kategorisiert} davon haben über deine Regeln eine Kategorie bekommen.`, 'Kontoauszug');
+      hinweis(`${r.neu} neue Buchungen übernommen${r.doppelt ? `, ${r.doppelt} waren schon da` : ''}${r.bestaetigt ? `, ${r.bestaetigt} vorgemerkte bestätigt` : ''}${r.zugeordnet ? `, ${r.zugeordnet} einem Vertrag zugeordnet` : ''}. ${r.kategorisiert} davon haben über deine Regeln eine Kategorie bekommen.`, 'Kontoauszug');
     } catch (e) { fehler(e); }
   }
   async function kategorisieren(kategorieId: number) {
@@ -207,7 +207,8 @@ export function FinBuchungen() {
             <tr key={r.id} className={`klickbar${r.neu ? ' fin-neu' : ''}${r.vorgemerkt ? ' fin-vorgemerkt' : ''}`} onClick={() => setEdit({ ...r, art: r.betrag_ct < 0 ? 'aus' : 'ein', betrag: Math.abs(r.betrag_ct) })}>
               <td onClick={(e) => e.stopPropagation()}>{!r.umbuchung_id && !r.teile && <input type="checkbox" aria-label={`${r.empfaenger ?? 'Buchung'} auswählen`} checked={gewaehlt.has(r.id)} onChange={() => umschalten(r.id)} />}</td>
               <td>{datum(r.datum)}</td>
-              <td><b>{r.empfaenger ?? '–'}</b>{r.zweck && <div className="klein hinweis">{r.zweck}</div>}</td>
+              <td><b>{r.empfaenger ?? '–'}</b>{r.zweck && <div className="klein hinweis">{r.zweck}</div>}
+                <div className="klein hinweis fin-nur-schmal">{r.umbuchung_id ? 'Umbuchung' : r.teile ? `Split: ${r.teil_kategorien}` : r.kategorie ?? 'ohne Kategorie'}{r.vorgemerkt ? ' · vorgemerkt' : ''}</div></td>
               <td>{r.umbuchung_id ? <span className="chip">Umbuchung</span> : r.teile ? <span title="aufgeteilt"><span className="chip">Split</span> {r.teil_kategorien}</span> : r.kategorie ?? <span className="chip gelb">offen</span>}
                 {r.kennzeichen && <span className="chip">{r.kennzeichen}</span>}{!!r.vorgemerkt && <span className="chip gelb">vorgemerkt</span>}
                 {r.ziel_art && <span className="chip akzent" title={r.richtung === 'hin' ? 'an Haus oder Projekt übergeben' : 'aus Haus oder Projekt übernommen'}>{r.ziel_art === 'buchung' ? 'Haus' : 'Projekt'}</span>}</td>
@@ -405,6 +406,8 @@ export function FinDauer() {
   const [kategorien] = useLoad<Row[]>(() => call('finKategorien'), []);
   const [erkannt, ladeErkannt] = useLoad<Row[]>(() => call('finDauerErkennen'), []);
   const [edit, setEdit] = useState<Row | null>(null);
+  // The amount of this run when the contract's amount varies (asked in the app's own window, also in the Mac app).
+  const [betrag, setBetrag] = useState<{ d: Row; text: string } | null>(null);
   const aktiv = (konten ?? []).filter((k) => !k.archiviert);
   const felder = (f: Row): Field[] => [
     { key: 'empfaenger', label: 'Vertrag / Empfänger', required: true, wide: true },
@@ -451,21 +454,25 @@ export function FinDauer() {
               <td className={zahlKlasse(d.betrag_ct)}>{euro(d.betrag_ct)}</td><td className={zahlKlasse(d.monatlich_ct)}>{euro(d.monatlich_ct)}</td>
               <td className="aktionen" onClick={(e) => e.stopPropagation()}>{!!d.aktiv && <button title="Diese Zahlung jetzt als Buchung eintragen und den Termin weitersetzen"
                 onClick={async () => {
-                  try {
-                    let betrag: number | null = null;
-                    if (d.variabel) {
-                      const t = window.prompt(`Betrag dieser Zahlung an ${d.empfaenger} in Euro`, (Math.abs(d.betrag_ct) / 100).toFixed(2).replace('.', ','));
-                      if (t == null) return;
-                      betrag = (d.betrag_ct < 0 ? -1 : 1) * Math.round((Number(t.replace(/\./g, '').replace(',', '.')) || 0) * 100);
-                    }
-                    await call('finDauerBuchen', d.id, betrag); reload();
-                  } catch (e) { fehler(e); }
+                  if (d.variabel) { setBetrag({ d, text: (Math.abs(d.betrag_ct) / 100).toFixed(2).replace('.', ',') }); return; }
+                  try { await call('finDauerBuchen', d.id); reload(); } catch (e) { fehler(e); }
                 }}>Buchen</button>}</td>
             </tr>
           ))}
           {rows && !rows.length && <tr><td colSpan={8} className="hinweis">Noch keine Verträge. Miete, Strom, Versicherungen und Abos hier einzutragen macht die Prognose möglich.</td></tr>}
         </tbody>
       </table>
+      {betrag && (
+        <Dialog titel={`Zahlung an ${betrag.d.empfaenger}`} onClose={() => setBetrag(null)}
+          aktionen={<button className="primary" onClick={async () => {
+            const ct = Math.round((Number(betrag.text.replace(/\./g, '').replace(',', '.')) || 0) * 100);
+            if (!ct) return;
+            try { await call('finDauerBuchen', betrag.d.id, (betrag.d.betrag_ct < 0 ? -1 : 1) * ct); setBetrag(null); reload(); } catch (e) { fehler(e); }
+          }}>Buchen</button>}>
+          <div className="maske"><label>Betrag dieser Zahlung am {datum(betrag.d.naechste)} (€)
+            <input autoFocus inputMode="decimal" className="num" value={betrag.text} onChange={(e) => setBetrag({ ...betrag, text: e.target.value })} /></label></div>
+        </Dialog>
+      )}
       {edit && <FormDialog title={edit.id ? 'Vertrag bearbeiten' : 'Neuer Vertrag'} row={edit} fields={felder}
         onSave={(r) => call('finDauerSpeichern', { id: edit.id, empfaenger: r.empfaenger, konto_id: Number(r.konto_id), gegenkonto_id: r.art === 'um' ? Number(r.gegenkonto_id) : null,
           betrag_ct: (r.art === 'ein' ? 1 : -1) * Math.abs(r.betrag), rhythmus_monate: Number(r.rhythmus_monate), naechste: r.naechste, kategorie_id: Number(r.kategorie_id) || null,

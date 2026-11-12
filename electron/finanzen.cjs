@@ -269,7 +269,9 @@ module.exports = function finanzen({ db, all, get, tx, bh }) {
     // An account with movements is archived instead of deleted, so no history is lost by a slip.
     finKontoLoeschen: (b, id) => {
       mein('fin_konten', id, b);
-      if (get('SELECT 1 AS x FROM fin_buchungen WHERE konto_id = ? LIMIT 1', id)) { db.prepare('UPDATE fin_konten SET archiviert = 1 WHERE id = ?').run(id); return 'archiviert'; }
+      // Contracts and securities hang on the account too: deleting it would take them along without a word.
+      if (get(`SELECT 1 AS x WHERE EXISTS (SELECT 1 FROM fin_buchungen WHERE konto_id = ?1) OR EXISTS (SELECT 1 FROM fin_dauer WHERE konto_id = ?1 OR gegenkonto_id = ?1)
+        OR EXISTS (SELECT 1 FROM fin_wertpapiere WHERE konto_id = ?1)`, id)) { db.prepare('UPDATE fin_konten SET archiviert = 1 WHERE id = ?').run(id); return 'archiviert'; }
       db.prepare('DELETE FROM fin_konten WHERE id = ?').run(id);
       return 'geloescht';
     },
@@ -378,7 +380,8 @@ module.exports = function finanzen({ db, all, get, tx, bh }) {
       const konto = mein('fin_konten', kontoId, b);
       const regeln = regelnVon(b);
       const ins = db.prepare(`INSERT OR IGNORE INTO fin_buchungen (benutzer, konto_id, datum, betrag_ct, empfaenger, zweck, kategorie_id, kennzeichen, import_ref, neu) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`);
-      let neu = 0, kategorisiert = 0, bestaetigt = 0, doppelt = 0;
+      const auftraege = dauerRoh(b).filter((d) => d.aktiv && !d.gegenkonto_id);
+      let neu = 0, kategorisiert = 0, bestaetigt = 0, doppelt = 0, zugeordnet = 0;
       for (const z of zeilen ?? []) {
         const betrag = Math.round(Number(z.betrag_ct));
         if (!z.datum || !betrag) continue;
@@ -393,11 +396,24 @@ module.exports = function finanzen({ db, all, get, tx, bh }) {
           continue;
         }
         const regel = regelFuer(regeln, { konto_id: konto.id, betrag_ct: betrag, empfaenger: z.name, zweck: z.zweck });
-        const r = ins.run(B(b), konto.id, z.datum, betrag, z.name || null, z.zweck || null, regel?.kategorie_id ?? null, regel?.kennzeichen ?? null, ref);
+        // The run of a standing order that nobody booked by hand: the statement's payment is that run. It takes the
+        // contract's category, and the contract moves on – otherwise it would stay overdue for ever.
+        const name = falten(z.name);
+        const lauf = auftraege.find((d) => d.konto_id === konto.id && Math.abs(Date.parse(z.datum) - Date.parse(d.naechste)) <= 10 * 864e5 && falten(d.empfaenger).length >= 4
+          && (name.includes(falten(d.empfaenger)) || (name.length >= 4 && falten(d.empfaenger).includes(name)))
+          && (d.variabel ? Math.sign(betrag) === Math.sign(d.betrag_ct) : Math.abs(betrag - d.betrag_ct) <= Math.abs(d.betrag_ct) / 10));
+        const r = ins.run(B(b), konto.id, z.datum, betrag, z.name || null, z.zweck || null, regel?.kategorie_id ?? lauf?.kategorie_id ?? null, regel?.kennzeichen ?? null, ref);
         neu += r.changes;
-        if (r.changes && regel) kategorisiert++;
+        if (r.changes && (regel || lauf?.kategorie_id)) kategorisiert++;
+        if (r.changes && lauf) {
+          db.prepare('UPDATE fin_buchungen SET dauer_id = ? WHERE id = ?').run(lauf.id, Number(r.lastInsertRowid));
+          lauf.naechste = plusMonate(lauf.naechste, lauf.rhythmus_monate);
+          const schluss = [lauf.ende, lauf.gekuendigt_am ? lauf.laufzeit_bis : null].filter(Boolean).sort()[0] ?? null;
+          db.prepare('UPDATE fin_dauer SET naechste = ?, aktiv = ? WHERE id = ?').run(lauf.naechste, schluss && lauf.naechste > schluss ? 0 : 1, lauf.id);
+          zugeordnet++;
+        }
       }
-      return { neu, doppelt, kategorisiert, bestaetigt };
+      return { neu, doppelt, kategorisiert, bestaetigt, zugeordnet };
     }),
     // Two movements on different own accounts, opposite amounts within four days, both without category: most likely
     // one transfer seen from both sides (each account's statement brings its half).
@@ -456,6 +472,7 @@ module.exports = function finanzen({ db, all, get, tx, bh }) {
     finDauerSpeichern: (b, row) => {
       mein('fin_konten', row.konto_id, b);
       if (row.gegenkonto_id) mein('fin_konten', row.gegenkonto_id, b);
+      if (row.gegenkonto_id && Number(row.gegenkonto_id) === Number(row.konto_id)) throw new Error('Bitte zwei verschiedene Konten wählen.');
       if (row.kategorie_id) mein('fin_kategorien', row.kategorie_id, b);
       const empf = String(row.empfaenger ?? '').trim();
       const betrag = Math.round(Number(row.betrag_ct));
@@ -474,7 +491,11 @@ module.exports = function finanzen({ db, all, get, tx, bh }) {
     // (a utility bill). A contract under notice stops after its last run.
     finDauerBuchen: (b, id, betragCt = null) => tx(() => {
       const d = mein('fin_dauer', id, b);
-      const bid = buchungSpeichern(b, { konto_id: d.konto_id, gegenkonto_id: d.gegenkonto_id, datum: d.naechste, betrag_ct: ct(betragCt) || d.betrag_ct, empfaenger: d.empfaenger, zweck: d.zweck, kategorie_id: d.kategorie_id, dauer_id: d.id });
+      // On an account fed by bank statements (or for a day still to come) the run is only expected: the statement
+      // confirms it instead of bringing the same payment a second time.
+      const erwartet = d.naechste > ortszeit.heute() || !!get('SELECT 1 AS x FROM fin_buchungen WHERE konto_id = ? AND import_ref IS NOT NULL LIMIT 1', d.konto_id);
+      const bid = buchungSpeichern(b, { konto_id: d.konto_id, gegenkonto_id: d.gegenkonto_id, datum: d.naechste, betrag_ct: ct(betragCt) || d.betrag_ct, empfaenger: d.empfaenger, zweck: d.zweck, kategorie_id: d.kategorie_id, dauer_id: d.id,
+        vorgemerkt: erwartet ? 1 : 0 });
       const weiter = plusMonate(d.naechste, d.rhythmus_monate);
       const schluss = [d.ende, d.gekuendigt_am ? d.laufzeit_bis : null].filter(Boolean).sort()[0] ?? null;
       db.prepare('UPDATE fin_dauer SET naechste = ?, aktiv = ? WHERE id = ?').run(weiter, schluss && weiter > schluss ? 0 : 1, id);
