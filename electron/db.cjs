@@ -1093,6 +1093,9 @@ const MIGRATIONS = [
      kurs_ct INTEGER NOT NULL,
      PRIMARY KEY (wertpapier_id, datum)
    ) WITHOUT ROWID;`,
+  // Several users in charge of a case: zustaendig stays the first one (old code and devices keep working), the others
+  // are a JSON list of user ids here.
+  `ALTER TABLE vorgaenge ADD COLUMN mit_zustaendig TEXT;`,
 ];
 
 // Tables without change time: the log itself, settings of this installation and page state.
@@ -1192,7 +1195,7 @@ const TABLES = {
     'status', 'typ', 'betrag_ct', 'absender', 'rechnungsnr', 'iban', 'faellig', 'zusammenfassung', 'buchung_id', 'quelle', 'netto_ct', 'ust_ct',
     'steller', 'steuer', 'positionen', 'lohn_ct'],
   erhaltungsverteilung: ['objekt_id', 'jahr', 'betrag_ct', 'jahre', 'text'],
-  vorgaenge: ['objekt_id', 'person_id', 'einheit_id', 'titel', 'kategorie', 'status', 'prioritaet', 'faellig', 'beschreibung', 'projekt_id', 'zustaendig', 'pflicht_id', 'eltern_id', 'menge', 'laden', 'preis_ct', 'projektaufgabe_id'],
+  vorgaenge: ['objekt_id', 'person_id', 'einheit_id', 'titel', 'kategorie', 'status', 'prioritaet', 'faellig', 'beschreibung', 'projekt_id', 'zustaendig', 'mit_zustaendig', 'pflicht_id', 'eltern_id', 'menge', 'laden', 'preis_ct', 'projektaufgabe_id'],
   vorgangseintraege: ['vorgang_id', 'datum', 'art', 'text', 'von'],
   termine: ['objekt_id', 'person_id', 'vorgang_id', 'titel', 'datum', 'uhrzeit', 'dauer_min', 'ort', 'erledigt', 'notiz', 'projekt_id'],
   projekte: ['titel', 'beschreibung', 'status', 'objekt_id', 'einheit_id', 'kosten_konto_id', 'budget_ct', 'beginn', 'ende', 'notiz'],

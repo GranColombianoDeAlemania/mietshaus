@@ -91,6 +91,16 @@ export const parseZahl = (s: string | number | null | undefined): number | null 
 };
 export const parseCent = (s: string | number | null | undefined) => Math.round((parseZahl(s) ?? 0) * 100);
 
+// Everybody in charge of a task: zustaendig (the first) and mit_zustaendig (JSON list of the others).
+export function zustaendige(v: Row): number[] {
+  let mehr: unknown = [];
+  try { mehr = JSON.parse(v?.mit_zustaendig ?? '[]'); } catch { mehr = []; }
+  const ids = [v?.zustaendig, ...(Array.isArray(mehr) ? mehr : [])].map(Number).filter((x) => Number.isInteger(x) && x > 0);
+  return [...new Set(ids)];
+}
+// The two columns for a list of users in charge.
+export const zustaendigFelder = (ids: number[]) => ({ zustaendig: ids[0] ?? null, mit_zustaendig: ids.length > 1 ? JSON.stringify(ids.slice(1)) : null });
+
 export const personName = (p: Row) => {
   const name = [p.nachname, p.vorname].filter(Boolean).join(', ');
   return (name ? name + (p.firma ? ` (${p.firma})` : '') : p.firma) || '(ohne Namen)';

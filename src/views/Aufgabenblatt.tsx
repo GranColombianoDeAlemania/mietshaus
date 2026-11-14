@@ -1,10 +1,10 @@
-// One sheet per task – to look at and to change in the same place, no separate edit form (like Linear or Todoist): what
-// is to be done on the left (title, details, steps, photos, history), where, who and when on the right (on a phone and
-// beside the list: on top). A change is saved at once. A new task starts with what is mostly needed – kind, title, where,
+// One sheet per task. A saved task opens as an overview – its data as a list, photos, steps, history –; „Bearbeiten“
+// turns the same sheet into inputs: what is to be done on the left (title, details, steps, photos, history), where, who
+// and when on the right (on a phone and beside the list: on top). A change is saved at once, „Fertig“ shows the overview. A new task starts with what is mostly needed – kind, title, where,
 // by when, urgency –; the rest comes on a tap („+ Betrifft“). A purchase shows quantity, shop and price instead.
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import * as I from 'lucide-react';
-import { call, datum, euro, fehler, heute, inTagen, parseZahl, personName, type Row } from '../api';
+import { call, datum, euro, fehler, heute, inTagen, parseZahl, personName, zustaendige, zustaendigFelder, type Row } from '../api';
 import { useLoad } from '../useLoad';
 import { Auswahl, Fenster, FensterTitel } from '../ui';
 import { Galerie } from '../Galerie';
@@ -75,6 +75,25 @@ export function useErledigen(fertig: () => void) {
   return { setzen, dialoge };
 }
 
+// Who is in charge: one chip per user, a tap adds or removes them; the first chosen stays first (the main one).
+// Inactive users show only while they are still assigned.
+function Zustaendige(props: { ids: number[]; benutzer: Row[]; onChange: (ids: number[]) => void }) {
+  const wahl = props.benutzer.filter((b) => b.aktiv || props.ids.includes(b.id));
+  return (
+    <div className="knopfreihe" role="group" aria-label="Kümmert sich">
+      {wahl.map((b) => {
+        const an = props.ids.includes(b.id);
+        return (
+          <button key={b.id} type="button" className={`chip-knopf${an ? ' an' : ''}`} aria-pressed={an}
+            onClick={() => props.onChange(an ? props.ids.filter((x) => x !== b.id) : [...props.ids, b.id])}>
+            {an && <I.Check size={13} aria-hidden="true" />} {b.name}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 // A property row: symbol, name, value.
 function Eig(props: { symbol: ReactNode; name: string; fuer?: string; children: ReactNode }) {
   return (
@@ -128,6 +147,10 @@ export function Aufgabenblatt(props: {
 }) {
   const [d, setD] = useState<Row>(() => props.v ?? { status: 'offen', prioritaet: 2, ...props.vorlage });
   const neu = !d.id;
+  // A saved task opens as an overview of its data; „Bearbeiten“ shows the inputs, „Fertig“ the overview again.
+  const [bearbeiten, setBearbeiten] = useState(false);
+  useEffect(() => { setBearbeiten(false); }, [props.v?.id]);
+  const lesen = !neu && !bearbeiten;
   // The change time the task was loaded with: someone else's change since then asks before it is overwritten.
   const stand = useRef<string | null>(props.v?.geaendert_am ?? null);
   useEffect(() => { if (props.v?.id) { setD(props.v); stand.current = props.v.geaendert_am ?? null; } }, [props.v]);
@@ -179,14 +202,14 @@ export function Aufgabenblatt(props: {
     setLaeuft(true);
     try {
       const row: Row = { titel, status: d.status ?? 'offen' };
-      for (const k of ['objekt_id', 'einheit_id', 'person_id', 'zustaendig', 'faellig', 'prioritaet', 'kategorie', 'beschreibung', 'projekt_id', 'menge', 'laden',
+      for (const k of ['objekt_id', 'einheit_id', 'person_id', 'zustaendig', 'mit_zustaendig', 'faellig', 'prioritaet', 'kategorie', 'beschreibung', 'projekt_id', 'menge', 'laden',
         'preis_ct', 'projektaufgabe_id', 'eltern_id']) if (d[k] != null && d[k] !== '') row[k] = d[k];
       let id: number;
       if (einkauf) {
         // As in the shopping list: the quantity is split off and a known article gets its shop.
         id = await call<number>('einkaufNeu', row.projekt_id ?? null, { titel, menge: row.menge, laden: row.laden, preis_ct: row.preis_ct,
           projektaufgabe_id: row.projektaufgabe_id, objekt_id: row.objekt_id });
-        const rest = Object.fromEntries(Object.entries(row).filter(([k]) => ['einheit_id', 'person_id', 'zustaendig', 'faellig', 'prioritaet', 'beschreibung'].includes(k)));
+        const rest = Object.fromEntries(Object.entries(row).filter(([k]) => ['einheit_id', 'person_id', 'zustaendig', 'mit_zustaendig', 'faellig', 'prioritaet', 'beschreibung'].includes(k)));
         if (Object.keys(rest).length) await call('save', 'vorgaenge', { id, ...rest });
       } else id = await call<number>('save', 'vorgaenge', row);
       props.onGeaendert?.(id);
@@ -233,6 +256,8 @@ export function Aufgabenblatt(props: {
               .map((k) => <option key={k} value={k}>{artName(k)}</option>)}
           </select>
           <span className="spacer" />
+          <button type="button" className="primary blatt-fertig" title="Zurück zur Übersicht – Änderungen sind schon gespeichert"
+            onClick={() => { (document.activeElement as HTMLElement | null)?.blur(); setBearbeiten(false); }}><I.Check size={14} aria-hidden="true" /> Fertig</button>
           <button type="button" className="icon blatt-zu" aria-label="Schließen" title="Schließen" onClick={props.onClose}><I.X size={16} /></button>
           <div className="segment blatt-status" role="radiogroup" aria-label="Status">
             {STATUS_KURZ.map(([k, l]) => <button key={k} type="button" role="radio" aria-checked={d.status === k} onClick={() => status(k)}>{l}</button>)}
@@ -321,10 +346,8 @@ export function Aufgabenblatt(props: {
           leer="niemand" platzhalter="Mieter, Handwerker, Kontakt" label="Betrifft" />
       </Eig>) }] : []),
     ...(benutzer?.length ? [{ k: 'zustaendig', plus: 'Kümmert sich', inhalt: (
-      <Eig symbol={<I.UserCheck size={15} />} name="Kümmert sich" fuer="bl-zustaendig">
-        <select id="bl-zustaendig" value={d.zustaendig ?? ''} onChange={(e) => aendern({ zustaendig: Number(e.target.value) || null })}>
-          <option value="">niemand Bestimmtes</option>{benutzer.filter((b) => b.aktiv || b.id === Number(d.zustaendig)).map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-        </select>
+      <Eig symbol={<I.UserCheck size={15} />} name="Kümmert sich">
+        <Zustaendige ids={zustaendige(d)} benutzer={benutzer} onChange={(ids) => aendern(zustaendigFelder(ids))} />
       </Eig>) }] : []),
     { k: 'faellig', immer: !einkauf, plus: 'Bis wann', inhalt: <Eig symbol={<I.CalendarClock size={15} />} name="Bis wann">{wann}</Eig> },
     { k: 'prioritaet', immer: !einkauf || Number(d.prioritaet) === 1, plus: 'Wichtigkeit', inhalt: (
@@ -364,7 +387,7 @@ export function Aufgabenblatt(props: {
     if (!schritt.trim()) return;
     try {
       await call('save', 'vorgaenge', { titel: schritt.trim(), eltern_id: d.id, objekt_id: d.objekt_id ?? null, einheit_id: d.einheit_id ?? null, projekt_id: d.projekt_id ?? null,
-        kategorie: d.kategorie ?? null, zustaendig: d.zustaendig ?? null, status: 'offen', prioritaet: 2 });
+        kategorie: d.kategorie ?? null, ...zustaendigFelder(zustaendige(d)), status: 'offen', prioritaet: 2 });
       setSchritt(''); ladeSchritte(); geaendert();
     } catch (x) { fehler(x); }
   }
@@ -378,10 +401,63 @@ export function Aufgabenblatt(props: {
       setEintrag({ ...eintrag, text: '' }); ladeEintraege(); geaendert();
     } catch (x) { fehler(x); }
   }
+  // Pieces shown both in the overview and while editing.
+  const schritteListe = (
+    <ul className="schritte">
+      {schritte?.map((s) => (
+        <li key={s.id} className={s.status === 'erledigt' ? 'fertig' : ''}>
+          <button type="button" className={`haken${s.status === 'erledigt' ? ' an' : ''}`} aria-pressed={s.status === 'erledigt'}
+            aria-label={`„${s.titel}“ ${s.status === 'erledigt' ? 'wieder öffnen' : 'erledigen'}`}
+            onClick={async () => { try { await call('vorgangStatus', s.id, s.status === 'erledigt' ? 'offen' : 'erledigt'); ladeSchritte(); geaendert(); } catch (x) { fehler(x); } }}>
+            <I.Check size={12} strokeWidth={3} aria-hidden="true" /></button>
+          <span className="text">{s.titel}</span>
+          {s.faellig && <span className="klein hinweis">{wannText(s.faellig)}</span>}
+        </li>
+      ))}
+    </ul>
+  );
+  const schritteKopf = <h4>Schritte{!!schritte?.length && <span className="hinweis"> {schritte.filter((s) => s.status === 'erledigt').length}/{schritte.length}</span>}</h4>;
+  const fotos = !neu && (
+    <section className="blatt-abschnitt" aria-label="Fotos und Dateien">
+      <h4>{einkauf ? 'Fotos (Etikett, altes Teil)' : 'Fotos und Dateien'}</h4>
+      <Galerie kompakt filter={{ vorgang_id: d.id }} onGeaendert={geaendert}
+        ablage={{ vorgang_id: d.id, ...(d.objekt_id ? { objekt_id: d.objekt_id } : {}), ...(d.einheit_id ? { einheit_id: d.einheit_id } : {}), ...(d.projekt_id ? { projekt_id: d.projekt_id } : {}) }} />
+    </section>
+  );
+  const verlauf = !neu && (
+    <section className="blatt-abschnitt" aria-label="Verlauf">
+      <h4>Verlauf</h4>
+      {!eintraege?.length && <p className="klein hinweis">Noch nichts notiert.</p>}
+      <ol className="verlauf">
+        {eintraege?.map((e) => (
+          <li key={e.id} className={e.art === 'status' ? 'still' : ''}>
+            <span className="verlauf-kopf">{wannText(e.datum)}{e.von ? ` · ${e.von}` : ''}{!['kommentar', 'status'].includes(e.art) ? ` · ${EINTRAG_ARTEN.find(([a]) => a === e.art)?.[1] ?? e.art}` : ''}</span>
+            <span className="verlauf-text">{e.text}</span>
+            {e.art !== 'status' && <button type="button" className="icon verlauf-weg" aria-label="Eintrag löschen" title="Eintrag löschen"
+              onClick={async () => { if (await bestaetigen('Diesen Eintrag löschen?', { ja: 'Löschen' })) { await call('remove', 'vorgangseintraege', e.id); ladeEintraege(); } }}><I.X size={12} /></button>}
+          </li>
+        ))}
+      </ol>
+      <form className="verlauf-neu" onSubmit={eintragen}>
+        <select aria-label="Art des Eintrags" value={eintrag.art} onChange={(e) => setEintrag({ ...eintrag, art: e.target.value })}>
+          {EINTRAG_ARTEN.map(([a, l]) => <option key={a} value={a}>{l}</option>)}
+        </select>
+        {eintrag.art !== 'kommentar' && <input type="date" aria-label="Datum des Eintrags" value={eintrag.datum} onChange={(e) => setEintrag({ ...eintrag, datum: e.target.value })} />}
+        <input aria-label="Eintrag" placeholder={eintrag.art === 'kommentar' ? 'Kommentar schreiben' : eintrag.art === 'anruf' ? 'Was wurde besprochen?' : 'Was ist passiert?'}
+          value={eintrag.text} onChange={(e) => setEintrag({ ...eintrag, text: e.target.value })} />
+        <DiktatKnopf klein onText={(t) => setEintrag((x) => ({ ...x, text: x.text ? `${x.text} ${t}` : t }))} />
+        <button type="submit" className="icon" aria-label="Eintragen" title="Eintragen" disabled={!eintrag.text.trim()}><I.SendHorizontal size={15} /></button>
+      </form>
+    </section>
+  );
+  const hinweise = <>
+    {d.eltern_titel && <p className="klein hinweis">Schritt von „{d.eltern_titel}“</p>}
+    {!!d.pflicht_id && <p className="klein hinweis"><I.ClipboardCheck size={13} aria-hidden="true" /> Pflicht am Haus: „Erledigt“ fragt nach Datum und Nachweis und setzt den nächsten Termin.</p>}
+  </>;
+
   const haupt = (
     <div className="blatt-haupt">
-      {d.eltern_titel && <p className="klein hinweis">Schritt von „{d.eltern_titel}“</p>}
-      {!!d.pflicht_id && <p className="klein hinweis"><I.ClipboardCheck size={13} aria-hidden="true" /> Pflicht am Haus: „Erledigt“ fragt nach Datum und Nachweis und setzt den nächsten Termin.</p>}
+      {hinweise}
       {(!neu || hat('beschreibung')) && (
         <Feld mehrzeilig wert={d.beschreibung ?? ''} label="Details" className="blatt-details"
           platzhalter={einkauf ? 'Notiz: Farbe, Größe, Artikelnummer …' : 'Details, z. B. was genau gesagt wurde'}
@@ -389,62 +465,72 @@ export function Aufgabenblatt(props: {
       )}
       {!neu && !einkauf && (
         <section className="blatt-abschnitt" aria-label="Schritte">
-          <h4>Schritte{!!schritte?.length && <span className="hinweis"> {schritte.filter((s) => s.status === 'erledigt').length}/{schritte.length}</span>}</h4>
-          <ul className="schritte">
-            {schritte?.map((s) => (
-              <li key={s.id} className={s.status === 'erledigt' ? 'fertig' : ''}>
-                <button type="button" className={`haken${s.status === 'erledigt' ? ' an' : ''}`} aria-pressed={s.status === 'erledigt'}
-                  aria-label={`„${s.titel}“ ${s.status === 'erledigt' ? 'wieder öffnen' : 'erledigen'}`}
-                  onClick={async () => { try { await call('vorgangStatus', s.id, s.status === 'erledigt' ? 'offen' : 'erledigt'); ladeSchritte(); geaendert(); } catch (x) { fehler(x); } }}>
-                  <I.Check size={12} strokeWidth={3} aria-hidden="true" /></button>
-                <span className="text">{s.titel}</span>
-                {s.faellig && <span className="klein hinweis">{wannText(s.faellig)}</span>}
-              </li>
-            ))}
-          </ul>
+          {schritteKopf}
+          {schritteListe}
           <form className="schritt-neu" onSubmit={schrittDazu}>
             <I.Plus size={14} aria-hidden="true" />
             <input aria-label="Neuer Schritt" placeholder="Schritt hinzufügen" value={schritt} onChange={(e) => setSchritt(e.target.value)} />
           </form>
         </section>
       )}
-      {!neu && (
-        <section className="blatt-abschnitt" aria-label="Fotos und Dateien">
-          <h4>{einkauf ? 'Fotos (Etikett, altes Teil)' : 'Fotos und Dateien'}</h4>
-          <Galerie kompakt filter={{ vorgang_id: d.id }} onGeaendert={geaendert}
-            ablage={{ vorgang_id: d.id, ...(d.objekt_id ? { objekt_id: d.objekt_id } : {}), ...(d.einheit_id ? { einheit_id: d.einheit_id } : {}), ...(d.projekt_id ? { projekt_id: d.projekt_id } : {}) }} />
-        </section>
-      )}
-      {!neu && (
-        <section className="blatt-abschnitt" aria-label="Verlauf">
-          <h4>Verlauf</h4>
-          {!eintraege?.length && <p className="klein hinweis">Noch nichts notiert.</p>}
-          <ol className="verlauf">
-            {eintraege?.map((e) => (
-              <li key={e.id} className={e.art === 'status' ? 'still' : ''}>
-                <span className="verlauf-kopf">{wannText(e.datum)}{e.von ? ` · ${e.von}` : ''}{!['kommentar', 'status'].includes(e.art) ? ` · ${EINTRAG_ARTEN.find(([a]) => a === e.art)?.[1] ?? e.art}` : ''}</span>
-                <span className="verlauf-text">{e.text}</span>
-                {e.art !== 'status' && <button type="button" className="icon verlauf-weg" aria-label="Eintrag löschen" title="Eintrag löschen"
-                  onClick={async () => { if (await bestaetigen('Diesen Eintrag löschen?', { ja: 'Löschen' })) { await call('remove', 'vorgangseintraege', e.id); ladeEintraege(); } }}><I.X size={12} /></button>}
-              </li>
-            ))}
-          </ol>
-          <form className="verlauf-neu" onSubmit={eintragen}>
-            <select aria-label="Art des Eintrags" value={eintrag.art} onChange={(e) => setEintrag({ ...eintrag, art: e.target.value })}>
-              {EINTRAG_ARTEN.map(([a, l]) => <option key={a} value={a}>{l}</option>)}
-            </select>
-            {eintrag.art !== 'kommentar' && <input type="date" aria-label="Datum des Eintrags" value={eintrag.datum} onChange={(e) => setEintrag({ ...eintrag, datum: e.target.value })} />}
-            <input aria-label="Eintrag" placeholder={eintrag.art === 'kommentar' ? 'Kommentar schreiben' : eintrag.art === 'anruf' ? 'Was wurde besprochen?' : 'Was ist passiert?'}
-              value={eintrag.text} onChange={(e) => setEintrag({ ...eintrag, text: e.target.value })} />
-            <DiktatKnopf klein onText={(t) => setEintrag((x) => ({ ...x, text: x.text ? `${x.text} ${t}` : t }))} />
-            <button type="submit" className="icon" aria-label="Eintragen" title="Eintragen" disabled={!eintrag.text.trim()}><I.SendHorizontal size={15} /></button>
-          </form>
-        </section>
-      )}
+      {fotos}
+      {verlauf}
     </div>
   );
 
-  const inhalt = (
+  // ---------- overview of a saved task: its data as a list, „Bearbeiten“ for the inputs ----------
+  const einheit = einheiten?.find((x) => x.id === Number(d.einheit_id));
+  const person = personen?.find((x) => x.id === Number(d.person_id));
+  const ueberfaellig = !!d.faellig && d.faellig < heute() && d.status !== 'erledigt';
+  const angaben = ([
+    ...(einkauf ? [
+      [<I.Hash size={15} />, 'Menge', d.menge],
+      [<I.Store size={15} />, 'Laden', d.laden],
+      [<I.Euro size={15} />, 'Preis ca.', d.preis_ct != null ? euro(d.preis_ct) : null],
+    ] : []),
+    [<I.House size={15} />, 'Wo', d.objekt_id ? [objekte?.find((o) => o.id === Number(d.objekt_id))?.bezeichnung ?? d.objekt,
+      d.einheit_id ? (einheit ? `${einheit.nr ? `${einheit.nr} – ` : ''}${einheit.bezeichnung}` : d.einheit) : 'ganzes Haus'].filter(Boolean).join(' · ') : null],
+    [<I.User size={15} />, 'Betrifft', d.person_id ? (person ? personName(person) : d.person) : null],
+    [<I.UserCheck size={15} />, 'Kümmert sich', benutzer?.length ? zustaendige(d).map((id) => benutzer.find((b) => b.id === id)?.name).filter(Boolean).join(', ') : d.zustaendig_name],
+    [<I.CalendarClock size={15} />, 'Bis wann', d.faellig
+      ? <span className={ueberfaellig ? 'lese-rot' : undefined}>{/^\d/.test(wannText(d.faellig)) ? datum(d.faellig) : `${wannText(d.faellig)} · ${datum(d.faellig)}`}{ueberfaellig ? ' · überfällig' : ''}</span> : null],
+    [<I.Flag size={15} />, 'Wichtigkeit', Number(d.prioritaet ?? 2) === 1 ? <span className="lese-rot">dringend</span> : WICHTIG.find(([w]) => w === Number(d.prioritaet ?? 2))?.[1]],
+    [<I.FolderKanban size={15} />, 'Projekt', d.projekt_id ? projekte?.find((p) => p.id === Number(d.projekt_id))?.titel ?? d.projekt : null],
+    ...(einkauf && d.projektaufgabe_id ? [[<I.ListChecks size={15} />, 'Für Schritt', projekt?.aufgaben?.find((a: Row) => a.id === Number(d.projektaufgabe_id))?.titel]] : []),
+  ] as [ReactNode, string, ReactNode][]).filter(([, , w]) => w != null && w !== '');
+  const uebersicht = (
+    <>
+      <div className="blatt-kopf">
+        <span className="chip">{artName(d.kategorie) || 'ohne Art'}</span>
+        <span className={`chip blatt-statuschip ${d.status ?? 'offen'}`}>{STATUS_KURZ.find(([k]) => k === d.status)?.[1] ?? 'Offen'}</span>
+        <span className="spacer" />
+        <button type="button" className="primary" onClick={() => setBearbeiten(true)}><I.Pencil size={14} aria-hidden="true" /> Bearbeiten</button>
+        <button type="button" className="icon blatt-zu" aria-label="Schließen" title="Schließen" onClick={props.onClose}><I.X size={16} /></button>
+      </div>
+      <h2 className="blatt-lesetitel">{einkauf && d.menge ? `${d.menge} ` : ''}{d.titel}</h2>
+      {hinweis && <p className="klein hinweis" role="status">{hinweis}</p>}
+      <div className="blatt-raster">
+        <div className="blatt-haupt">
+          {hinweise}
+          {d.beschreibung && <p className="blatt-lesetext">{d.beschreibung}</p>}
+          {!einkauf && !!schritte?.length && <section className="blatt-abschnitt" aria-label="Schritte">{schritteKopf}{schritteListe}</section>}
+          {fotos}
+          {verlauf}
+        </div>
+        <aside className="blatt-seite" aria-label="Angaben">
+          <dl className="lese-liste">
+            {angaben.map(([symbol, name, wert]) => (
+              <div key={name}><dt><span aria-hidden="true">{symbol}</span>{name}</dt><dd>{wert}</dd></div>
+            ))}
+          </dl>
+          {!angaben.length && <p className="klein hinweis">Noch keine Angaben.</p>}
+        </aside>
+      </div>
+      {eigen.dialoge}
+    </>
+  );
+
+  const inhalt = lesen ? uebersicht : (
     <>
       {kopf}
       {titel}
@@ -465,7 +551,7 @@ export function Aufgabenblatt(props: {
           {neu && !d.id ? <>
             <button type="button" onClick={props.onClose}>Abbrechen</button>
             <button type="button" className="primary" disabled={laeuft} onClick={anlegenUndSchliessen}>Anlegen</button>
-          </> : <button type="button" className="primary" onClick={props.onClose}>Fertig</button>}
+          </> : <button type="button" onClick={props.onClose}>Schließen</button>}
         </div>
       </div>
     </Fenster>

@@ -993,6 +993,8 @@ button.haken.gross { width: 26px; height: 26px; }
 .faellig { white-space: nowrap; }
 .faellig.ueberfaellig { color: var(--rot); font-weight: 500; }
 .faellig.heute { color: var(--gelb); font-weight: 500; }
+.personen-kurz { display: inline-flex; }
+.personen-kurz .person-kurz + .person-kurz { margin-left: -6px; box-shadow: 0 0 0 2px var(--panel); }
 .person-kurz { display: inline-flex; align-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--accent-soft); color: var(--accent-text, var(--ink)); font-size: 10.5px; font-weight: 600; justify-content: center; }
 @media (max-width: 800px), (pointer: coarse) {
   .board:not(.eine) { grid-template-columns: repeat(4, minmax(260px, 82vw)); scroll-snap-type: x mandatory; }
@@ -1017,6 +1019,20 @@ button.haken.gross { width: 26px; height: 26px; }
 .blatt.eingebettet { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; }
 .blatt-kopf { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
 .blatt-arten { display: flex; flex-wrap: wrap; gap: 6px; flex: 1; align-items: center; }
+/* Overview of a saved task (Aufgabenblatt, before „Bearbeiten“): the data as a list. */
+.blatt-lesetitel { font-size: 19px; font-weight: 600; line-height: 1.3; margin: 2px 0 6px; overflow-wrap: anywhere; }
+.blatt-lesetext { white-space: pre-wrap; margin: 0 0 6px; line-height: 1.5; overflow-wrap: anywhere; }
+.blatt-statuschip.in_arbeit { background: var(--accent-soft); color: var(--accent-text, var(--ink)); border-color: transparent; }
+.blatt-statuschip.wartet { background: var(--gelb-bg); color: var(--gelb); border-color: transparent; }
+.blatt-statuschip.erledigt { background: var(--gruen-bg); color: var(--gruen); border-color: transparent; }
+.lese-liste { margin: 0; }
+.lese-liste > div { display: grid; grid-template-columns: minmax(110px, 38%) minmax(0, 1fr); gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--line); align-items: baseline; }
+.lese-liste > div:last-child { border-bottom: 0; }
+.lese-liste dt { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); }
+.lese-liste dt svg { flex-shrink: 0; position: relative; top: 2px; }
+.lese-liste dd { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
+.lese-rot { color: var(--rot); font-weight: 600; }
+.blatt-fertig { display: inline-flex; align-items: center; gap: 5px; }
 .blatt.eingebettet .blatt-status { flex-basis: 100%; display: flex; }
 .blatt-status button { flex: 1; justify-content: center; }
 @media (max-width: 700px) { .blatt-status { flex-basis: 100%; display: flex; } }

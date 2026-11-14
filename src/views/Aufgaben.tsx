@@ -5,7 +5,7 @@
 // on a phone one column at a time. A task opens as one sheet: beside the list on a wide screen, else as a window.
 import { useEffect, useRef, useState, type DragEvent, type PointerEvent as ZeigerEreignis } from 'react';
 import * as I from 'lucide-react';
-import { call, fehler, heute, inTagen, type Row } from '../api';
+import { call, fehler, heute, inTagen, zustaendige, type Row } from '../api';
 import { useLoad } from '../useLoad';
 import { useAktion } from '../aktion';
 import { Bild } from '../Symbol';
@@ -24,6 +24,15 @@ const gruppeVon = (v: Row) => {
 const reihenfolge = (a: Row, b: Row) => (a.prioritaet - b.prioritaet) || String(a.faellig ?? '9999').localeCompare(String(b.faellig ?? '9999')) || b.id - a.id;
 const faelligKlasse = (v: Row) => (v.status === 'erledigt' || !v.faellig ? '' : v.faellig < heute() ? 'ueberfaellig' : v.faellig === heute() ? 'heute' : '');
 const kuerzel = (name: string) => name.split(/\s+/).map((t) => t[0]).join('').slice(0, 2);
+// Initials of everybody in charge (zustaendig_name lists them separated by ", "), overlapping like avatars.
+function Kuerzel(props: { namen?: string | null }) {
+  if (!props.namen) return null;
+  const namen = props.namen.split(', ');
+  return <span className="personen-kurz" title={`Kümmert sich: ${namen.join(', ')}`}>
+    {namen.slice(0, 3).map((n) => <span key={n} className="person-kurz">{kuerzel(n)}</span>)}
+    {namen.length > 3 && <span className="person-kurz">+{namen.length - 3}</span>}
+  </span>;
+}
 const lesen = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
 const schreiben = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch {} };
 
@@ -79,7 +88,7 @@ export function Aufgaben(props: { objekte: Row[] }) {
   // Steps of a task without their own date show only inside their task.
   const alle = (rows ?? []).filter((v) => !(v.eltern_id && !v.faellig));
   const offen = alle.filter((v) => v.status !== 'erledigt');
-  const meine = offen.filter((v) => ich != null && String(v.zustaendig) === String(ich));
+  const meine = offen.filter((v) => ich != null && zustaendige(v).includes(Number(ich)));
   const zahl: Record<Sicht, number> = { meine: meine.length, alle: offen.length, wartet: offen.filter((v) => v.status === 'wartet').length,
     einkauf: offen.filter((v) => v.kategorie === 'Einkauf').length, erledigt: alle.filter((v) => v.status === 'erledigt').length };
   const sichtbar = sicht === 'meine' ? meine : sicht === 'wartet' ? offen.filter((v) => v.status === 'wartet')
@@ -148,7 +157,7 @@ export function Aufgaben(props: { objekte: Row[] }) {
           <div className="aufgaben-haupt">
             {sicht !== 'erledigt' && <Schnellfeld vorgabe={vorgabe()} onNeu={reload} />}
             {ansicht === 'board' && sicht !== 'erledigt' ? (
-              <Board liste={sicht === 'wartet' ? sichtbar : [...sichtbar, ...alle.filter((v) => v.status === 'erledigt' && (sicht !== 'meine' || String(v.zustaendig) === String(ich)))]}
+              <Board liste={sicht === 'wartet' ? sichtbar : [...sichtbar, ...alle.filter((v) => v.status === 'erledigt' && (sicht !== 'meine' || zustaendige(v).includes(Number(ich))))]}
                 aktiv={gewaehlt} mehrere={mehrere} onOeffnen={oeffnen} setzen={setzen} />
             ) : (
               <div className="aufgabenliste">
@@ -318,7 +327,7 @@ function Zeile(props: { v: Row; aktiv: boolean; mehrere: boolean; sicht: Sicht; 
           {!!v.fotos && <span className="az-zahl" title="Fotos und Dateien"><I.Image size={13} aria-hidden="true" /> {v.fotos}</span>}
           {!!v.eintraege && <span className="az-zahl" title="Kommentare und Einträge"><I.MessageSquare size={13} aria-hidden="true" /> {v.eintraege}</span>}
           {v.faellig && <span className={`faellig ${faelligKlasse(v)}`}>{wannText(v.faellig)}</span>}
-          {props.mehrere && v.zustaendig_name && <span className="person-kurz" title={`Kümmert sich: ${v.zustaendig_name}`}>{kuerzel(v.zustaendig_name)}</span>}
+          {props.mehrere && <Kuerzel namen={v.zustaendig_name} />}
         </span>
       </div>
       {spaeter && (
@@ -377,7 +386,7 @@ function Board(props: { liste: Row[]; aktiv: number | null; mehrere: boolean; on
                       {!!v.eintraege && <span title="Kommentare und Einträge"><I.MessageSquare size={13} aria-hidden="true" /> {v.eintraege}</span>}
                       {!!v.fotos && <span title="Fotos und Dokumente"><I.Image size={13} aria-hidden="true" /> {v.fotos}</span>}
                       <span className="spacer" />
-                      {props.mehrere && v.zustaendig_name && <span className="person-kurz" title={`Kümmert sich: ${v.zustaendig_name}`}>{kuerzel(v.zustaendig_name)}</span>}
+                      {props.mehrere && <Kuerzel namen={v.zustaendig_name} />}
                     </span>
                   </button>
                 </div>

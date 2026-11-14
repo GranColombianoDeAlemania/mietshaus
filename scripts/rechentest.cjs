@@ -1306,7 +1306,7 @@ Stadtsparkasse München | IBAN DE02 7015 0000 0000 1234 56 | BIC SSKMDEMMXXX`;
   t.vorgangStatus(anna, v1, 'in_arbeit');
   gleich('Statuswechsel im Verlauf mit Name', t.liste('vorgangseintraege', { vorgang_id: v1 }).map((e) => [e.art, e.text, e.von]), [['status', 'Offen → In Arbeit', 'Anna Meier']]);
   gleich('Gleicher Status: kein Eintrag', t.vorgangStatus(anna, v1, 'in_arbeit'), false);
-  gleich('Kommentar von Ben an Annas Aufgabe: Anna wird benachrichtigt', t.vorgangKommentieren(ben, v1, 'Leiter steht im Keller').benachrichtigen?.benutzer, anna);
+  gleich('Kommentar von Ben an Annas Aufgabe: Anna wird benachrichtigt', t.vorgangKommentieren(ben, v1, 'Leiter steht im Keller').benachrichtigen?.map((n) => n.benutzer), [anna]);
   gleich('Eigener Kommentar: keine Benachrichtigung', t.vorgangKommentieren(anna, v1, 'Danke'), {});
   gleich('Kommentare zählen, Status nicht', t.aufgabenListe(anna, {}).find((v) => v.id === v1).eintraege, 2);
   const e1 = t.faelligeErinnerungen('2026-11-03');

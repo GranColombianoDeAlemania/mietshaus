@@ -22,6 +22,7 @@ const geheim = require('./geheim.cjs');
 const versandModul = require('./versand.cjs');
 const pushModul = require('./push.cjs');
 const passkeyModul = require('./passkey.cjs');
+const zustaendige = require('../electron/zustaendig.cjs');
 
 const { VERSION, DESKTOP_SCHNITTSTELLE, vergleichen, neuesteVersion } = require('../electron/version.cjs');
 const TYPEN = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml',
@@ -380,22 +381,26 @@ async function starten(o) {
     // other windows would reload, which made them reload each other).
     kontext(req, w);
     const vorher = aenderungen();
-    // A case assigned to someone else: that user gets a notification.
-    const zuweisung = fn === 'save' && args[0] === 'vorgaenge' && args[1]?.zustaendig && Number(args[1].zustaendig) !== w.benutzer?.id
-      ? { neu: Number(args[1].zustaendig), alt: args[1].id ? raw.prepare('SELECT zustaendig FROM vorgaenge WHERE id = ?').get(args[1].id)?.zustaendig : null } : null;
+    // A case assigned to others: each newly assigned user (not the one assigning) gets a notification.
+    const zuweisung = fn === 'save' && args[0] === 'vorgaenge' && args[1] && ('zustaendig' in args[1] || 'mit_zustaendig' in args[1])
+      ? { alt: args[1].id ? zustaendige.alle(raw.prepare('SELECT zustaendig, mit_zustaendig FROM vorgaenge WHERE id = ?').get(args[1].id)) : [] } : null;
     let wert = await fachlich(() => roh[fn](...args));
-    // A comment notifies the person in charge.
-    if (fn === 'vorgangKommentieren' && wert?.benachrichtigen) { benachrichtigen(wert.benachrichtigen); wert = true; }
+    // A comment notifies everybody in charge.
+    if (fn === 'vorgangKommentieren' && wert?.benachrichtigen) { for (const n of [wert.benachrichtigen].flat()) benachrichtigen(n); wert = true; }
     // Removed for good: the records are gone, their files go too.
     if (fn === 'dokumentEndgueltig' || fn === 'papierkorbLeeren') { dateienEntfernen(wert); wert = wert.length; }
-    if (zuweisung && zuweisung.neu !== zuweisung.alt) {
-      const v = raw.prepare('SELECT v.titel, v.faellig, v.objekt_id, o.bezeichnung AS objekt FROM vorgaenge v LEFT JOIN objekte o ON o.id = v.objekt_id WHERE v.id = ?').get(args[1].id ?? wert);
-      if (v) benachrichtigen({ art: 'aufgaben', benutzer: zuweisung.neu, ziel: { vorgang: args[1].id ?? wert, objektId: v.objekt_id ?? null }, titel: `${w.benutzer?.name ?? 'Jemand'} hat dir einen Vorgang zugewiesen`,
-        text: `${v.titel}${v.objekt ? ` · ${v.objekt}` : ''}${v.faellig ? ` · fällig ${v.faellig.split('-').reverse().join('.')}` : ''}` });
-      // The history of the task says who handed it to whom.
-      const an = raw.prepare('SELECT name FROM benutzer WHERE id = ?').get(zuweisung.neu)?.name;
-      if (v && an) raw.prepare(`INSERT INTO vorgangseintraege (vorgang_id, datum, art, text, von) VALUES (?, ?, 'status', ?, ?)`)
-        .run(args[1].id ?? wert, ortszeit.heute(), `Zugewiesen an ${an}`, w.benutzer?.name ?? null);
+    if (zuweisung) {
+      const id = args[1].id ?? wert;
+      const v = raw.prepare('SELECT v.titel, v.faellig, v.objekt_id, v.zustaendig, v.mit_zustaendig, o.bezeichnung AS objekt FROM vorgaenge v LEFT JOIN objekte o ON o.id = v.objekt_id WHERE v.id = ?').get(id);
+      const neu = v ? zustaendige.alle(v).filter((b) => !zuweisung.alt.includes(b)) : [];
+      for (const b of neu.filter((x) => x !== w.benutzer?.id)) {
+        benachrichtigen({ art: 'aufgaben', benutzer: b, ziel: { vorgang: id, objektId: v.objekt_id ?? null }, titel: `${w.benutzer?.name ?? 'Jemand'} hat dir einen Vorgang zugewiesen`,
+          text: `${v.titel}${v.objekt ? ` · ${v.objekt}` : ''}${v.faellig ? ` · fällig ${v.faellig.split('-').reverse().join('.')}` : ''}` });
+      }
+      // The history of the task says who handed it to whom (others than the one assigning, as before).
+      const namen = neu.filter((x) => x !== w.benutzer?.id).map((b) => raw.prepare('SELECT name FROM benutzer WHERE id = ?').get(b)?.name).filter(Boolean);
+      if (namen.length) raw.prepare(`INSERT INTO vorgangseintraege (vorgang_id, datum, art, text, von) VALUES (?, ?, 'status', ?, ?)`)
+        .run(id, ortszeit.heute(), `Zugewiesen an ${namen.join(', ')}`, w.benutzer?.name ?? null);
     }
     // Stored mail passwords (encrypted) stay on the server; the page only learns that one is set.
     if (fn === 'einstellungen') wert = Object.fromEntries(Object.entries(wert).map(([k, v]) => [k, /_passwort_(server|enc|klar)$/.test(k) && v ? 'gesetzt' : v]));

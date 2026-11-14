@@ -288,6 +288,27 @@ function client(adresse) {
   const bensAufgaben = await ben.call('meineAufgaben');
   pruefe('Meine Aufgaben: nur die eigenen', bensAufgaben.length === 1 && bensAufgaben[0].titel === 'Heizung prüfen', JSON.stringify(bensAufgaben));
   pruefe('Liste nennt den Zuständigen', (await anna.call('vorgaengeListe', o, true)).find((v) => v.titel === 'Heizung prüfen')?.zustaendig_name === 'Ben Becker');
+  // Several in charge: Anna first, Ben as a further one.
+  {
+    const bensMitteilungen = (await ben.call('mitteilungen')).length;
+    const zwei = await anna.call('save', 'vorgaenge', { objekt_id: o, titel: 'Treppenhaus streichen', status: 'offen', prioritaet: 2, zustaendig: 1, mit_zustaendig: JSON.stringify([benId]) });
+    pruefe('Mehrere Zuständige: Ben sieht sie unter Meine Aufgaben', (await ben.call('meineAufgaben')).some((v) => v.id === zwei));
+    pruefe('… Anna auch', (await anna.call('meineAufgaben')).some((v) => v.id === zwei));
+    pruefe('… im Board unter „Meine“ bei beiden', (await ben.call('aufgabenListe', { nur_meine: true })).some((v) => v.id === zwei)
+      && (await anna.call('aufgabenListe', { nur_meine: true })).some((v) => v.id === zwei));
+    const namen = (await anna.call('aufgabenListe', {})).find((v) => v.id === zwei)?.zustaendig_name ?? '';
+    pruefe('… die Liste nennt beide, die erste zuerst', namen.endsWith(', Ben Becker') && namen.split(', ').length === 2, namen);
+    pruefe('… Ben bekommt die Zuweisung als Mitteilung', (await ben.call('mitteilungen')).length === bensMitteilungen + 1);
+    const verlauf = await anna.call('liste', 'vorgangseintraege', { vorgang_id: zwei }, 'datum, id');
+    pruefe('… der Verlauf nennt die Zuweisung', verlauf.some((x) => x.text === 'Zugewiesen an Ben Becker'), JSON.stringify(verlauf));
+    const annasMitteilungen = (await anna.call('mitteilungen')).length;
+    await ben.call('vorgangKommentieren', zwei, 'Farbe ist gekauft');
+    pruefe('… Bens Kommentar meldet sich bei Anna', (await anna.call('mitteilungen')).length === annasMitteilungen + 1);
+    // Ben taken off again: nobody new, no notification.
+    await anna.call('save', 'vorgaenge', { id: zwei, zustaendig: 1, mit_zustaendig: null });
+    pruefe('… wieder entfernt: nicht mehr unter Bens Aufgaben', !(await ben.call('meineAufgaben')).some((v) => v.id === zwei));
+    await anna.call('remove', 'vorgaenge', zwei);
+  }
 
   // ---------- 5a2. notifications (Web Push to a stand-in push service over HTTPS) ----------
   {

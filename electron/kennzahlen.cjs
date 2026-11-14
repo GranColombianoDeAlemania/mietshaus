@@ -3,6 +3,7 @@
 // landlord's own flat costs. Amounts in cents; every figure comes from postings, contracts or meter readings.
 const { tageZwischen, tageImMonat, einheitVonSql, nkFaellig } = require('./buchhaltung.cjs');
 const ortszeit = require('./zeit.cjs');
+const zustaendige = require('./zustaendig.cjs');
 
 const pad = (n) => String(n).padStart(2, '0');
 const heute = () => ortszeit.heute();
@@ -844,7 +845,7 @@ module.exports = function kennzahlen({ all, get, PERSON_NAME, bh, aw, ab, vw, dl
     }
     for (const v of all(`SELECT v.*, o.bezeichnung AS objekt FROM vorgaenge v LEFT JOIN objekte o ON o.id = v.objekt_id
         WHERE v.status <> 'erledigt' AND v.faellig BETWEEN ? AND ?`, von, bis)) {
-      add({ datum: v.faellig, titel: v.titel, objekt: v.objekt, art: 'vorgang', wichtig: v.prioritaet === 1, meins: benutzerId != null && v.zustaendig === benutzerId,
+      add({ datum: v.faellig, titel: v.titel, objekt: v.objekt, art: 'vorgang', wichtig: v.prioritaet === 1, meins: benutzerId != null && zustaendige.alle(v).includes(benutzerId),
         zustaendig: v.zustaendig ?? null, ziel: { vorgang: v.id, objektId: v.objekt_id } });
     }
     for (const a of all(`SELECT a.*, p.titel AS projekt FROM projektaufgaben a JOIN projekte p ON p.id = a.projekt_id

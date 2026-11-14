@@ -347,6 +347,12 @@ How the depth was found: the installer of a personal finance program the user ow
 - Photo series on the phone: after a shot a bar under the camera button offers „Noch eins“ (the camera again, one tap per photo – a web page may only open the camera on a tap), „Mediathek“ (several at once) and „Fertig“. On a computer the picker takes several files at once.
 - The drop overlay („Dateien loslassen …“) no longer stays: it goes when no drag arrives any more (dragged out, Esc, released elsewhere), on dragend and when the window loses focus; a picture held with the mouse inside the app shows no overlay and is not uploaded again.
 
+### 0.24.3 – several users in charge, task overview
+
+- „Kümmert sich“ takes several users: one chip per user, a tap adds or removes them. vorgaenge.zustaendig stays the first one (older devices and code keep working), the others are a JSON list in vorgaenge.mit_zustaendig.
+- Everybody in charge sees the task under „Meine“, in „Meine Aufgaben“ and marked in the calendar, gets the reminder when it is due and a note on comments; each newly assigned user is notified and named in the history. Cards show the initials of all of them.
+- A saved task opens as an overview: its data as a list (where, who, by when, urgency, project; for a purchase quantity, shop and price), details as text, steps, photos and history. „Bearbeiten“ shows the inputs, „Fertig“ the overview again; comments, photos and ticking off steps work in the overview too, since they do not change the task's data.
+
 ## Development
 
 ```
