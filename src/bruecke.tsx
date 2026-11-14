@@ -178,12 +178,14 @@ async function speichern(inhalt: string | Uint8Array, name: string, filter?: Dat
 }
 
 // Hidden file input, resolved with the chosen files (an empty list when cancelled).
-// kamera: the phone opens its camera directly (rear camera); elsewhere only images can be chosen.
-export function dateienWaehlen(opt: { mehrere?: boolean; endungen?: string[]; kamera?: boolean } = {}): Promise<File[]> {
+// kamera: the phone opens its camera directly (rear camera); elsewhere only images can be chosen. video: videos too (the
+// phone's camera then offers photo and video). medien: images (and videos) from the library, no camera.
+export function dateienWaehlen(opt: { mehrere?: boolean; endungen?: string[]; kamera?: boolean; video?: boolean; medien?: boolean } = {}): Promise<File[]> {
   return new Promise((ok) => {
     const i = Object.assign(document.createElement('input'), { type: 'file', multiple: !!opt.mehrere });
     if (opt.endungen?.length) i.accept = opt.endungen.map((e) => `.${e}`).join(',');
-    if (opt.kamera) { i.accept = 'image/*'; i.setAttribute('capture', 'environment'); }
+    if (opt.kamera || opt.medien) i.accept = opt.video ? 'image/*,video/*' : 'image/*';
+    if (opt.kamera) i.setAttribute('capture', 'environment');
     i.style.display = 'none';
     i.onchange = () => { ok([...(i.files ?? [])]); i.remove(); };
     i.addEventListener('cancel', () => { ok([]); i.remove(); });
@@ -398,8 +400,9 @@ export function brueckeEinrichten() {
       const files = await dateienWaehlen({ mehrere: true });
       return files.length ? hochladen(files, opt) : [];
     },
-    fotoAufnehmen: async (opt) => {
-      const files = await dateienWaehlen({ kamera: true });
+    fotoAufnehmen: async (opt, art) => {
+      // From the library several at once; the camera takes one at a time.
+      const files = await dateienWaehlen(art?.mediathek ? { medien: true, mehrere: true, video: !!art.video } : { kamera: true, video: !!art?.video });
       return files.length ? hochladen(files, opt) : [];
     },
     // The phone's camera button: the position is asked for while the camera is open (the camera has to open right on

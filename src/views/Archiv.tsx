@@ -70,6 +70,7 @@ export function Vorschau(props: { datei: string; id?: number }) {
   const [d] = useLoad<Row | null>(() => (xml && props.id ? call('dokument', props.id) : Promise.resolve(null)), [props.id, xml]);
   if (xml && d?.erechnung) return <div className="vorschau"><ERechnungAnsicht e={JSON.parse(d.erechnung)} /></div>;
   if (istBild(props.datei)) return <div className="vorschau"><img src={dokUrl(props.datei)} /></div>;
+  if (/\.(mp4|m4v|mov|webm)$/i.test(props.datei)) return <div className="vorschau"><video src={dokUrl(props.datei)} controls playsInline preload="metadata" style={{ maxWidth: '100%', maxHeight: '100%' }} /></div>;
   if (/\.pdf$/i.test(props.datei)) return <iframe className="vorschau" src={dokUrl(props.datei)} />;
   return <div className="vorschau leerseite"><p>Keine Vorschau für diesen Dateityp.</p><button onClick={() => window.hv.dokumentOeffnen(props.datei)}>Mit Standardprogramm öffnen</button></div>;
 }

@@ -8,17 +8,35 @@ import { DokumentDialog } from './views/Archiv';
 const warte = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export const handy = () => matchMedia('(pointer: coarse)').matches;
 
-export function FotoKnopf(props: { opt: Row; onFertig?: (ids: number[]) => void; label?: string; klein?: boolean }) {
+// video: the camera offers photo and video, the library videos too. On the phone a bar stays after each shot – "Noch
+// eins" opens the camera again (each tap is needed: the camera may only open on a tap), "Mediathek" picks several at once.
+// On a computer the picker takes several files at once anyway.
+export function FotoKnopf(props: { opt: Row; onFertig?: (ids: number[]) => void; label?: string; klein?: boolean; video?: boolean }) {
   const [laeuft, setLaeuft] = useState(false);
+  const [serie, setSerie] = useState<number | null>(null);
+  const aufnehmen = async (mediathek: boolean) => {
+    setLaeuft(true);
+    try {
+      const r = await window.hv.fotoAufnehmen({ status: 'abgelegt', ...props.opt }, { video: props.video, mediathek: mediathek || !handy() });
+      for (const x of r) await call('dokumentSpeichern', { id: x.id, typ: 'Foto', ...props.opt });
+      if (r.length) props.onFertig?.(r.map((x) => x.id));
+      if (handy() && (r.length || serie != null)) setSerie((serie ?? 0) + r.length);
+    } catch (e) { fehler(e); } finally { setLaeuft(false); }
+  };
+  const was = props.video ? 'Foto oder Video' : 'Foto';
   return (
-    <button className={props.klein ? 'icon' : undefined} title="Foto aufnehmen" disabled={laeuft} onClick={async () => {
-      setLaeuft(true);
-      try {
-        const r = await window.hv.fotoAufnehmen({ status: 'abgelegt', ...props.opt });
-        for (const x of r) await call('dokumentSpeichern', { id: x.id, typ: 'Foto', ...props.opt });
-        if (r.length) props.onFertig?.(r.map((x) => x.id));
-      } catch (e) { fehler(e); } finally { setLaeuft(false); }
-    }}><I.Camera size={15} />{props.klein ? null : <> {laeuft ? 'Lädt …' : props.label ?? 'Foto'}</>}</button>
+    <>
+      <button type="button" className={props.klein ? 'icon' : undefined} title={`${was} aufnehmen`} aria-label={`${was} aufnehmen`} disabled={laeuft}
+        onClick={() => aufnehmen(false)}><I.Camera size={15} />{props.klein ? null : <> {laeuft ? 'Lädt …' : props.label ?? 'Foto'}</>}</button>
+      {serie != null && (
+        <div className="foto-serie" role="status">
+          <span className="foto-serie-zahl"><I.CheckCircle2 size={16} /> {laeuft ? 'Lädt hoch …' : `${serie} aufgenommen`}</span>
+          <button type="button" className="primary" disabled={laeuft} onClick={() => aufnehmen(false)}><I.Camera size={15} /> Noch eins</button>
+          <button type="button" disabled={laeuft} onClick={() => aufnehmen(true)}><I.Images size={15} /> Mediathek</button>
+          <button type="button" disabled={laeuft} onClick={() => setSerie(null)}>Fertig</button>
+        </div>
+      )}
+    </>
   );
 }
 

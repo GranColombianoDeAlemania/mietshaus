@@ -340,6 +340,13 @@ From the wish of 10.11.2026: a fourth mode „Finanzen“ beside Miete, WEG and 
 
 How the depth was found: the installer of a personal finance program the user owns was unpacked and its shipped .NET metadata read (module names and the entity model's table and column names) to learn which concepts such a program covers. Nothing was executed, and no code, text or schema was copied; tables, names and logic here are our own.
 
+### 0.24.2 – photo viewer, videos, photo series
+
+- The viewer of photos was a layer inside the task window: that window blocked every click beside it (no next photo, no swipe), and the viewer's bar shared its class name with the white notice bar at the bottom (white box, invisible text). It is now a window of its own on top: full screen, arrows at the sides, swipe on the phone, arrow keys, thumbnails below, Esc closes only the viewer.
+- Videos: the camera offers photo and video, the library and the drop zone take videos (mp4, mov, m4v, webm). Thumbnails show the first frame with a play mark; viewer and archive play them. The server answers byte ranges (206), which Safari needs to play a video.
+- Photo series on the phone: after a shot a bar under the camera button offers „Noch eins“ (the camera again, one tap per photo – a web page may only open the camera on a tap), „Mediathek“ (several at once) and „Fertig“. On a computer the picker takes several files at once.
+- The drop overlay („Dateien loslassen …“) no longer stays: it goes when no drag arrives any more (dragged out, Esc, released elsewhere), on dragend and when the window loses focus; a picture held with the mouse inside the app shows no overlay and is not uploaded again.
+
 ## Development
 
 ```

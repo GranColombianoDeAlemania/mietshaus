@@ -28,7 +28,7 @@ declare global {
       importieren: (files: FileList | File[], opt?: Row) => Promise<Hochgeladen[]>;
       dateienImportieren: (opt?: Row) => Promise<Hochgeladen[]>;
       // On a phone the camera opens at once; on a computer it is a picker for images.
-      fotoAufnehmen: (opt?: Row) => Promise<Hochgeladen[]>;
+      fotoAufnehmen: (opt?: Row, art?: { video?: boolean; mediathek?: boolean }) => Promise<Hochgeladen[]>;
       fotoMitStandort: () => Promise<(Hochgeladen & { objekt?: string })[]>;
       // Photo of a meter: filed, and the digits read as proposals (null when no photo was taken).
       zaehlerFoto: (zaehlerId: number) => Promise<{ dokument_id: number; datei: string; kandidaten: number[]; letzter: number | null } | null>;

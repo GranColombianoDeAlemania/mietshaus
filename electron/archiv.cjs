@@ -430,7 +430,8 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME }) {
         d.datei, d.name, d.einheit_id, d.status, e.bezeichnung AS einheit FROM dokumente d LEFT JOIN einheiten e ON e.id = d.einheit_id
       WHERE d.status = 'abgelegt' AND (?1 IS NULL OR d.objekt_id = ?1) AND (?2 IS NULL OR d.einheit_id = ?2) AND (?3 IS NULL OR d.projekt_id = ?3)
         AND (?5 IS NULL OR d.person_id = ?5) AND (?6 IS NULL OR d.vorgang_id = ?6)
-        AND (?4 = 0 OR lower(d.datei) GLOB '*.png' OR lower(d.datei) GLOB '*.jp*g' OR lower(d.datei) GLOB '*.webp' OR lower(d.datei) GLOB '*.gif')
+        AND (?4 = 0 OR lower(d.datei) GLOB '*.png' OR lower(d.datei) GLOB '*.jp*g' OR lower(d.datei) GLOB '*.webp' OR lower(d.datei) GLOB '*.gif'
+          OR lower(d.datei) GLOB '*.mp4' OR lower(d.datei) GLOB '*.m4v' OR lower(d.datei) GLOB '*.mov' OR lower(d.datei) GLOB '*.webm')
       ORDER BY coalesce(d.datum, d.erfasst) DESC, d.id DESC`, objekt_id, einheit_id, projekt_id, nur_bilder ? 1 : 0, person_id, vorgang_id),
 
     postfachAnzahl: () => get(`SELECT count(*) AS n FROM dokumente WHERE status = 'postfach'`).n,

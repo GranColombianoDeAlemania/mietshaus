@@ -252,6 +252,8 @@ export default function App(props: { benutzer?: Row | null }) {
   const [postfach] = useLoad<number>(() => call('postfachAnzahl'), []);
   const [vorschlagZahl] = useLoad<number>(() => call('vorschlaege', 'offen').then((l: Row[]) => l.length), []);
   const dropZiel = useRef<Element | null>(null);
+  const internZiehen = useRef(false);
+  const ziehenUhr = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ---------- navigation ----------
   const gehe = useCallback((neu: Partial<Ort>, ersetzen = false) => setNav((n) => {
@@ -434,14 +436,27 @@ export default function App(props: { benutzer?: Row | null }) {
       dropZiel.current = passt ? z : null;
       dropZiel.current?.classList.add('drop-ziel');
     }
-    setZiehen(!passt && e.dataTransfer.types.includes('Files'));
+    // Files from outside only: a picture held with the mouse inside the app also carries "Files" but is no upload.
+    setZiehen(!passt && !internZiehen.current && e.dataTransfer.types.includes('Files'));
+    // While something is dragged over the window, dragover comes every ~50 ms. When it stops without a drop (dragged
+    // out of the window, Esc, released over another app), nothing else tells us – so the overlay goes after a pause.
+    if (ziehenUhr.current) clearTimeout(ziehenUhr.current);
+    ziehenUhr.current = setTimeout(ziehenAus, 350);
+  }
+  function ziehenAus() {
+    if (ziehenUhr.current) clearTimeout(ziehenUhr.current);
+    ziehenUhr.current = null;
+    setZiehen(false);
+    dropZiel.current?.classList.remove('drop-ziel');
+    dropZiel.current = null;
   }
   async function abgelegt(e: React.DragEvent) {
     e.preventDefault();
-    setZiehen(false);
     const z = dropZiel.current;
-    z?.classList.remove('drop-ziel');
-    dropZiel.current = null;
+    ziehenAus();
+    // A picture of the app dropped somewhere in the app (not a document onto a target) is no new file.
+    if (internZiehen.current && !e.dataTransfer.getData('application/x-hv-dokument')) { internZiehen.current = false; return; }
+    internZiehen.current = false;
     const dokId = e.dataTransfer.getData('application/x-hv-dokument');
     if (z) {
       const key = z.getAttribute('data-ziel')!;
@@ -460,9 +475,22 @@ export default function App(props: { benutzer?: Row | null }) {
     melden(`${neu} Dokument(e) ins Postfach gelegt${r.length - neu ? `, ${r.length - neu} waren schon vorhanden` : ''}.`);
   }
   useEffect(() => {
-    const aus = () => setZiehen(false);
-    window.addEventListener('hv-ziehen-aus', aus);
-    return () => window.removeEventListener('hv-ziehen-aus', aus);
+    // dragstart only fires for drags that begin inside this window; dragend ends them wherever they were released.
+    const start = () => { internZiehen.current = true; };
+    const ende = () => { internZiehen.current = false; ziehenAus(); };
+    const taste = (e: KeyboardEvent) => { if (e.key === 'Escape') ziehenAus(); };
+    window.addEventListener('hv-ziehen-aus', ziehenAus);
+    window.addEventListener('dragstart', start, true);
+    window.addEventListener('dragend', ende, true);
+    window.addEventListener('blur', ziehenAus);
+    window.addEventListener('keydown', taste);
+    return () => {
+      window.removeEventListener('hv-ziehen-aus', ziehenAus);
+      window.removeEventListener('dragstart', start, true);
+      window.removeEventListener('dragend', ende, true);
+      window.removeEventListener('blur', ziehenAus);
+      window.removeEventListener('keydown', taste);
+    };
   }, []);
 
   // ---------- what to show ----------

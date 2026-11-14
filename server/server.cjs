@@ -26,7 +26,8 @@ const passkeyModul = require('./passkey.cjs');
 const { VERSION, DESKTOP_SCHNITTSTELLE, vergleichen, neuesteVersion } = require('../electron/version.cjs');
 const TYPEN = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml',
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.pdf': 'application/pdf', '.json': 'application/json',
-  '.webmanifest': 'application/manifest+json', '.txt': 'text/plain; charset=utf-8', '.csv': 'text/csv; charset=utf-8', '.xml': 'application/xml', '.woff2': 'font/woff2', '.ico': 'image/x-icon', '.tif': 'image/tiff', '.tiff': 'image/tiff' };
+  '.webmanifest': 'application/manifest+json', '.txt': 'text/plain; charset=utf-8', '.csv': 'text/csv; charset=utf-8', '.xml': 'application/xml', '.woff2': 'font/woff2', '.ico': 'image/x-icon', '.tif': 'image/tiff', '.tiff': 'image/tiff',
+  '.mp4': 'video/mp4', '.m4v': 'video/mp4', '.mov': 'video/quicktime', '.webm': 'video/webm' };
 const SICHERHEIT = { 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'SAMEORIGIN', 'Cross-Origin-Opener-Policy': 'same-origin' };
 const MAX_UPLOAD = 300 * 1024 * 1024;
 // Functions answered by the server itself, not by the database API.
@@ -305,12 +306,26 @@ async function starten(o) {
     fs.createReadStream(datei).pipe(res);
   }
 
-  function datei(res, ordner, name, herunterladen = null) {
+  // A file of the archive. Byte ranges are answered too: Safari plays videos only from a server that does (206).
+  function datei(req, res, ordner, name, herunterladen = null) {
     const p = path.join(ordner, path.basename(name));
     if (!fs.existsSync(p)) return json(res, 404, { fehler: 'Datei nicht gefunden.' });
-    const kopf = { 'Content-Type': TYPEN[path.extname(p).toLowerCase()] ?? 'application/octet-stream', 'Content-Length': fs.statSync(p).size, 'Cache-Control': 'private, max-age=3600', ...SICHERHEIT };
+    const groesse = fs.statSync(p).size;
+    const kopf = { 'Content-Type': TYPEN[path.extname(p).toLowerCase()] ?? 'application/octet-stream', 'Accept-Ranges': 'bytes', 'Cache-Control': 'private, max-age=3600', ...SICHERHEIT };
     if (herunterladen) kopf['Content-Disposition'] = `attachment; filename*=UTF-8''${encodeURIComponent(herunterladen)}`;
-    res.writeHead(200, kopf);
+    const b = /^bytes=(\d*)-(\d*)$/.exec(String(req.headers.range ?? '').trim());
+    if (b && (b[1] || b[2])) {
+      // "bytes=a-b", "bytes=a-" or the last n bytes "bytes=-n".
+      let von = b[1] ? Number(b[1]) : Math.max(0, groesse - Number(b[2]));
+      let bis = b[1] && b[2] ? Math.min(Number(b[2]), groesse - 1) : groesse - 1;
+      if (!b[1]) { von = Math.max(0, groesse - Number(b[2])); bis = groesse - 1; }
+      if (von >= groesse || von > bis) { res.writeHead(416, { 'Content-Range': `bytes */${groesse}`, ...SICHERHEIT }); return res.end(); }
+      res.writeHead(206, { ...kopf, 'Content-Range': `bytes ${von}-${bis}/${groesse}`, 'Content-Length': bis - von + 1 });
+      if (req.method === 'HEAD') return res.end();
+      return fs.createReadStream(p, { start: von, end: bis }).pipe(res);
+    }
+    res.writeHead(200, { ...kopf, 'Content-Length': groesse });
+    if (req.method === 'HEAD') return res.end();
     fs.createReadStream(p).pipe(res);
   }
 
@@ -577,8 +592,8 @@ async function starten(o) {
       auth.sitzungBeendenId(id);
       return json(res, 200, { ok: true });
     }
-    if (p.startsWith('/dateien/dokument/')) return datei(res, dokumentOrdner(), p.slice('/dateien/dokument/'.length), u.searchParams.get('name'));
-    if (p.startsWith('/dateien/vorschau/')) return datei(res, vorschauOrdner(), p.slice('/dateien/vorschau/'.length));
+    if (p.startsWith('/dateien/dokument/')) return datei(req, res, dokumentOrdner(), p.slice('/dateien/dokument/'.length), u.searchParams.get('name'));
+    if (p.startsWith('/dateien/vorschau/')) return datei(req, res, vorschauOrdner(), p.slice('/dateien/vorschau/'.length));
     if (post && p === '/api/hochladen') {
       const { standort, ...opt } = JSON.parse(u.searchParams.get('opt') ?? '{}');
       const t = temporaer(u.searchParams.get('name'), await lesen(req));
@@ -695,7 +710,7 @@ async function starten(o) {
       kontext(req, w);
       roh.setzeEinstellungen({ letzte_sicherung: new Date().toISOString() });
       res.on('close', () => fs.rmSync(path.dirname(ziel), { recursive: true, force: true }));
-      return datei(res, path.dirname(ziel), name, name);
+      return datei(req, res, path.dirname(ziel), name, name);
     }
     if (p === '/api/sicherungen') {
       return json(res, 200, sicherung.liste([sicherungsOrdner(dbFile)], { ohne: [dbFile] }).slice(0, 60)

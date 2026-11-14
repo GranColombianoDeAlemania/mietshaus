@@ -490,10 +490,44 @@ ul.maengel li { display: flex; align-items: center; gap: 6px; color: var(--rot);
 .galerie .kachelbild .titel .klein { display: block; font-weight: 400; color: var(--muted); }
 .ablagezone { border: 1.5px dashed var(--line-stark); border-radius: var(--radius); padding: 14px; text-align: center; color: var(--muted); margin-bottom: 14px; }
 .ablagezone.aktiv { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-text); }
-.lightbox { position: fixed; inset: 0; background: rgba(12, 15, 16, 0.9); z-index: 60; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 10px; }
-.lightbox img { max-width: 92vw; max-height: 84vh; border-radius: 6px; }
-.lightbox .leiste { color: white; display: flex; gap: 10px; align-items: center; }
-.lightbox .leiste button { color: var(--auf-farbe); border-color: rgba(255, 255, 255, 0.4); }
+/* Viewer for photos and videos (Medienansicht in Galerie.tsx): always dark, whatever the theme. */
+.lightbox { position: fixed; inset: 0; background: rgba(10, 12, 13, 0.94); z-index: 60; display: flex; flex-direction: column; color: #fff;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+.lightbox button { color: #fff; border-color: rgba(255, 255, 255, 0.35); background: rgba(255, 255, 255, 0.06); }
+.lightbox button:hover:not(:disabled) { color: #fff; border-color: #fff; background: rgba(255, 255, 255, 0.14); }
+.lightbox-kopf { display: flex; align-items: center; gap: 12px; padding: 10px 14px; min-height: 56px; }
+.lightbox-titel { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 14px; color: rgba(255, 255, 255, 0.85); }
+.lightbox-titel b { color: #fff; margin-right: 6px; font-variant-numeric: tabular-nums; }
+.lightbox-aktionen { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
+.lightbox-aktionen .lightbox-zu { width: 44px; height: 44px; padding: 0; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; }
+.lightbox-buehne { flex: 1; min-height: 0; position: relative; display: flex; align-items: center; justify-content: center; padding: 0 64px; touch-action: pan-y pinch-zoom; }
+.lightbox-buehne img, .lightbox-buehne video { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 6px; user-select: none; -webkit-user-select: none; background: #000; }
+.lightbox-pfeil { position: absolute; top: 50%; transform: translateY(-50%); width: 48px; height: 48px; padding: 0; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.5) !important; }
+.lightbox-pfeil.links { left: 10px; }
+.lightbox-pfeil.rechts { right: 10px; }
+.lightbox-streifen { display: flex; gap: 6px; padding: 10px 14px 12px; overflow-x: auto; justify-content: safe center; scrollbar-width: none; }
+.lightbox-streifen .fotostreifen-bild { flex-shrink: 0; width: 52px; height: 52px; border-color: transparent; opacity: 0.55; background-color: rgba(255, 255, 255, 0.08); }
+.lightbox-streifen .fotostreifen-bild[aria-current='true'] { opacity: 1; border: 2px solid #fff; }
+/* After a photo on the phone: take another, pick from the library, done (FotoKnopf in Foto.tsx). Right below the
+   camera button, inside the window it belongs to (a layer outside would be blocked by that window). */
+.foto-serie { flex: 1 0 100%; width: 100%; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0;
+  padding: 10px 12px; border-radius: 12px; background: var(--accent-soft); border: 1px solid var(--line); text-align: left; }
+.foto-serie-zahl { flex: 1 0 100%; display: inline-flex; align-items: center; gap: 6px; font-weight: 600; font-size: 14px; color: var(--gruen, var(--ink)); }
+.foto-serie button { flex: 1 1 auto; min-height: 44px; white-space: nowrap; padding: 6px 10px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+/* Video thumbnails: the first frame with a play mark. */
+.fotostreifen-bild, .galerie .kachelbild .bild { position: relative; overflow: hidden; }
+.vorschau-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+.vorschau-play { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 26px; height: 26px; border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55); color: #fff; display: inline-flex; align-items: center; justify-content: center; padding-left: 2px; }
+.vorschau-play .lucide { width: 13px !important; height: 13px !important; }
+@media (max-width: 760px) {
+  .lightbox-buehne { padding: 0; }
+  .lightbox-pfeil { width: 40px; height: 40px; opacity: 0.8; }
+  .lightbox-pfeil.links { left: 6px; }
+  .lightbox-pfeil.rechts { right: 6px; }
+  .lightbox-buehne img, .lightbox-buehne video { border-radius: 0; }
+}
 
 /* Projects */
 .budget { position: relative; height: 8px; background: var(--line); border-radius: 4px; margin-top: 6px; }
