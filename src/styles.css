@@ -21,7 +21,7 @@
   /* Writing on the soft tints (chips, tags): darker than the tone itself, so small text stays readable (WCAG 4.5:1). */
   --miete-text: #9a3a10; --weg-text: #1c5f4c;
 
-  --rot: #b3261e; --rot-bg: #f7dfdc; --gelb: #8f5b00; --gelb-bg: #f6e7c8; --gruen: #23683f; --gruen-bg: #dbeee2;
+  --rot: #b3261e; --rot-bg: #f7dfdc; --gelb: #8f5b00; --gelb-bg: #f6e7c8; --gruen: #23683f; --gruen-bg: #dbeee2; --einheit: #1f5f99; --einheit-bg: #dceaf7; --projekt: #6b3fa0; --projekt-bg: #ece2f7;
   --mark: #f6d9a8;
   --schatten: 0 1px 2px rgba(28, 35, 36, 0.05);
   --schatten-gross: 0 18px 50px rgba(28, 35, 36, 0.28);
@@ -40,7 +40,7 @@
   --seite: #141a1b; --seite-ink: #dfe1e0; --seite-muted: #808787; --seite-hover: #202728; --seite-line: #252d2e;
   --accent: #e8692b; --accent-fill: #bd4a16; --accent-text: #f2905f; --accent-soft: #3d2a20;
   --miete-ton: #f2905f; --miete-soft: #3d2a20; --weg-ton: #5cc4a2; --weg-soft: #1f3a32; --miete-text: #f2905f; --weg-text: #5cc4a2;
-  --rot: #ff8a7f; --rot-bg: #47201c; --gelb: #e8b450; --gelb-bg: #3f321b; --gruen: #6fcb96; --gruen-bg: #1d3a29;
+  --rot: #ff8a7f; --rot-bg: #47201c; --gelb: #e8b450; --gelb-bg: #3f321b; --gruen: #6fcb96; --gruen-bg: #1d3a29; --einheit: #8cc2f2; --einheit-bg: #1b3247; --projekt: #c6a6ef; --projekt-bg: #33264a;
   --mark: #6e4f12;
   --schatten: none; --schatten-gross: 0 18px 50px rgba(0, 0, 0, 0.55);
   --c1: #d5d6d4; --c1-hell: #59605f; --c2: #e8692b; --c3: #b39e92;
@@ -726,6 +726,13 @@ ul.maengel li { display: flex; align-items: center; gap: 6px; color: var(--rot);
 
 /* Account picker with search (KontoSelect). */
 .kontowahl { position: relative; min-width: 0; }
+/* What a task belongs to: a unit (blue) or a project (purple) – in the picker, the task overview and the task list. */
+.zuord-marke { display: inline-block; font-size: 10.5px; font-weight: 600; letter-spacing: 0.02em; text-transform: uppercase; padding: 1px 6px; border-radius: 4px; margin-right: 7px; vertical-align: 1px; }
+.zuord-marke.einheit, .zuord.einheit { background: var(--einheit-bg); color: var(--einheit); }
+.zuord-marke.projekt, .zuord.projekt { background: var(--projekt-bg); color: var(--projekt); }
+.zuord { display: inline-block; padding: 0 6px; border-radius: 4px; font-weight: 500; }
+.kontowahl.mit-marke input { padding-right: 76px; }
+.kontowahl > .zuord-marke { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); margin: 0; pointer-events: none; }
 .kontowahl input { width: 100%; }
 .kontowahl-liste { position: absolute; z-index: 30; left: 0; right: 0; top: calc(100% + 2px); min-width: 260px; max-height: 320px; overflow-y: auto;
   background: var(--panel); border: 1px solid var(--line-stark); border-radius: 8px; box-shadow: var(--schatten-gross); padding: 4px 0; }
@@ -943,6 +950,32 @@ select.chip-wahl.an { background: var(--accent-soft); border-color: transparent;
 .aufgaben-raster.mit-blatt { display: grid; grid-template-columns: minmax(0, 1fr) minmax(380px, 470px); gap: 16px; align-items: start; }
 .aufgaben-raster.mit-blatt > .blatt { position: sticky; top: 8px; max-height: calc(100vh - 110px); overflow-y: auto; }
 .az-gruppe { margin-bottom: 16px; }
+/* Tasks by place (OrtGruppen in Aufgaben.tsx): house → unit/project → tasks, each level folds. */
+.segment.gruppierung button { display: inline-flex; align-items: center; gap: 5px; }
+.ort-haus { margin-bottom: 14px; }
+.ort-kopf { display: flex; align-items: center; gap: 4px; }
+.ort-auf { flex: 1; min-width: 0; display: flex; align-items: center; gap: 7px; border: 0; background: none; padding: 8px 6px; min-height: 40px; text-align: left; color: var(--ink); border-radius: 8px; }
+.ort-auf:hover:not(:disabled) { background: var(--hover); color: var(--ink); }
+.ort-kopf.ebene-haus .ort-auf { font-size: 15px; font-weight: 600; }
+.ort-kopf.ebene-gruppe { margin-left: 18px; }
+.ort-gruppe.oben .ort-kopf.ebene-gruppe { margin-left: 0; }
+.ort-kopf.ebene-gruppe .ort-auf { font-size: 13.5px; font-weight: 600; }
+.ort-titel { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ort-ueber { font-size: 11.5px; font-weight: 600; color: var(--rot); }
+.ort-plus { color: var(--muted); }
+.ort-gruppe > .az-liste { margin: 2px 0 10px 40px; }
+.ort-gruppe.oben > .az-liste { margin-left: 22px; }
+/* The steps of a task right under its row. */
+.az-schritte { padding: 0 12px 8px 46px; }
+.az-schritte-knopf { display: inline-flex; align-items: center; gap: 3px; color: var(--muted); padding: 2px 0; min-height: 28px; }
+.az-schritte .schritte { margin: 4px 0 0; }
+@media (max-width: 760px) {
+  .ort-kopf.ebene-gruppe { margin-left: 8px; }
+  .ort-gruppe > .az-liste { margin-left: 12px; }
+  .ort-gruppe.oben > .az-liste { margin-left: 4px; }
+  .ort-auf { min-height: 44px; }
+  .segment.gruppierung { flex-shrink: 0; }
+}
 .az-gruppe h3, .einkauf-gruppe h3, .blatt-abschnitt h4 { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
 .az-gruppe h3 { margin: 0 0 5px 4px; display: flex; gap: 6px; }
 .az-gruppe.ueber h3 { color: var(--rot); }
@@ -1003,7 +1036,7 @@ button.haken.gross { width: 26px; height: 26px; }
 }
 @media (max-width: 700px) {
   .aufgaben-kopf .nur-breit { display: none; }
-  .sichten { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin-right: -16px; padding-right: 16px; }
+  .sichten { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin-right: -14px; padding-right: 14px; }
   .sichten::-webkit-scrollbar { display: none; }
   .az-meta { white-space: normal; }
   .az-rechts .az-zahl { display: none; }
@@ -1093,6 +1126,13 @@ button.verlauf-weg { position: absolute; right: 0; top: 0; padding: 3px 5px; col
 .einkauf-stand { margin: -6px 0 10px; }
 .einkauf-fuer { display: flex; align-items: center; gap: 8px; margin: -6px 0 12px; color: var(--muted); }
 .einkauf-fuer select { width: auto; }
+.einkauf-fuer .kontowahl { width: min(320px, 100%); }
+.einkauf-fuer .kontowahl input { font-size: 13.5px; }
+.einkauf-gruppierung { margin: 0 0 12px; }
+.einkauf-unter { margin: 0 0 10px 12px; }
+.einkauf-unter h4 { display: flex; justify-content: space-between; align-items: baseline; margin: 6px 4px 5px; font-size: 13px; font-weight: 600; color: var(--ink); }
+.einkauf-gruppe h3 .zuord-kopf.gross { text-transform: none; letter-spacing: 0; font-size: 14px; color: var(--ink); }
+.zuord-kopf .hinweis { font-weight: 400; }
 .vorschlaege { margin: -4px 0 16px; }
 .einkauf-leer { display: flex; align-items: center; gap: 8px; }
 .einkauf-gruppe { margin-bottom: 18px; }

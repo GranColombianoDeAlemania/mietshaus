@@ -1707,6 +1707,23 @@ Stadtsparkasse München | IBAN DE02 7015 0000 0000 1234 56 | BIC SSKMDEMMXXX`;
   t.einkaufAbschliessen({ ids: [k2] });
   gleich('Nur geschätzter Preis: bucht nichts', t.projekt(pb).posten.length, 1);
   gleich('Kassenbon ohne Artikel: Fehler', (() => { try { t.einkaufAbschliessen({ ids: [999] }); return 'kein Fehler'; } catch (e) { return e.message; } })(), 'Diese Einkäufe gibt es nicht mehr.');
+  // 0.25: articles for a unit instead of a project – the house comes with the unit, the receipt goes to the inbox.
+  {
+    const hausE = t.neuesObjekt({ bezeichnung: 'Einheitenhaus', art: 'miete', strasse: 'Weg 7', plz: '10115', ort: 'Berlin' });
+    const wohnung = t.save('einheiten', { objekt_id: hausE, bezeichnung: '2 OG Rechts', nr: '5' });
+    const u1 = t.einkaufNeu(null, { titel: 'Stellantrieb', laden: 'Bauhaus', einheit_id: wohnung });
+    const u2 = t.einkaufNeu(pa, { titel: 'Fugenweiß', laden: 'Bauhaus', einheit_id: wohnung });
+    gleich('Einkauf für eine Einheit: Haus kommt mit, kein Projekt', [raw2.prepare('SELECT objekt_id, einheit_id, projekt_id FROM vorgaenge WHERE id = ?').get(u1)].map((x) => [x.objekt_id, x.einheit_id, x.projekt_id]), [[hausE, wohnung, null]]);
+    gleich('… mit Projekt gewinnt das Projekt', [raw2.prepare('SELECT einheit_id, projekt_id FROM vorgaenge WHERE id = ?').get(u2)].map((x) => [x.einheit_id, x.projekt_id]), [[null, pa]]);
+    gleich('… die Liste nennt die Einheit', t.einkaufsliste(null).liste.find((v) => v.id === u1).einheit, '2 OG Rechts');
+    const bon = raw2.prepare(`INSERT INTO dokumente (titel, datei, name, status, typ) VALUES ('Bon', 'bon.jpg', 'bon.jpg', 'abgelegt', 'Rechnung')`).run().lastInsertRowid;
+    const vorher = t.projekt(pa).posten.length;
+    const r = t.einkaufAbschliessen({ ids: [u1, u2], betrag_ct: 3000, preise: { [u1]: 2000, [u2]: 1000 }, dokument_id: Number(bon), datum: '2026-11-15' });
+    const d = raw2.prepare('SELECT status, typ, einheit_id, objekt_id, betrag_ct, notiz FROM dokumente WHERE id = ?').get(bon);
+    gleich('Kassenbon mit Einheit: Anteil der Einheit, Projektanteil als Rechnung', [r.einheit_ct, r.ins_postfach, t.projekt(pa).posten.length - vorher], [2000, true, 1]);
+    gleich('… der Bon liegt im Postfach bei der Einheit, mit ihrem Anteil', [d.status, d.typ, d.einheit_id, d.objekt_id, d.betrag_ct], ['postfach', 'Rechnung', wohnung, hausE, 2000]);
+    gleich('… und sagt, was zu tun ist', /2 OG Rechts – Anteil 20,00 €; der Projektanteil steht schon/.test(d.notiz ?? ''), true);
+  }
   // Steps added by hand to a task.
   const h = t.save('vorgaenge', { titel: 'Wasserhahn tropft', status: 'offen', prioritaet: 2 });
   t.save('vorgaenge', { titel: 'Handwerker anrufen', eltern_id: h, status: 'offen', prioritaet: 2 });

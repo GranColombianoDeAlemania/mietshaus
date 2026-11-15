@@ -353,6 +353,15 @@ How the depth was found: the installer of a personal finance program the user ow
 - Everybody in charge sees the task under „Meine“, in „Meine Aufgaben“ and marked in the calendar, gets the reminder when it is due and a note on comments; each newly assigned user is notified and named in the history. Cards show the initials of all of them.
 - A saved task opens as an overview: its data as a list (where, who, by when, urgency, project; for a purchase quantity, shop and price), details as text, steps, photos and history. „Bearbeiten“ shows the inputs, „Fertig“ the overview again; comments, photos and ticking off steps work in the overview too, since they do not change the task's data.
 
+### 0.25.0 – unit or project, lists in levels
+
+- One field „Zuordnung“ instead of the unit beside the house and a separate project field: the units of the house and the open projects (of that house or without one) in one searchable list, each with a coloured tag – unit blue, project purple – so a unit „2 OG Rechts“ is told from a project of the same name. Choosing one clears the other; a project brings its house when none is set.
+- The task overview and the task list (list and board) show unit and project in the same colours.
+- Tasks „Nach Ort“ (beside „Nach Datum“): house → unit or project → tasks; every level folds (remembered on the device) with its count and overdue ones; „+“ on a group starts a task filed there; with one house its level is left out. Steps of a task open right under its row and are ticked off there. Filter by unit or project.
+- Shopping: „Neue Artikel für“ takes a unit or a project; the list „Nach Laden“ (with unit/project under each shop when it has several) or „Nach Einheit/Projekt“ (shops under each), sums per group, the receipt button per shop.
+- Receipt with articles for a unit: the photo is filed with the unit and goes to the inbox as an invoice with the unit's share (shared by prices with projects on the same receipt), to be booked as repairs of that unit – before, those articles were only ticked off.
+- Fixes: the class „haus“ of the new group headers collided with the house plan (centred headers) – renamed; the chip row on a phone stuck out 2 px (horizontal scrollbar).
+
 ## Development
 
 ```

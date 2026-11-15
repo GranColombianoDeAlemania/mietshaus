@@ -36,6 +36,7 @@ module.exports = function projekte({ db, all, get, tx, bh }) {
   // Shopping list – of one project, or of all (projektId null: every open purchase, bought ones of the last 30 days):
   // tasks of the category „Einkauf“, open ones first by shop, the ones in the cart at the end of their shop.
   const einkaeufe = (projektId) => all(`SELECT v.*, a.titel AS schritt, a.beginn AS schritt_beginn, pr.titel AS projekt, o.bezeichnung AS objekt,
+      e.bezeichnung AS einheit, e.nr AS einheit_nr,
       (SELECT d.datei FROM dokumente d WHERE d.vorgang_id = v.id AND d.status <> 'papierkorb' AND (lower(d.datei) GLOB '*.jp*g' OR lower(d.datei) GLOB '*.png' OR lower(d.datei) GLOB '*.webp') ORDER BY d.id LIMIT 1) AS foto,
       (SELECT count(*) FROM dokumente d WHERE d.vorgang_id = v.id AND d.status <> 'papierkorb') AS fotos,
       (SELECT x.preis_ct FROM vorgaenge x WHERE x.kategorie = 'Einkauf' AND x.status = 'erledigt' AND x.id <> v.id AND x.preis_ct IS NOT NULL
@@ -43,6 +44,7 @@ module.exports = function projekte({ db, all, get, tx, bh }) {
       (SELECT x.menge FROM vorgaenge x WHERE x.kategorie = 'Einkauf' AND x.status = 'erledigt' AND x.id <> v.id AND x.preis_ct IS NOT NULL
         AND lower(trim(x.titel)) = lower(trim(v.titel)) ORDER BY x.id DESC LIMIT 1) AS zuletzt_menge
     FROM vorgaenge v LEFT JOIN projektaufgaben a ON a.id = v.projektaufgabe_id LEFT JOIN projekte pr ON pr.id = v.projekt_id LEFT JOIN objekte o ON o.id = v.objekt_id
+      LEFT JOIN einheiten e ON e.id = v.einheit_id
     WHERE v.kategorie = 'Einkauf' AND (?1 IS NULL OR v.projekt_id = ?1)
       AND (?1 IS NOT NULL OR v.status <> 'erledigt' OR coalesce(v.geaendert_am, v.erstellt) >= ?2)
     ORDER BY v.status = 'erledigt', coalesce(v.laden, '~'), v.im_wagen, coalesce(a.beginn, '9999'), v.id`,
@@ -69,8 +71,9 @@ module.exports = function projekte({ db, all, get, tx, bh }) {
   }
 
   // Paid at the till: every article bought gets its price (as typed, else its estimate) and is done; the receipt – one
-  // amount and one photo for everything – becomes one paid invoice per project („Kosten & Budget“). Articles of no project
-  // are only marked done.
+  // amount and one photo for everything – becomes one paid invoice per project („Kosten & Budget“). Articles for a unit
+  // (no project): the receipt photo is filed with the unit and goes to the inbox as an invoice with the unit's share, to
+  // be booked there (repairs of that unit). Articles of neither are only marked done.
   const einkaufAbschliessen = ({ ids = [], betrag_ct = null, dokument_id = null, datum = null, preise = {} } = {}) => tx(() => {
     const liste = [...new Set(ids.map(Number))].map((id) => get(`SELECT * FROM vorgaenge WHERE id = ? AND kategorie = 'Einkauf'`, id)).filter(Boolean);
     if (!liste.length) throw new Error('Diese Einkäufe gibt es nicht mehr.');
@@ -86,15 +89,18 @@ module.exports = function projekte({ db, all, get, tx, bh }) {
     const summe = betrag_ct != null && betrag_ct !== '' ? Math.round(Number(betrag_ct)) : bezahlt;
     const gruppen = [];
     for (const v of liste) {
-      let g = gruppen.find((x) => x.projekt_id === (v.projekt_id ?? null));
-      if (!g) gruppen.push(g = { projekt_id: v.projekt_id ?? null, artikel: [], preis: 0 });
+      // A project wins over a unit (older tasks may have both); the rest share one group.
+      const einheit = v.projekt_id ? null : v.einheit_id ?? null;
+      let g = gruppen.find((x) => x.projekt_id === (v.projekt_id ?? null) && x.einheit_id === einheit);
+      if (!g) gruppen.push(g = { projekt_id: v.projekt_id ?? null, einheit_id: einheit, artikel: [], preis: 0 });
       g.artikel.push(v);
       g.preis += v.preis_ct ?? 0;
     }
     const posten = [];
     const projekte = gruppen.filter((g) => g.projekt_id);
+    const einheiten = gruppen.filter((g) => g.einheit_id);
+    const anteile = gruppen.length && summe ? aufteilen(summe, gruppen) : gruppen.map(() => 0);
     if (projekte.length && (summe || dokument_id)) {
-      const anteile = aufteilen(summe, gruppen);
       gruppen.forEach((g, i) => {
         if (!g.projekt_id) return;
         const laeden = [...new Set(g.artikel.map((v) => v.laden).filter(Boolean))];
@@ -108,7 +114,18 @@ module.exports = function projekte({ db, all, get, tx, bh }) {
     }
     if (dokument_id) db.prepare('UPDATE dokumente SET projekt_id = coalesce(projekt_id, ?), vorgang_id = coalesce(vorgang_id, ?) WHERE id = ?')
       .run(projekte[0]?.projekt_id ?? null, liste[0].id, dokument_id);
-    return { posten, summe_ct: summe };
+    // The units' share: the receipt goes to the inbox with it, filed with the unit (one unit: its id, several: the house).
+    const einheitAnteil = einheiten.reduce((x, g) => x + anteile[gruppen.indexOf(g)], 0);
+    if (dokument_id && einheiten.length) {
+      const e = get('SELECT id, objekt_id, bezeichnung FROM einheiten WHERE id = ?', einheiten[0].einheit_id);
+      const namen = einheiten.map((g) => get('SELECT bezeichnung FROM einheiten WHERE id = ?', g.einheit_id)?.bezeichnung).filter(Boolean);
+      db.prepare(`UPDATE dokumente SET status = 'postfach', typ = 'Rechnung', einheit_id = coalesce(einheit_id, ?), objekt_id = coalesce(objekt_id, ?),
+          betrag_ct = ?, notiz = ? WHERE id = ?`)
+        .run(einheiten.length === 1 ? e?.id ?? null : null, e?.objekt_id ?? null, einheitAnteil || null,
+          `Einkauf für ${namen.join(', ')}${einheitAnteil ? ` – Anteil ${(einheitAnteil / 100).toFixed(2).replace('.', ',')} €` : ''}${projekte.length ? '; der Projektanteil steht schon unter „Kosten & Budget“' : ''}. Bitte als Instandhaltung buchen.`,
+          dokument_id);
+    }
+    return { posten, summe_ct: summe, einheit_ct: einheitAnteil, ins_postfach: !!(dokument_id && einheiten.length) };
   });
 
   return {
@@ -129,15 +146,17 @@ module.exports = function projekte({ db, all, get, tx, bh }) {
       ORDER BY h.n DESC, h.zuletzt DESC LIMIT ?2`, projektId ?? null, anzahl),
     // Quick entry: „3 Sack Fliesenkleber“ – a leading quantity with its unit is split off; without a shop, the one the
     // article was bought in last time.
-    einkaufNeu: (projektId, { titel, menge = null, laden = null, preis_ct = null, projektaufgabe_id = null, objekt_id = null }) => {
+    // einheit_id: for a unit instead of a project (the house comes with it).
+    einkaufNeu: (projektId, { titel, menge = null, laden = null, preis_ct = null, projektaufgabe_id = null, objekt_id = null, einheit_id = null }) => {
       let t = String(titel ?? '').trim(), m = menge;
       if (!t) throw new Error('Was soll gekauft werden?');
       const z = !m && t.match(/^(\d+(?:[.,]\d+)?\s*(?:x|×|stk\.?|stück|sack|säcke|eimer|rollen?|pakete?|kartons?|dosen?|tuben?|kartuschen?|m²|m2|qm|m|l|liter|kg|g)?)\s+(.+)$/i);
       if (z) { m = z[1].trim(); t = z[2].trim(); }
       const p = projektId ? get('SELECT objekt_id FROM projekte WHERE id = ?', projektId) : null;
-      return Number(db.prepare(`INSERT INTO vorgaenge (objekt_id, projekt_id, titel, kategorie, status, prioritaet, menge, laden, preis_ct, projektaufgabe_id, faellig)
-        VALUES (?, ?, ?, 'Einkauf', 'offen', 2, ?, ?, ?, ?, (SELECT date(beginn, '-1 day') FROM projektaufgaben WHERE id = ?))`)
-        .run(objekt_id ?? p?.objekt_id ?? null, projektId ?? null, t.slice(0, 200), m || null, (laden || ladenFuer(t)) ?? null, preis_ct ?? null,
+      const e = !projektId && einheit_id ? get('SELECT id, objekt_id FROM einheiten WHERE id = ?', einheit_id) : null;
+      return Number(db.prepare(`INSERT INTO vorgaenge (objekt_id, projekt_id, einheit_id, titel, kategorie, status, prioritaet, menge, laden, preis_ct, projektaufgabe_id, faellig)
+        VALUES (?, ?, ?, ?, 'Einkauf', 'offen', 2, ?, ?, ?, ?, (SELECT date(beginn, '-1 day') FROM projektaufgaben WHERE id = ?))`)
+        .run(objekt_id ?? p?.objekt_id ?? e?.objekt_id ?? null, projektId ?? null, e?.id ?? null, t.slice(0, 200), m || null, (laden || ladenFuer(t)) ?? null, preis_ct ?? null,
           projektaufgabe_id ?? null, projektaufgabe_id ?? null).lastInsertRowid);
     },
     // Ticked off in the shop: in the cart (or out again) – paid later for the whole cart with einkaufAbschliessen.

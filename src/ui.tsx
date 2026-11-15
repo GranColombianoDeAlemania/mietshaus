@@ -81,6 +81,8 @@ export function Auswahl(props: {
   value: string | number | '' | null | undefined;
   options: [value: string | number, label: string][];
   onChange: (v: string) => void;
+  // A coloured tag per option (e.g. „Einheit“ / „Projekt“), shown in the list and beside the chosen one.
+  marke?: (v: string | number) => { text: string; art: string } | undefined;
   leer?: string;
   pflicht?: boolean;
   neu?: { label: string; onClick: (text: string) => void };
@@ -118,12 +120,13 @@ export function Auswahl(props: {
   };
 
   return (
-    <div className="kontowahl">
+    <div className={`kontowahl${props.marke && gewaehlt && !offen && props.marke(gewaehlt[0]) ? ' mit-marke' : ''}`}>
       <input value={offen ? suche : gewaehlt?.[1] ?? ''} placeholder={props.platzhalter ?? (props.pflicht ? '– bitte wählen –' : props.leer ?? '–')} disabled={props.disabled}
         role="combobox" aria-expanded={offen} aria-autocomplete="list" title={gewaehlt?.[1]} aria-label={props.label}
         onFocus={(e) => { setSuche(''); setMarkiert(Math.max(0, treffer.findIndex(([v]) => String(v) === String(props.value ?? '')))); e.currentTarget.select(); }}
         onChange={(e) => { setSuche(e.target.value); setMarkiert(0); }}
         onBlur={() => setSuche(null)} onKeyDown={taste} />
+      {props.marke && gewaehlt && !offen && (() => { const m = props.marke!(gewaehlt[0]); return m ? <span className={`zuord-marke ${m.art}`}>{m.text}</span> : null; })()}
       {offen && (
         <div className="kontowahl-liste" ref={liste} role="listbox" onMouseDown={(e) => e.preventDefault()}>
           {!props.pflicht && gewaehlt && !suche && <div className="option leer" onClick={() => waehlen('')}>{props.leer ?? '–'}</div>}
@@ -131,7 +134,8 @@ export function Auswahl(props: {
           {treffer.map(([v, l], i) => (
             <div key={v} data-wert={v} role="option" aria-selected={String(v) === String(props.value ?? '')}
               className={`option${i === markiert ? ' markiert' : ''}${String(v) === String(props.value ?? '') ? ' gewaehlt' : ''}`}
-              onMouseEnter={() => setMarkiert(i)} onClick={() => waehlen(v)}>{l}</div>
+              onMouseEnter={() => setMarkiert(i)} onClick={() => waehlen(v)}>
+              {props.marke && (() => { const m = props.marke!(v); return m ? <span className={`zuord-marke ${m.art}`}>{m.text}</span> : null; })()}{l}</div>
           ))}
           {props.neu && (
             <div role="option" aria-selected={false} className={`option neu${markiert === treffer.length ? ' markiert' : ''}`}

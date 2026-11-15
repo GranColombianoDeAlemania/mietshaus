@@ -284,6 +284,23 @@ export function Aufgabenblatt(props: {
 
   // ---------- where, who, when ----------
   const offeneProjekte = (projekte ?? []).filter((p) => p.status !== 'abgeschlossen' || p.id === Number(d.projekt_id));
+  // What the task belongs to: a unit of the house or a project – one or the other. Projects of the chosen house (or
+  // without a house) are offered; the tags tell a unit „2 OG Rechts“ from a project of the same name.
+  const MARKE_E = { text: 'Einheit', art: 'einheit' }, MARKE_P = { text: 'Projekt', art: 'projekt' };
+  const zuordnungen: [string, string, { text: string; art: string }][] = [
+    ...(einheiten ?? []).map((e): [string, string, { text: string; art: string }] => [`e${e.id}`, `${e.nr ? `${e.nr} – ` : ''}${e.bezeichnung}`, MARKE_E]),
+    ...offeneProjekte.filter((p) => !d.objekt_id || !p.objekt_id || p.objekt_id === Number(d.objekt_id) || p.id === Number(d.projekt_id))
+      .map((p): [string, string, { text: string; art: string }] => [`p${p.id}`, p.titel, MARKE_P]),
+  ];
+  const zuordnung = d.projekt_id ? `p${d.projekt_id}` : d.einheit_id ? `e${d.einheit_id}` : '';
+  function zuordnen(v: string) {
+    const id = Number(v.slice(1)) || null;
+    const ohneSchritt = einkauf ? { projektaufgabe_id: null } : {};
+    if (!v) return aendern({ einheit_id: null, projekt_id: null, ...ohneSchritt });
+    if (v[0] === 'e') return aendern({ einheit_id: id, projekt_id: null, ...ohneSchritt });
+    const p = projekte?.find((x) => x.id === id);
+    aendern({ projekt_id: id, einheit_id: null, ...(p?.objekt_id && !d.objekt_id ? { objekt_id: p.objekt_id } : {}), ...ohneSchritt });
+  }
   const wann = (
     <div className="knopfreihe">
       {([['Heute', heute()], ['Morgen', inTagen(1)], ['Nächste Woche', inTagen(7)]] as [string, string][]).map(([l, t]) => (
@@ -321,17 +338,14 @@ export function Aufgabenblatt(props: {
     { k: 'objekt_id', immer: !einkauf, plus: 'Haus', inhalt: (
       <Eig symbol={<I.House size={15} />} name="Wo" fuer="bl-objekt">
         <div className="knopfreihe">
-          <select id="bl-objekt" value={d.objekt_id ?? ''} onChange={(e) => aendern({ objekt_id: Number(e.target.value) || null, einheit_id: null })}>
+          <select id="bl-objekt" value={d.objekt_id ?? ''} onChange={(e) => aendern({ objekt_id: Number(e.target.value) || null, einheit_id: null,
+            // A project of another house no longer fits.
+            ...(d.projekt_id && projekte?.find((p) => p.id === Number(d.projekt_id))?.objekt_id && projekte.find((p) => p.id === Number(d.projekt_id))!.objekt_id !== Number(e.target.value) ? { projekt_id: null } : {}) })}>
             <option value="">kein Haus</option>
             {/* While the houses load, the saved one shows by its name (not as „kein Haus“). */}
             {!!d.objekt_id && !objekte?.some((o) => o.id === Number(d.objekt_id)) && <option value={d.objekt_id}>{d.objekt ?? '…'}</option>}
             {objekte?.map((o) => <option key={o.id} value={o.id}>{o.bezeichnung}</option>)}
           </select>
-          {!!d.objekt_id && !!einheiten?.length && (
-            <select aria-label="Einheit" value={d.einheit_id ?? ''} onChange={(e) => aendern({ einheit_id: Number(e.target.value) || null })}>
-              <option value="">ganzes Haus</option>{einheiten.map((e) => <option key={e.id} value={e.id}>{e.nr ? `${e.nr} – ` : ''}{e.bezeichnung}</option>)}
-            </select>
-          )}
         </div>
         {!!geraete?.length && (
           <div className="chips" title="Geräte der Einheit aus dem Inventar – bei einem Defekt erst die Garantie prüfen">
@@ -340,6 +354,12 @@ export function Aufgabenblatt(props: {
           </div>
         )}
       </Eig>) },
+    ...(zuordnungen.length ? [{ k: 'zuordnung', immer: true, plus: 'Zuordnung', inhalt: (
+      <Eig symbol={<I.Tags size={15} />} name="Zuordnung">
+        <Auswahl value={zuordnung} options={zuordnungen.map(([v, l]) => [v, l])} marke={(v) => zuordnungen.find(([x]) => x === v)?.[2]}
+          leer={d.objekt_id ? 'ganzes Haus, kein Projekt' : 'keine'} platzhalter="Einheit oder Projekt wählen" label="Zuordnung: Einheit oder Projekt"
+          onChange={(v) => zuordnen(v)} />
+      </Eig>) }] : []),
     ...(!einkauf ? [{ k: 'person_id', plus: 'Betrifft', inhalt: (
       <Eig symbol={<I.User size={15} />} name="Betrifft">
         <Auswahl value={d.person_id ?? ''} options={personen ? personen.map((p) => [p.id, personName(p)]) : d.person_id ? [[d.person_id, d.person ?? '…']] : []} onChange={(v) => aendern({ person_id: Number(v) || null })}
@@ -357,12 +377,6 @@ export function Aufgabenblatt(props: {
             onClick={() => aendern({ prioritaet: w })}>{l}</button>)}
         </div>
       </Eig>) },
-    ...(offeneProjekte.length ? [{ k: 'projekt_id', immer: einkauf, plus: 'Projekt', inhalt: (
-      <Eig symbol={<I.FolderKanban size={15} />} name="Projekt" fuer="bl-projekt">
-        <select id="bl-projekt" value={d.projekt_id ?? ''} onChange={(e) => aendern({ projekt_id: Number(e.target.value) || null, ...(einkauf ? { projektaufgabe_id: null } : {}) })}>
-          <option value="">kein Projekt</option>{offeneProjekte.map((p) => <option key={p.id} value={p.id}>{p.titel}</option>)}
-        </select>
-      </Eig>) }] : []),
   );
   const sichtbar = zeilen.filter((z) => z.immer || hat(z.k) || (z.k === 'prioritaet' && zeige.has('prioritaet')));
   const fehlend = zeilen.filter((z) => !sichtbar.includes(z));
@@ -488,14 +502,16 @@ export function Aufgabenblatt(props: {
       [<I.Store size={15} />, 'Laden', d.laden],
       [<I.Euro size={15} />, 'Preis ca.', d.preis_ct != null ? euro(d.preis_ct) : null],
     ] : []),
-    [<I.House size={15} />, 'Wo', d.objekt_id ? [objekte?.find((o) => o.id === Number(d.objekt_id))?.bezeichnung ?? d.objekt,
-      d.einheit_id ? (einheit ? `${einheit.nr ? `${einheit.nr} – ` : ''}${einheit.bezeichnung}` : d.einheit) : 'ganzes Haus'].filter(Boolean).join(' · ') : null],
+    [<I.House size={15} />, 'Wo', d.objekt_id ? objekte?.find((o) => o.id === Number(d.objekt_id))?.bezeichnung ?? d.objekt : null],
+    [<I.Tags size={15} />, 'Zuordnung', d.projekt_id
+      ? <><span className="zuord-marke projekt">Projekt</span>{projekte?.find((p) => p.id === Number(d.projekt_id))?.titel ?? d.projekt}</>
+      : d.einheit_id ? <><span className="zuord-marke einheit">Einheit</span>{einheit ? `${einheit.nr ? `${einheit.nr} – ` : ''}${einheit.bezeichnung}` : d.einheit}</>
+      : d.objekt_id ? 'ganzes Haus' : null],
     [<I.User size={15} />, 'Betrifft', d.person_id ? (person ? personName(person) : d.person) : null],
     [<I.UserCheck size={15} />, 'Kümmert sich', benutzer?.length ? zustaendige(d).map((id) => benutzer.find((b) => b.id === id)?.name).filter(Boolean).join(', ') : d.zustaendig_name],
     [<I.CalendarClock size={15} />, 'Bis wann', d.faellig
       ? <span className={ueberfaellig ? 'lese-rot' : undefined}>{/^\d/.test(wannText(d.faellig)) ? datum(d.faellig) : `${wannText(d.faellig)} · ${datum(d.faellig)}`}{ueberfaellig ? ' · überfällig' : ''}</span> : null],
     [<I.Flag size={15} />, 'Wichtigkeit', Number(d.prioritaet ?? 2) === 1 ? <span className="lese-rot">dringend</span> : WICHTIG.find(([w]) => w === Number(d.prioritaet ?? 2))?.[1]],
-    [<I.FolderKanban size={15} />, 'Projekt', d.projekt_id ? projekte?.find((p) => p.id === Number(d.projekt_id))?.titel ?? d.projekt : null],
     ...(einkauf && d.projektaufgabe_id ? [[<I.ListChecks size={15} />, 'Für Schritt', projekt?.aufgaben?.find((a: Row) => a.id === Number(d.projektaufgabe_id))?.titel]] : []),
   ] as [ReactNode, string, ReactNode][]).filter(([, , w]) => w != null && w !== '');
   const uebersicht = (

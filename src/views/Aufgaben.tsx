@@ -9,6 +9,7 @@ import { call, fehler, heute, inTagen, zustaendige, type Row } from '../api';
 import { useLoad } from '../useLoad';
 import { useAktion } from '../aktion';
 import { Bild } from '../Symbol';
+import { Auswahl } from '../ui';
 import { AblaufStarten, AblaufVorlagen } from './Ablaeufe';
 import { DiktatKnopf, diktatMoeglich } from '../Diktat';
 import { aktuellerBenutzer } from '../offline';
@@ -24,6 +25,19 @@ const gruppeVon = (v: Row) => {
 const reihenfolge = (a: Row, b: Row) => (a.prioritaet - b.prioritaet) || String(a.faellig ?? '9999').localeCompare(String(b.faellig ?? '9999')) || b.id - a.id;
 const faelligKlasse = (v: Row) => (v.status === 'erledigt' || !v.faellig ? '' : v.faellig < heute() ? 'ueberfaellig' : v.faellig === heute() ? 'heute' : '');
 const kuerzel = (name: string) => name.split(/\s+/).map((t) => t[0]).join('').slice(0, 2);
+// Where a task belongs, one line: project and unit in their colours (purple, blue), house, person, shop.
+// ohneOrt: under a group of house and unit/project, those are not repeated.
+function Meta(props: { v: Row; mitEltern?: boolean; ohneOrt?: boolean }) {
+  const v = props.v;
+  const teile: React.ReactNode[] = [
+    props.mitEltern && v.eltern_titel && `↳ ${v.eltern_titel}`,
+    !props.ohneOrt && v.projekt && <span className="zuord projekt" title="Projekt">{v.projekt}</span>,
+    !props.ohneOrt && !v.projekt && v.einheit && <span className="zuord einheit" title="Einheit">{v.einheit}</span>,
+    !props.ohneOrt && v.objekt, v.person, v.kategorie === 'Einkauf' && v.laden,
+  ].filter(Boolean);
+  return <>{teile.map((t, i) => <span key={i}>{i ? ' · ' : ''}{t}</span>)}</>;
+}
+
 // Initials of everybody in charge (zustaendig_name lists them separated by ", "), overlapping like avatars.
 function Kuerzel(props: { namen?: string | null }) {
   if (!props.namen) return null;
@@ -54,10 +68,14 @@ export function Aufgaben(props: { objekte: Row[] }) {
   const [gewuenscht, setSicht] = useState<Sicht>(() => (lesen('aufgaben_sicht') as Sicht | null) ?? (lesen('aufgaben_meine') === '1' ? 'meine' : 'alle'));
   const sicht: Sicht = gewuenscht === 'meine' && (!mehrere || !ich) ? 'alle' : gewuenscht;
   const [ansicht, setAnsicht] = useState<'liste' | 'board'>(() => (lesen('aufgaben_ansicht') === 'board' ? 'board' : 'liste'));
+  // The list by date (overdue, today …) or by place: house → unit or project → tasks.
+  const [gruppierung, setGruppierung] = useState<'datum' | 'ort'>(() => (lesen('aufgaben_gruppe') === 'ort' ? 'ort' : 'datum'));
   // Filters stay for the next visit (like a work-order list does).
   const [objektId, setObjektId] = useState<number | ''>(() => Number(lesen('aufgaben_objekt')) || '');
   const [zustaendig, setZustaendig] = useState<number | ''>(() => Number(lesen('aufgaben_person')) || '');
   const [filterOffen, setFilterOffen] = useState(false);
+  // Filter by unit or project („e12“, „p3“), for this visit.
+  const [zuordnungFilter, setZuordnungFilter] = useState('');
   const [rows, reload] = useLoad<Row[]>(() => call('aufgabenListe', { objekt_id: objektId || null, zustaendig: zustaendig || null }), [objektId, zustaendig]);
   const [alleObjekte] = useLoad<Row[]>(async () => [...new Map([...await call('objekte', 'miete'), ...await call('objekte', 'weg')].map((o: Row) => [o.id, o])).values()], []);
   const [gewaehlt, setGewaehlt] = useState<number | null>(null);
@@ -91,8 +109,14 @@ export function Aufgaben(props: { objekte: Row[] }) {
   const meine = offen.filter((v) => ich != null && zustaendige(v).includes(Number(ich)));
   const zahl: Record<Sicht, number> = { meine: meine.length, alle: offen.length, wartet: offen.filter((v) => v.status === 'wartet').length,
     einkauf: offen.filter((v) => v.kategorie === 'Einkauf').length, erledigt: alle.filter((v) => v.status === 'erledigt').length };
-  const sichtbar = sicht === 'meine' ? meine : sicht === 'wartet' ? offen.filter((v) => v.status === 'wartet')
-    : sicht === 'erledigt' ? alle.filter((v) => v.status === 'erledigt').sort((a, b) => String(b.geaendert_am ?? '').localeCompare(String(a.geaendert_am ?? ''))) : offen;
+  const passtZuordnung = (v: Row) => !zuordnungFilter || (zuordnungFilter[0] === 'p' ? `p${v.projekt_id}` === zuordnungFilter : !v.projekt_id && `e${v.einheit_id}` === zuordnungFilter);
+  const sichtbar = (sicht === 'meine' ? meine : sicht === 'wartet' ? offen.filter((v) => v.status === 'wartet')
+    : sicht === 'erledigt' ? alle.filter((v) => v.status === 'erledigt').sort((a, b) => String(b.geaendert_am ?? '').localeCompare(String(a.geaendert_am ?? ''))) : offen).filter(passtZuordnung);
+  // Units and projects that occur in the tasks, for the filter.
+  const zuordnungen = [...new Map(alle.flatMap((v): [string, [string, string]][] => v.projekt_id ? [[`p${v.projekt_id}`, [`p${v.projekt_id}`, v.projekt]]]
+    : v.einheit_id ? [[`e${v.einheit_id}`, [`e${v.einheit_id}`, `${v.einheit}${!objektId && v.objekt ? ` (${v.objekt})` : ''}`]]] : [])).values()]
+    .sort((a, b) => a[0][0].localeCompare(b[0][0]) || a[1].localeCompare(b[1], 'de', { numeric: true }));
+  const zuordnungName = zuordnungen.find(([k]) => k === zuordnungFilter)?.[1];
   const offenesBlatt = (rows ?? []).find((v) => v.id === gewaehlt) ?? null;
   const oeffnen = (v: Row) => setGewaehlt(gewaehlt === v.id && breit ? null : v.id);
 
@@ -134,6 +158,17 @@ export function Aufgaben(props: { objekte: Row[] }) {
           onClick={() => { setObjektId(''); schreiben('aufgaben_objekt', ''); }}><I.X size={12} /></button></span>}
         {personName && <span className="chip">{personName}<button type="button" className="chip-weg" aria-label={`Filter ${personName} entfernen`}
           onClick={() => { setZustaendig(''); schreiben('aufgaben_person', ''); }}><I.X size={12} /></button></span>}
+        {zuordnungName && <span className="chip"><span className={`zuord-marke ${zuordnungFilter[0] === 'p' ? 'projekt' : 'einheit'}`}>{zuordnungFilter[0] === 'p' ? 'Projekt' : 'Einheit'}</span>{zuordnungName}
+          <button type="button" className="chip-weg" aria-label={`Filter ${zuordnungName} entfernen`} onClick={() => setZuordnungFilter('')}><I.X size={12} /></button></span>}
+        {ansicht === 'liste' && sicht !== 'erledigt' && sicht !== 'einkauf' && <>
+          <span className="spacer" />
+          <div className="segment gruppierung" role="radiogroup" aria-label="Gruppieren nach">
+            {([['datum', 'Nach Datum', I.CalendarDays], ['ort', 'Nach Ort', I.Building2]] as const).map(([k, l, S]) => (
+              <button key={k} type="button" role="radio" aria-checked={gruppierung === k} title={l}
+                onClick={() => { setGruppierung(k); schreiben('aufgaben_gruppe', k); }}><S size={14} aria-hidden="true" /> {l}</button>
+            ))}
+          </div>
+        </>}
       </div>
       {filterOffen && (
         <div className="filterleiste">
@@ -142,6 +177,12 @@ export function Aufgaben(props: { objekte: Row[] }) {
               <option value="">alle Häuser</option>{alleObjekte?.map((o) => <option key={o.id} value={o.id}>{o.bezeichnung}</option>)}
             </select>
           </label>
+          {!!zuordnungen.length && (
+            <label>Einheit oder Projekt
+              <Auswahl value={zuordnungFilter} options={zuordnungen} leer="alle" label="Einheit oder Projekt"
+                marke={(k) => (String(k)[0] === 'p' ? { text: 'Projekt', art: 'projekt' } : { text: 'Einheit', art: 'einheit' })} onChange={setZuordnungFilter} />
+            </label>
+          )}
           {mehrere && (
             <label>Kümmert sich
               <select value={zustaendig} onChange={(e) => { const n = Number(e.target.value) || ''; setZustaendig(n); schreiben('aufgaben_person', String(n)); }}>
@@ -164,13 +205,17 @@ export function Aufgaben(props: { objekte: Row[] }) {
                 {sicht === 'erledigt' ? (
                   <ul className="az-liste">{sichtbar.map((v) => <Zeile key={v.id} v={v} aktiv={v.id === gewaehlt} mehrere={mehrere} sicht={sicht}
                     onOeffnen={() => oeffnen(v)} onHaken={() => setzen(v, 'offen')} onSpaeter={(t) => spaeter(v, t)} />)}</ul>
+                ) : gruppierung === 'ort' ? (
+                  <OrtGruppen liste={sichtbar} onNeu={(vorlage) => setNeu({ ...vorgabe(), ...vorlage })}
+                    zeile={(v) => <Zeile key={v.id} v={v} aktiv={v.id === gewaehlt} mehrere={mehrere} sicht={sicht} ohneOrt onGeaendert={reload}
+                      onOeffnen={() => oeffnen(v)} onHaken={() => setzen(v, 'erledigt')} onSpaeter={(t) => spaeter(v, t)} />} />
                 ) : GRUPPEN.map(([g, l]) => {
                   const teil = sichtbar.filter((v) => gruppeVon(v) === g).sort(reihenfolge);
                   if (!teil.length) return null;
                   return (
                     <section key={g} className={`az-gruppe ${g}`} aria-label={l}>
                       <h3>{l} <span className="hinweis">{teil.length}</span></h3>
-                      <ul className="az-liste">{teil.map((v) => <Zeile key={v.id} v={v} aktiv={v.id === gewaehlt} mehrere={mehrere} sicht={sicht}
+                      <ul className="az-liste">{teil.map((v) => <Zeile key={v.id} v={v} aktiv={v.id === gewaehlt} mehrere={mehrere} sicht={sicht} onGeaendert={reload}
                         onOeffnen={() => oeffnen(v)} onHaken={() => setzen(v, 'erledigt')} onSpaeter={(t) => spaeter(v, t)} />)}</ul>
                     </section>
                   );
@@ -201,6 +246,74 @@ export function Aufgaben(props: { objekte: Row[] }) {
       {ablauf === 'starten' && <AblaufStarten onClose={(id) => { setAblauf(null); if (id) reload(); }} />}
       {ablauf === 'vorlagen' && <AblaufVorlagen onClose={() => setAblauf(null)} />}
     </section>
+  );
+}
+
+// The list by place: house → unit or project (tagged in their colours) → tasks. Every level folds (remembered on this
+// device) and shows its count and how many are overdue; „+“ on a group starts a task already filed there. With one
+// house only, its level is left out.
+function OrtKopf(p: { k: string; zu: boolean; umschalten: (k: string) => void; children: React.ReactNode; anzahl: number; ueberfaellig: number;
+  ebene: 'haus' | 'gruppe'; plus?: () => void; plusLabel?: string }) {
+  return (
+    <div className={`ort-kopf ebene-${p.ebene}`}>
+      <button type="button" className="ort-auf" aria-expanded={!p.zu} onClick={() => p.umschalten(p.k)}>
+        {p.zu ? <I.ChevronRight size={15} aria-hidden="true" /> : <I.ChevronDown size={15} aria-hidden="true" />}
+        <span className="ort-titel">{p.children}</span>
+        <span className="hinweis">{p.anzahl}</span>
+        {p.ueberfaellig > 0 && <span className="ort-ueber">{p.ueberfaellig} überfällig</span>}
+      </button>
+      {p.plus && <button type="button" className="icon ort-plus" aria-label={p.plusLabel} title={p.plusLabel} onClick={p.plus}><I.Plus size={15} /></button>}
+    </div>
+  );
+}
+type OrtGruppe = { key: string; titel: string; art?: 'einheit' | 'projekt'; rang: number; liste: Row[]; vorlage: Row };
+function OrtGruppen(props: { liste: Row[]; zeile: (v: Row) => React.ReactNode; onNeu: (vorlage: Row) => void }) {
+  const [zu, setZu] = useState<Set<string>>(() => { try { return new Set(JSON.parse(lesen('aufgaben_zu') ?? '[]')); } catch { return new Set(); } });
+  const umschalten = (k: string) => setZu((z) => {
+    const n = new Set(z);
+    if (n.has(k)) n.delete(k); else n.add(k);
+    schreiben('aufgaben_zu', JSON.stringify([...n]));
+    return n;
+  });
+  const haeuser = new Map<string, { key: string; titel: string; gruppen: Map<string, OrtGruppe> }>();
+  for (const v of props.liste) {
+    const hk = v.objekt_id ? `o${v.objekt_id}` : 'o0';
+    if (!haeuser.has(hk)) haeuser.set(hk, { key: hk, titel: v.objekt ?? 'Ohne Haus', gruppen: new Map() });
+    const h = haeuser.get(hk)!;
+    // A project wins over a unit (older tasks may have both).
+    const gk = v.projekt_id ? `p${v.projekt_id}` : v.einheit_id ? `e${v.einheit_id}` : 'haus';
+    if (!h.gruppen.has(gk)) h.gruppen.set(gk, v.projekt_id
+      ? { key: gk, titel: v.projekt ?? 'Projekt', art: 'projekt', rang: 2, liste: [], vorlage: { objekt_id: v.objekt_id ?? null, projekt_id: v.projekt_id } }
+      : v.einheit_id ? { key: gk, titel: v.einheit ?? 'Einheit', art: 'einheit', rang: 1, liste: [], vorlage: { objekt_id: v.objekt_id ?? null, einheit_id: v.einheit_id } }
+      : { key: gk, titel: v.objekt_id ? 'Ganzes Haus' : 'Ohne Zuordnung', rang: 3, liste: [], vorlage: { objekt_id: v.objekt_id ?? null } });
+    h.gruppen.get(gk)!.liste.push(v);
+  }
+  const reihe = [...haeuser.values()].sort((a, b) => (a.key === 'o0' ? 1 : 0) - (b.key === 'o0' ? 1 : 0) || a.titel.localeCompare(b.titel, 'de', { numeric: true }));
+  const einHaus = reihe.length === 1;
+  const ueber = (l: Row[]) => l.filter((v) => v.faellig && v.faellig < heute()).length;
+  return (
+    <>
+      {reihe.map((h) => {
+        const gruppen = [...h.gruppen.values()].sort((a, b) => a.rang - b.rang || a.titel.localeCompare(b.titel, 'de', { numeric: true }));
+        const alle = gruppen.flatMap((g) => g.liste);
+        return (
+          <section key={h.key} className="ort-haus" aria-label={h.titel}>
+            {!einHaus && <OrtKopf k={h.key} zu={zu.has(h.key)} umschalten={umschalten} ebene="haus" anzahl={alle.length} ueberfaellig={ueber(alle)}>{h.titel}</OrtKopf>}
+            {(einHaus || !zu.has(h.key)) && gruppen.map((g) => {
+              const k = `${h.key}-${g.key}`;
+              return (
+                <section key={k} className={`ort-gruppe${einHaus ? ' oben' : ''}`} aria-label={g.titel}>
+                  <OrtKopf k={k} zu={zu.has(k)} umschalten={umschalten} ebene="gruppe" anzahl={g.liste.length} ueberfaellig={ueber(g.liste)} plus={() => props.onNeu(g.vorlage)} plusLabel={`Neue Aufgabe für ${g.titel}`}>
+                    {g.art && <span className={`zuord-marke ${g.art}`}>{g.art === 'projekt' ? 'Projekt' : 'Einheit'}</span>}{g.titel}
+                  </OrtKopf>
+                  {!zu.has(k) && <ul className="az-liste">{[...g.liste].sort(reihenfolge).map(props.zeile)}</ul>}
+                </section>
+              );
+            })}
+          </section>
+        );
+      })}
+    </>
   );
 }
 
@@ -273,9 +386,16 @@ function Schnellfeld(props: { vorgabe: Row; onNeu: () => void }) {
 }
 
 // One task in the list: tick, title with where and who, date on the right. On a touch screen it can be swiped.
-function Zeile(props: { v: Row; aktiv: boolean; mehrere: boolean; sicht: Sicht; onOeffnen: () => void; onHaken: () => void; onSpaeter: (iso: string) => void }) {
+function Zeile(props: { v: Row; aktiv: boolean; mehrere: boolean; sicht: Sicht; onOeffnen: () => void; onHaken: () => void; onSpaeter: (iso: string) => void;
+  ohneOrt?: boolean; onGeaendert?: () => void }) {
   const v = props.v;
   const fertig = v.status === 'erledigt';
+  // The steps of a task open right in the list (third level) and are ticked off there.
+  const [schritteOffen, setSchritteOffen] = useState(false);
+  const [schritte, ladeSchritte] = useLoad<Row[]>(() => (schritteOffen && v.schritte ? call('ablaufSchritte', v.id) : Promise.resolve([])), [schritteOffen, v.id, v.schritte_erledigt]);
+  async function schrittHaken(s: Row) {
+    try { await call('vorgangStatus', s.id, s.status === 'erledigt' ? 'offen' : 'erledigt'); ladeSchritte(); props.onGeaendert?.(); } catch (e) { fehler(e); }
+  }
   const [dx, setDx] = useState(0);
   const [spaeter, setSpaeter] = useState(false);
   const zug = useRef<{ x: number; y: number; id: number; aktiv: boolean } | null>(null);
@@ -304,7 +424,8 @@ function Zeile(props: { v: Row; aktiv: boolean; mehrere: boolean; sicht: Sicht; 
     else if (x < -90 && !fertig) setSpaeter(true);
     setTimeout(() => { geschoben.current = false; }, 50);
   };
-  const meta = [v.eltern_titel && `↳ ${v.eltern_titel}`, v.projekt, v.objekt, v.einheit, v.person, v.kategorie === 'Einkauf' && v.laden].filter(Boolean).join(' · ');
+  const meta = <Meta v={v} mitEltern ohneOrt={props.ohneOrt} />;
+  const hatMeta = !!(v.eltern_titel || (!props.ohneOrt && (v.projekt || v.objekt || v.einheit)) || v.person || (v.kategorie === 'Einkauf' && v.laden));
   return (
     <li className={`az${props.aktiv ? ' aktiv' : ''}${fertig ? ' fertig' : ''}`}>
       {dx !== 0 && <div className={`az-unter ${dx > 0 ? 'rechts' : 'links'}`} aria-hidden="true">
@@ -321,7 +442,7 @@ function Zeile(props: { v: Row; aktiv: boolean; mehrere: boolean; sicht: Sicht; 
             {v.status === 'wartet' && props.sicht !== 'wartet' && <span className="tag">wartet</span>}
             {v.status === 'in_arbeit' && <span className="tag">in Arbeit</span>}
           </span>
-          {(meta || !!v.schritte) && <span className="az-meta">{meta}{!!v.schritte && `${meta ? ' · ' : ''}Schritte ${v.schritte_erledigt}/${v.schritte}`}</span>}
+          {hatMeta && <span className="az-meta">{meta}</span>}
         </button>
         <span className="az-rechts">
           {!!v.fotos && <span className="az-zahl" title="Fotos und Dateien"><I.Image size={13} aria-hidden="true" /> {v.fotos}</span>}
@@ -330,6 +451,25 @@ function Zeile(props: { v: Row; aktiv: boolean; mehrere: boolean; sicht: Sicht; 
           {props.mehrere && <Kuerzel namen={v.zustaendig_name} />}
         </span>
       </div>
+      {!!v.schritte && (
+        <div className="az-schritte">
+          <button type="button" className="link klein az-schritte-knopf" aria-expanded={schritteOffen} onClick={() => setSchritteOffen(!schritteOffen)}>
+            {schritteOffen ? <I.ChevronDown size={14} aria-hidden="true" /> : <I.ChevronRight size={14} aria-hidden="true" />} Schritte {v.schritte_erledigt}/{v.schritte}</button>
+          {schritteOffen && (
+            <ul className="schritte">
+              {schritte?.map((s) => (
+                <li key={s.id} className={s.status === 'erledigt' ? 'fertig' : ''}>
+                  <button type="button" className={`haken${s.status === 'erledigt' ? ' an' : ''}`} aria-pressed={s.status === 'erledigt'}
+                    aria-label={`„${s.titel}“ ${s.status === 'erledigt' ? 'wieder öffnen' : 'erledigen'}`} onClick={() => schrittHaken(s)}>
+                    <I.Check size={12} strokeWidth={3} aria-hidden="true" /></button>
+                  <span className="text">{s.titel}</span>
+                  {s.faellig && <span className="klein hinweis">{wannText(s.faellig)}</span>}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
       {spaeter && (
         <div className="az-spaeter" role="group" aria-label={`„${v.titel}“ verschieben`}>
           <span className="klein hinweis">Verschieben auf</span>
@@ -379,7 +519,7 @@ function Board(props: { liste: Row[]; aktiv: number | null; mehrere: boolean; on
                     <span className="karte-titel">{v.prioritaet === 1 && <I.Flag size={13} className="dringend-symbol" aria-label="dringend" />}
                       {v.kategorie === 'Einkauf' && <I.ShoppingCart size={13} className="karte-symbol" aria-label="Einkauf" />}{v.menge ? `${v.menge} ` : ''}{v.titel}</span>
                     {v.eltern_titel && <span className="klein hinweis">↳ {v.eltern_titel}</span>}
-                    <span className="klein hinweis">{[v.projekt, v.objekt, v.einheit, v.person, v.kategorie === 'Einkauf' && v.laden].filter(Boolean).join(' · ')}</span>
+                    <span className="klein hinweis"><Meta v={v} /></span>
                     <span className="karte-fuss klein">
                       {v.faellig && <span className={`faellig ${faelligKlasse(v)}`}><I.CalendarClock size={13} aria-hidden="true" /> {wannText(v.faellig)}</span>}
                       {!!v.schritte && <span title="Schritte">{v.schritte_erledigt}/{v.schritte}</span>}
