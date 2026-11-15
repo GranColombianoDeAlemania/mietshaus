@@ -53,6 +53,24 @@ function client(adresse) {
   const benId = await anna.call('benutzerAnlegen', { login: 'ben', name: 'Ben Becker', passwort: 'auch-geheim-22' });
   pruefe('Zweiter Benutzer', benId > 0 && (await anna.call('benutzerListe')).length === 2);
   pruefe('Liste ohne Passwort-Hash', !JSON.stringify(await anna.call('benutzerListe')).includes('scrypt'));
+  // „Nach Updates suchen“: asks the release source at once (here a stand-in for GitHub).
+  {
+    let tag = 'v99.0.0';
+    const quelle = require('node:http').createServer((_q, res) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ tag_name: tag, html_url: 'https://example.invalid/r', assets: [] })); });
+    await new Promise((ok) => quelle.listen(0, '127.0.0.1', ok));
+    const vorher = process.env.MIETSHAUS_UPDATE_QUELLE, aus = process.env.MIETSHAUS_UPDATE_PRUEFEN;
+    process.env.MIETSHAUS_UPDATE_QUELLE = `http://127.0.0.1:${quelle.address().port}/latest`;
+    delete process.env.MIETSHAUS_UPDATE_PRUEFEN;
+    const u1 = await (await anna.anfrage('/api/update-pruefen', { methode: 'POST', json: {} })).json();
+    pruefe('Update-Suche: neuere Version gefunden', u1.update?.version === '99.0.0' && u1.version === require('../package.json').version, JSON.stringify(u1));
+    pruefe('… und steht danach auch in /api/info', (await (await anna.anfrage('/api/info')).json()).update?.version === '99.0.0');
+    tag = `v${require('../package.json').version}`;
+    pruefe('Update-Suche: gleiche Version heißt aktuell', (await (await anna.anfrage('/api/update-pruefen', { methode: 'POST', json: {} })).json()).update === null);
+    pruefe('Update-Suche nur angemeldet', (await fremd.anfrage('/api/update-pruefen', { methode: 'POST', json: {} })).status === 401);
+    if (vorher === undefined) delete process.env.MIETSHAUS_UPDATE_QUELLE; else process.env.MIETSHAUS_UPDATE_QUELLE = vorher;
+    if (aus !== undefined) process.env.MIETSHAUS_UPDATE_PRUEFEN = aus;
+    quelle.close();
+  }
   pruefe('Benutzer nicht über save/get erreichbar', await anna.call('get', 'benutzer', 1).then(() => false, (e) => /Unbekannte Tabelle/.test(e.message)));
   pruefe('Ben meldet sich an', (await ben.anfrage('/api/anmelden', { methode: 'POST', json: { login: 'BEN', passwort: 'auch-geheim-22' } })).ok);
   for (let i = 0; i < 5; i++) await fremd.anfrage('/api/anmelden', { methode: 'POST', json: { login: 'anna', passwort: 'falsch' } });

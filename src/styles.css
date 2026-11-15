@@ -84,7 +84,6 @@ a { color: var(--accent-text); }
 .modi .modus-finanz[aria-selected='true'] { background: #74488f; }
 .modi button { font-size: 10.5px; letter-spacing: 0; padding-left: 0; padding-right: 0; }
 .modi button span { white-space: nowrap; }
-.objektwahl[hidden] { display: none; }
 
 .seitenleiste nav { flex: 1; overflow-y: auto; padding: 4px 10px 18px; scrollbar-width: thin; scrollbar-color: var(--seite-line) transparent; }
 .navgruppe { display: flex; flex-direction: column; gap: 1px; margin-bottom: 6px; }
@@ -131,6 +130,11 @@ button.rund:hover:not(:disabled) { background: var(--hover); color: var(--ink); 
 button.rund:disabled { color: var(--leise); opacity: 1; cursor: default; }
 button.rund.ring { border: 1.5px solid var(--ink); width: 34px; height: 34px; }
 button.rund.ring:hover:not(:disabled) { border-color: var(--accent); color: var(--accent-text); background: transparent; }
+/* The house of the page (in Projekte: the project), right above the page's heading (App.tsx, hauswahl). */
+.seiten-hauswahl { display: flex; align-items: center; gap: 7px; margin: -6px 0 10px; color: var(--muted); }
+.seiten-hauswahl .kontowahl { width: min(300px, 100%); }
+.seiten-hauswahl input { padding: 5px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--feld); color: var(--ink); font-weight: 600; font-size: 13.5px; text-overflow: ellipsis; }
+.seiten-hauswahl .kontowahl-liste { z-index: 45; }
 .pfad { display: flex; align-items: center; min-width: 0; flex: 1; overflow: hidden; white-space: nowrap; font-size: 13.5px; -webkit-app-region: drag; }
 .pfadteil { display: inline-flex; align-items: center; min-width: 0; -webkit-app-region: no-drag; }
 /* The current page keeps its name; the house and unit before it are shortened first. */
@@ -139,10 +143,6 @@ button.rund.ring:hover:not(:disabled) { border-color: var(--accent); color: var(
 .pfadteil button { border: 0; background: transparent; color: var(--muted); padding: 3px 6px; border-radius: 6px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; max-width: 240px; font-weight: 400; }
 .pfadteil button:hover:not(:disabled) { background: var(--hover); color: var(--ink); }
 .pfadteil b { font-weight: 600; padding: 3px 6px; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.objektwahl { display: flex; align-items: center; gap: 6px; color: var(--muted); flex-shrink: 1; min-width: 0; }
-.objektwahl .kontowahl { width: 170px; }
-.objektwahl input { padding: 6px 8px; border-radius: 7px; border: 1px solid var(--line); background: var(--feld); color: var(--ink); text-overflow: ellipsis; }
-.objektwahl .kontowahl-liste { left: auto; right: 0; z-index: 45; }
 
 main { grid-area: main; overflow: auto; padding: 26px 34px 48px; min-width: 0; }
 footer { grid-area: foot; padding: 5px 34px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--line); background: var(--bg); min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -289,6 +289,13 @@ button.kachel:hover:not(:disabled) { border-color: var(--accent); color: var(--i
 .leerzustand.gross { margin-top: 60px; padding: 46px; }
 .leerzustand.gross svg { color: var(--leise); }
 .hinweisbox { background: var(--accent-soft); color: var(--ink); border-radius: 8px; padding: 10px 14px; margin: 10px 0; font-size: 13.5px; }
+/* Settings → Version und Updates. */
+.versionen { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin: 4px 0 12px; }
+.versionen > div { border: 1px solid var(--line); border-radius: 8px; padding: 9px 12px; }
+.versionen dt { font-size: 12px; color: var(--muted); }
+.versionen dd { margin: 2px 0 0; font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.versionen dd .chip { font-size: 11.5px; font-weight: 600; }
+.update-befehl code { display: block; margin: 6px 0 8px; padding: 8px 10px; border-radius: 6px; background: var(--feld); font-size: 12px; overflow-wrap: anywhere; user-select: all; }
 .liste-punkte { padding-left: 32px; }
 .liste-punkte li { margin: 2px 0; }
 .notiz { margin: 10px 0 0; font-size: 13px; color: var(--muted); border-left: 2px solid var(--line-stark); padding-left: 10px; white-space: pre-wrap; }
@@ -561,7 +568,6 @@ ul.maengel li { display: flex; align-items: center; gap: 6px; color: var(--rot);
 @media (max-width: 1180px) {
   .app { grid-template-columns: 208px minmax(0, 1fr); }
   .globalsuche { width: 220px; }
-  .objektwahl svg { display: none; }
   main { padding: 22px 24px 40px; }
 }
 /* Narrow windows: wide tables scroll sideways on their own instead of the whole page. */
@@ -774,10 +780,6 @@ ul.maengel li { display: flex; align-items: center; gap: 6px; color: var(--rot);
   .kopfleiste .navknoepfe { display: none; }
   .kopfleiste .pfad { display: none; }
   .globalsuche { min-width: 0; flex: 1 1 0; width: auto; }
-  .objektwahl svg { display: none; }
-  .objektwahl { flex: 1 1 0; }
-  .objektwahl .kontowahl { width: 100%; }
-  .objektwahl .kontowahl-liste { min-width: min(260px, 80vw); }
   main { padding: 16px 14px 40px; }
   .kz-raster > .kz { grid-column: span 12 !important; }
   table { display: block; overflow-x: auto; }

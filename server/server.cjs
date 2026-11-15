@@ -548,6 +548,15 @@ async function starten(o) {
         letzte_auto_sicherung: e.letzte_auto_sicherung ?? null, benutzer: w.benutzer, eingangsordner_fest: !!o.eingang, eingangsordner: eingangsordner(),
         mail_verschluesselt: passwort.verschluesselt, update: neueste && { version: neueste.version, url: neueste.url } });
     }
+    // „Nach Updates suchen“ in the settings: asks GitHub at once instead of waiting for the daily check.
+    if (post && p === '/api/update-pruefen') {
+      if (o.modus !== 'server') return json(res, 200, { version: VERSION, update: null, lokal: true });
+      if (process.env.MIETSHAUS_UPDATE_PRUEFEN === '0') return json(res, 200, { version: VERSION, update: null, aus: true });
+      const n = await neuesteVersion().catch(() => null);
+      if (!n) return json(res, 502, { fehler: 'GitHub ist gerade nicht erreichbar. Bitte später noch einmal versuchen.' });
+      neueste = vergleichen(n.version, VERSION) > 0 ? n : null;
+      return json(res, 200, { version: VERSION, update: neueste && { version: neueste.version, url: neueste.url } });
+    }
     // Status page: version and update, space, backups and their test, devices signed in.
     if (p === '/api/systemstatus') {
       const e = dbSystem.einstellungen();

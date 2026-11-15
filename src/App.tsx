@@ -155,8 +155,8 @@ type Seite = {
 const SEITEN: Seite[] = [
   { id: 'postfach', label: 'Postfach', gruppe: 'Dokumente', alle: true, render: () => <Postfach /> },
   { id: 'vorschlaege', label: 'Vorschläge von Claude', gruppe: 'Dokumente', alle: true, render: () => <Vorschlaege /> },
-  { id: 'archiv', label: 'Archiv & Suche', gruppe: 'Dokumente', alle: true, render: (c) => <Archiv objekt={c.modus === 'projekt' ? undefined : c.objekt} /> },
-  { id: 'rechnungen', label: 'Rechnungen', gruppe: 'Dokumente', alle: true, render: (c) => <Rechnungen objekt={c.modus === 'projekt' ? undefined : c.objekt} /> },
+  { id: 'archiv', label: 'Archiv & Suche', gruppe: 'Dokumente', alle: true, render: (c) => <Archiv objekte={c.modus === 'projekt' ? [] : c.objekte} /> },
+  { id: 'rechnungen', label: 'Rechnungen', gruppe: 'Dokumente', alle: true, render: (c) => <Rechnungen objekte={c.modus === 'projekt' ? [] : c.objekte} /> },
   // Private finances: per user, without a house (src/views/Finanzen.tsx).
   { id: 'fcockpit', label: 'Übersicht', gruppe: 'Start', modi: ['finanz'], render: (c) => <FinCockpit oeffne={c.oeffne} /> },
   { id: 'fbuchungen', label: 'Buchungen', gruppe: 'Finanzen', modi: ['finanz'], render: () => <FinBuchungen /> },
@@ -570,6 +570,18 @@ export default function App(props: { benutzer?: Row | null }) {
     ? { modus, objekt: objekt!, objekte, ladeObjekte, oeffne: (s, id) => zu({ seite: s, objektId: id ?? objektId }) }
     : null;
 
+  // The house (in Projekte: the project) of the pages that show one – right above their heading, not in the header:
+  // pages across all houses (tasks, calendar, inbox …) choose a house in their own fields and filters.
+  const mitHauswahl = !!aktiv?.objekt && !detail && modus !== 'finanz' && !!objekte?.length;
+  const hauswahl = mitHauswahl && (
+    <div className="seiten-hauswahl" role="group" aria-label={modus === 'projekt' ? 'Projekt wählen' : 'Haus wählen'}>
+      {modus === 'projekt' ? <I.Hammer size={15} aria-hidden="true" /> : <I.Building2 size={15} aria-hidden="true" />}
+      <Auswahl pflicht value={objektId ?? ''} label={modus === 'projekt' ? 'Projekt' : 'Haus'}
+        options={(objekte ?? []).map((o): [number, string] => [o.id, `${o.bezeichnung ?? o.titel}${o.art === 'gemischt' ? ' (gemischt)' : ''}`])}
+        onChange={(v) => { const id = Number(v); if (id) gehe({ objektId: id, param: undefined }); }} />
+    </div>
+  );
+
   function inhalt() {
     if (!ctx) return null;
     if (seite === 'person') return <PersonSeite key={ort.param} id={Number(ort.param)} />;
@@ -673,25 +685,11 @@ export default function App(props: { benutzer?: Row | null }) {
             ))}
           </nav>
           <Suche befehle={befehle} onDokument={(d) => setDokOffen({ id: d.id, datei: d.datei })} />
-          <div className="objektwahl" hidden={modus === 'finanz'} aria-label={modus === 'projekt' ? 'Projekt wählen' : 'Objekt wählen'}>
-            <I.Building2 size={15} />
-            <Auswahl pflicht value={objektId ?? ''} disabled={!objekte?.length}
-              platzhalter={!objekte ? 'lädt …' : !objekte.length ? (modus === 'projekt' ? '– noch keine Projekte –' : '– noch keine Objekte –') : undefined}
-              options={[
-                ...(detail && objektId && !objekte?.some((o) => o.id === objektId) ? [[objektId, '…'] as [number, string]] : []),
-                ...(objekte ?? []).map((o): [number, string] => [o.id, `${o.bezeichnung ?? o.titel}${o.art === 'gemischt' ? ' (gemischt)' : ''}`]),
-              ]}
-              onChange={(v) => {
-                const id = Number(v);
-                if (!id) return;
-                detail ? zu({ seite: modus === 'projekt' ? 'zeitplan' : 'steckbrief', objektId: id }) : gehe({ objektId: id, param: undefined });
-              }} />
-          </div>
           <button className="rund ring" title="Dokumente ablegen – sie landen zur Prüfung im Postfach" onClick={schnellAblegen}><I.FilePlus2 size={16} /></button>
           <Glocke />
           <Ampel benutzer={props.benutzer?.name ?? null} />
         </header>
-        <main><Fehlergrenze key={`${modus}:${seite}:${ort.param ?? ''}:${objektId ?? ''}`}><Suspense fallback={<div className="laedt" aria-busy="true" />}>{inhalt()}</Suspense></Fehlergrenze></main>
+        <main><Fehlergrenze key={`${modus}:${seite}:${ort.param ?? ''}:${objektId ?? ''}`}><Suspense fallback={<div className="laedt" aria-busy="true" />}>{hauswahl}{inhalt()}</Suspense></Fehlergrenze></main>
         {/* Phone: the things done on the way, at the thumb. */}
         <nav className="handyleiste" aria-label="Schnellzugriff">
           <button aria-current={seite === 'postfach' ? 'page' : undefined} onClick={() => zu({ seite: 'postfach' })}>
@@ -701,7 +699,7 @@ export default function App(props: { benutzer?: Row | null }) {
           <Glocke klein />
           <button onClick={() => setMenueOffen(true)} aria-expanded={menueOffen}><Bild name="mehr" groesse={28} ersatz={I.Menu} /><span>Mehr</span></button>
         </nav>
-        <footer>{meldung ? <b>{meldung}</b> : objekt ? (modus === 'projekt' ? `Projekt: ${objekt.titel}${objekt.objekt ? ` · ${objekt.objekt}` : ''}` : `${objekt.bezeichnung} · ${OBJEKT_ART[objekt.art]}`) : ''}</footer>
+        <footer>{meldung ? <b>{meldung}</b> : objekt && mitHauswahl ? (modus === 'projekt' ? `Projekt: ${objekt.titel}${objekt.objekt ? ` · ${objekt.objekt}` : ''}` : `${objekt.bezeichnung} · ${OBJEKT_ART[objekt.art]}`) : ''}</footer>
         {ziehen && <div className="dropzone">Dateien loslassen – sie landen im Postfach. Auf eine Person, Einheit oder Buchung ziehen, um sie dort abzulegen.</div>}
         <Vorschaukarte />
         {dokOffen && <Suspense fallback={null}><DokumentDialog id={dokOffen.id} datei={dokOffen.datei} onClose={() => setDokOffen(null)} /></Suspense>}

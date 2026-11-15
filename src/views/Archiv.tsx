@@ -411,14 +411,26 @@ function Stapel(props: { dokumente: Row[]; onFertig: () => void; onLoeschen: () 
   );
 }
 
-export function Archiv(props: { objekt?: Row }) {
+// A house filter of a page across all houses (archive, invoices): all houses or one.
+function HausFilter(props: { objekte: Row[]; wert: number | ''; onChange: (id: number | '') => void }) {
+  if (props.objekte.length < 2) return null;
+  return (
+    <select aria-label="Haus" value={props.wert} onChange={(e) => props.onChange(Number(e.target.value) || '')}>
+      <option value="">alle Häuser</option>{props.objekte.map((o) => <option key={o.id} value={o.id}>{o.bezeichnung}</option>)}
+    </select>
+  );
+}
+
+export function Archiv(props: { objekte: Row[] }) {
   const [q, setQ] = useState(() => sessionStorage.getItem('archivSuche') ?? '');
-  const [nurObjekt, setNurObjekt] = useState(!!props.objekt);
+  const [haus, setHaus] = useState<number | ''>('');
+  // With one house only there is nothing to choose.
+  const hausId = haus || (props.objekte.length === 1 ? props.objekte[0].id : null);
   const [typ, setTyp] = useState('');
   const [jahr, setJahr] = useState('');
   const [typen] = useLoad<string[]>(() => call('dokumentTypen'), []);
-  const [liste, reload] = useLoad<Row[]>(() => call('dokumentListe', { q, typ: typ || null, jahr: jahr || null, objekt_id: nurObjekt ? props.objekt?.id : null }),
-    [q, typ, jahr, nurObjekt, props.objekt?.id]);
+  const [liste, reload] = useLoad<Row[]>(() => call('dokumentListe', { q, typ: typ || null, jahr: jahr || null, objekt_id: haus || null }),
+    [q, typ, jahr, haus]);
   const [offen, setOffen] = useState<Row | null>(null);
   useEffect(() => { sessionStorage.removeItem('archivSuche'); }, []);
 
@@ -429,12 +441,12 @@ export function Archiv(props: { objekt?: Row }) {
         <input className="suche gross" autoFocus placeholder="Volltext durchsuchen – z. B. „Heizung Wartung 2025“ oder eine Rechnungsnummer" value={q} onChange={(e) => setQ(e.target.value)} />
       </div>
       <div className="toolbar">
-        {props.objekt && <label className="check"><input type="checkbox" checked={nurObjekt} onChange={(e) => setNurObjekt(e.target.checked)} /> nur {props.objekt.bezeichnung}</label>}
+        <HausFilter objekte={props.objekte} wert={haus} onChange={setHaus} />
         <select value={typ} onChange={(e) => setTyp(e.target.value)}><option value="">alle Typen</option>{typen?.map((t) => <option key={t}>{t}</option>)}</select>
         <select value={jahr} onChange={(e) => setJahr(e.target.value)}><option value="">alle Jahre</option>{Array.from({ length: 12 }, (_, i) => diesesJahr() - i).map((j) => <option key={j}>{j}</option>)}</select>
         <span className="spacer" />
         <span className="hinweis klein">{liste?.length ?? 0} Treffer</span>
-        <button onClick={() => window.hv.dateienImportieren({ status: 'abgelegt', objekt_id: nurObjekt ? props.objekt?.id : null }).then(reload)}>Direkt ablegen…</button>
+        <button onClick={() => window.hv.dateienImportieren({ status: 'abgelegt', objekt_id: hausId }).then(reload)}>Direkt ablegen…</button>
       </div>
       <table>
         <thead><tr><th>Datum</th><th>Titel</th><th>Typ</th><th>Objekt / Person</th><th className="num">Betrag</th><th /></tr></thead>
@@ -487,10 +499,12 @@ export function DokumentDialog(props: { id: number; datei?: string; onClose: () 
   );
 }
 
-export function Rechnungen(props: { objekt?: Row }) {
+export function Rechnungen(props: { objekte: Row[] }) {
   const [jahr, setJahr] = useState(String(diesesJahr()));
-  const [nurObjekt, setNurObjekt] = useState(!!props.objekt);
-  const [liste, reload] = useLoad<Row[]>(() => call('rechnungen', { objekt_id: nurObjekt ? props.objekt?.id : null, jahr: jahr || null }), [jahr, nurObjekt, props.objekt?.id]);
+  const [haus, setHaus] = useState<number | ''>('');
+  // Transfers go out from one house's account: the chosen one (or the only one).
+  const objekt = props.objekte.find((o) => o.id === (haus || (props.objekte.length === 1 ? props.objekte[0].id : 0)));
+  const [liste, reload] = useLoad<Row[]>(() => call('rechnungen', { objekt_id: haus || null, jahr: jahr || null }), [jahr, haus]);
   const [offen, setOffen] = useState<Row | null>(null);
   const [auswahl, setAuswahl] = useState<Record<number, boolean>>({});
   const status = (r: Row) => (r.buchung_id ? (r.gegen_klasse === 'geld' ? 'bezahlt' : 'gebucht') : r.faellig && r.faellig < heute() ? 'überfällig' : 'offen');
@@ -498,8 +512,9 @@ export function Rechnungen(props: { objekt?: Row }) {
   const fuerSepa = (liste ?? []).filter((r) => auswahl[r.id] && !r.buchung_id && r.iban && r.betrag_ct);
 
   async function sepa() {
-    const o = props.objekt;
-    if (!o?.iban) return hinweis('Für Überweisungen bitte im Objekt die IBAN des Objektkontos hinterlegen.');
+    const o = objekt;
+    if (!o) return hinweis('Bitte zuerst oben das Haus wählen, von dessen Konto überwiesen wird.');
+    if (!o.iban) return hinweis('Für Überweisungen bitte im Objekt die IBAN des Objektkontos hinterlegen.');
     // An invoice already in a transfer file (not booked as paid yet) would be paid twice.
     const vermerke: Record<string, Row> = await call('sepaVermerke', o.id, 'ueberweisung', inTagen(-60));
     const schon = fuerSepa.filter((r) => vermerke[`dokument:${r.id}`]);
@@ -514,11 +529,11 @@ export function Rechnungen(props: { objekt?: Row }) {
     <section>
       <div className="toolbar">
         <h1>Rechnungen</h1>
-        {props.objekt && <label className="check"><input type="checkbox" checked={nurObjekt} onChange={(e) => setNurObjekt(e.target.checked)} /> nur {props.objekt.bezeichnung}</label>}
+        <HausFilter objekte={props.objekte} wert={haus} onChange={setHaus} />
         <select value={jahr} onChange={(e) => setJahr(e.target.value)}><option value="">alle Jahre</option>{Array.from({ length: 8 }, (_, i) => diesesJahr() - i).map((j) => <option key={j}>{j}</option>)}</select>
         <span className="spacer" />
         <BelegFoto onFertig={reload} />
-        <button disabled={!fuerSepa.length || !nurObjekt} title="Ausgewählte offene Rechnungen als SEPA-Überweisungsdatei" onClick={sepa}>Überweisen ({fuerSepa.length})</button>
+        <button disabled={!fuerSepa.length || !objekt} title={objekt ? 'Ausgewählte offene Rechnungen als SEPA-Überweisungsdatei' : 'Erst das Haus wählen, von dessen Konto überwiesen wird'} onClick={sepa}>Überweisen ({fuerSepa.length})</button>
       </div>
       <div className="kacheln">
         <div className="kachel"><div className="wert">{euro(summe('überfällig'))}</div><div className="label">überfällig</div></div>

@@ -27,6 +27,76 @@ const FELDER: [string, string][] = [
   ['datev_mandant', 'DATEV Mandantennummer'],
 ];
 
+// The versions of server, interface and Mac app, and „Nach Updates suchen“: the Mac app downloads and installs a newer
+// version at once (it restarts); the server on the NAS cannot update itself – for it the command to run there is shown.
+// An interface older than the server (kept by the browser) is reloaded with one tap.
+const UPDATE_BEFEHL = 'cd /volume2/mietshaus && sudo docker compose pull && sudo docker compose up -d && sudo docker image prune -f';
+function VersionUndUpdates(props: { info?: Row | null }) {
+  const d = window.hvDesktop;
+  const [server, setServer] = useState<Row | null>(null);
+  const [fortschritt, setFortschritt] = useState('');
+  const [laeuft, setLaeuft] = useState(false);
+  const [ergebnis, setErgebnis] = useState('');
+  const [kopiert, setKopiert] = useState(false);
+  useEffect(() => (d ? d.bei('fortschritt', setFortschritt) : undefined), []);
+  const serverVersion: string | undefined = server?.version ?? props.info?.version;
+  const serverUpdate: Row | null = server ? server.update : props.info?.update ?? null;
+  const lokal = props.info?.modus === 'lokal';
+  const oberflaecheAlt = !!serverVersion && serverVersion !== __OBERFLAECHE__ && !d;
+
+  async function suchen() {
+    setLaeuft(true); setErgebnis(''); setFortschritt('');
+    try {
+      const teile: string[] = [];
+      const s = await (await anfrage('/api/update-pruefen', { json: {} })).json();
+      setServer(s);
+      if (!lokal) teile.push(s.aus ? 'Die Update-Prüfung des Servers ist ausgeschaltet.' : s.update ? `Server: ${s.update.version} ist da.` : 'Server: aktuell.');
+      if (d?.updateSuchen) {
+        const u = await d.updateSuchen();
+        if (!u) teile.push(`Mac-App: aktuell (${d.version}).`);
+        else if (u.hindernis) teile.push(`Mac-App: ${u.version} ist da, kann sich hier aber nicht selbst aktualisieren – ${u.hindernis}`);
+        else {
+          // Found: downloaded and installed at once; the app restarts by itself.
+          setErgebnis([...teile, `Mac-App: ${u.version} wird geladen …`].join(' '));
+          await d.updateInstallieren();
+          return;
+        }
+      }
+      setErgebnis(teile.join(' '));
+    } catch (e) { fehler(e); setFortschritt(''); } finally { setLaeuft(false); }
+  }
+
+  return (
+    <div className="block">
+      <h3>Version und Updates</h3>
+      <dl className="versionen">
+        <div><dt>{lokal ? 'Eingebauter Server' : 'Server'}</dt><dd>{serverVersion ?? '…'}
+          {serverUpdate && <span className="chip gelb">Neu: {serverUpdate.version}</span>}
+          {!serverUpdate && server && !server.aus && !lokal && <span className="chip gruen">aktuell</span>}</dd></div>
+        <div><dt>Oberfläche</dt><dd>{__OBERFLAECHE__}
+          {oberflaecheAlt && <> <span className="chip gelb">älter als der Server</span> <button type="button" className="link" onClick={() => location.reload()}>Neu laden</button></>}</dd></div>
+        {d && <div><dt>Mac-App</dt><dd>{d.version}</dd></div>}
+      </dl>
+      <div className="buttons">
+        <button type="button" className="primary" disabled={laeuft} onClick={suchen}>{laeuft ? 'Sucht …' : 'Nach Updates suchen'}</button>
+        {(fortschritt || ergebnis) && <span className="meldung">{fortschritt || ergebnis}</span>}
+      </div>
+      {serverUpdate && !lokal && (
+        <div className="hinweisbox klein update-befehl">
+          <p>Der Server auf der Synology aktualisiert sich nicht selbst. Per SSH dort ausführen:</p>
+          <code>{UPDATE_BEFEHL}</code>
+          <div className="knopfreihe">
+            <button type="button" onClick={async () => { try { await navigator.clipboard.writeText(UPDATE_BEFEHL); setKopiert(true); setTimeout(() => setKopiert(false), 2000); } catch (e) { fehler(e); } }}>
+              {kopiert ? 'Kopiert ✓' : 'Befehl kopieren'}</button>
+            <button type="button" className="link" onClick={() => window.hv.extern(serverUpdate.url)}>Was ist neu?</button>
+          </div>
+        </div>
+      )}
+      {d && !d.updateSuchen && <p className="klein hinweis">Die Suche für die Mac-App gibt es ab der nächsten App-Version; bis dahin zeigt die Leiste unten neue Versionen an.</p>}
+    </div>
+  );
+}
+
 const zeitpunkt = (iso: string | null) => (iso ? new Date(iso).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' }) : '–');
 
 export function Einstellungen() {
@@ -48,6 +118,7 @@ export function Einstellungen() {
   return (
     <section>
       <div className="toolbar"><h1>Einstellungen & Datensicherung</h1></div>
+      <VersionUndUpdates info={info} />
       <div className="block">
         <h3>Verwalter (Absender auf Briefen und Abrechnungen)</h3>
         <div className="maske">
@@ -116,7 +187,7 @@ export function Einstellungen() {
           <p className="klein hinweis">
             {info.modus === 'server' ? 'Auf dem Mietshaus-Server. ' : ''}Datenbank: {info.dbFile}<br />Dokumente: {info.dokumente}<br />Sicherungen: {info.sicherungen}<br />
             Letzte Änderung: {zeitpunkt(info.stand?.zeit ?? null)}{info.stand?.geraet_name ? ` (${info.stand.geraet_name})` : ''}{info.geraet ? ` · Dieses Gerät: ${info.geraet}` : ''}<br />
-            Letzte automatische Sicherung: {zeitpunkt(info.letzte_auto_sicherung ?? null)} · Version {info.version}
+            Letzte automatische Sicherung: {zeitpunkt(info.letzte_auto_sicherung ?? null)}
           </p>
         )}
       </div>

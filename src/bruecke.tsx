@@ -20,6 +20,7 @@ export type Desktop = {
   version: string;
   schnittstelle: number;
   updateStatus: () => Promise<Update | null>;
+  updateSuchen?: () => Promise<Update | null>; // older app versions do not have it
   updateInstallieren: () => Promise<void>;
   zoom: (faktor: number) => void;
   pdfBytes: (html: string) => Promise<Uint8Array>;

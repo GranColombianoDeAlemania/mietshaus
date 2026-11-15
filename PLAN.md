@@ -362,6 +362,13 @@ How the depth was found: the installer of a personal finance program the user ow
 - Receipt with articles for a unit: the photo is filed with the unit and goes to the inbox as an invoice with the unit's share (shared by prices with projects on the same receipt), to be booked as repairs of that unit – before, those articles were only ticked off.
 - Fixes: the class „haus“ of the new group headers collided with the house plan (centred headers) – renamed; the chip row on a phone stuck out 2 px (horizontal scrollbar).
 
+### 0.25.1 – versions and update check, no house picker in the header
+
+- Settings → „Version und Updates“: the versions of the server, of the user interface (built into it, so an interface kept by the browser and older than the server is seen at once, with „Neu laden“) and of the Mac app.
+- „Nach Updates suchen“ asks GitHub at once (new endpoint /api/update-pruefen, signed-in only; the Mac app through its own new handler updateSuchen). A newer Mac app is downloaded, checked and installed right away and restarts; the server on the NAS cannot update itself, so the command to run there by SSH is shown with „Befehl kopieren“. The button reaches the Mac app from this app version on; older apps keep the bar at the bottom.
+
+- The house picker left the header: pages across all houses (tasks, calendar, inbox, cockpit, address book) have none – the house is chosen in their own fields and filters; archive and invoices got their own house filter („alle Häuser“ or one; transfers need the house whose account pays). Pages of one house (bookings, tenants, meters, accounts, statements …) and in Projekte the project pages show the picker right above their heading; the choice still holds for all of them. Detail pages (a person, a unit, a contract, an account) have none; the footer names the house only where the picker is.
+
 ## Development
 
 ```

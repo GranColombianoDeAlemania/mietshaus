@@ -289,6 +289,11 @@ app.whenReady().then(async () => {
       datenUebertragen,
       paketErstellen,
       updateStatus: () => neueVersion,
+      updateSuchen: async () => {
+        neueVersion = await update.pruefen();
+        if (neueVersion && hauptfenster && !hauptfenster.isDestroyed()) hauptfenster.webContents.send('hv:update', neueVersion);
+        return neueVersion;
+      },
       updateInstallieren: (e) => {
         if (!neueVersion) throw new Error('Kein Update verfügbar.');
         return update.installieren(neueVersion, (text) => e.sender.send('hv:fortschritt', text));

@@ -39,6 +39,7 @@ function einrichten(o) {
   const h = {
     start: () => ({ plattform: process.platform, geraet: o.geraet(), lokal: o.lokal(), version: VERSION, schnittstelle: DESKTOP_SCHNITTSTELLE }),
     updateStatus: () => null,
+    updateSuchen: async () => null,
     updateInstallieren: () => { throw new Error('Kein Update verfügbar.'); },
     pdfBytes: (_e, html) => htmlZuPdf(String(html)),
     speichern: async (e, inhalt, name, filter, oeffnen) => {

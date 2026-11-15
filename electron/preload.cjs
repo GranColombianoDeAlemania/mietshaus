@@ -13,6 +13,8 @@ contextBridge.exposeInMainWorld('hvDesktop', {
   schnittstelle: start.schnittstelle,
   updateStatus: rufe('updateStatus'),
   updateInstallieren: rufe('updateInstallieren'),
+  // Asks GitHub at once: the newer version (with „hindernis“ when this installation cannot update itself) or null.
+  updateSuchen: rufe('updateSuchen'),
   // Text size: zooms the whole window like ⌘+ / ⌘−.
   zoom: (faktor) => webFrame.setZoomFactor(faktor),
   pdfBytes: rufe('pdfBytes'),
