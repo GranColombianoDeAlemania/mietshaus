@@ -8,6 +8,7 @@ import { painUeberweisung } from '../bankformate';
 import { bestaetigen, hinweis } from '../frage';
 import { emailSchreiben } from '../Mail';
 import { BelegFoto } from '../Foto';
+import { seitenBearbeiten, seitenTauglich } from '../Seiten';
 import { SYMBOL } from '../icons';
 import { Arbeitskorb } from '../Arbeitskorb';
 import { Bild } from '../Symbol';
@@ -300,7 +301,7 @@ export function Postfach() {
         {!!bekannt?.length && <button onClick={bekannteBuchen} title="Rechnungen von Absendern, die schon mindestens zweimal gleich gebucht wurden">{bekannt.length} bekannte Rechnung{bekannt.length === 1 ? '' : 'en'} buchen</button>}
         <button className="link" onClick={() => setKorbOffen(true)} title="Gelöschte Dokumente, 30 Tage wiederherstellbar">Papierkorb{korb ? ` (${korb})` : ''}</button>
         <BelegFoto onFertig={reload} />
-        <button className="primary" onClick={() => window.hv.dateienImportieren({}).then(reload)}>Dateien hinzufügen…</button>
+        <button className="primary" onClick={() => window.hv.dateienImportieren({}, { dokument: true }).then(reload)}>Dateien hinzufügen…</button>
       </div>
       <p className="hinweis klein">
         Das Programm hat die Dokumente gelesen und Vorschläge eingetragen. Nichts wird abgelegt oder gebucht, bevor du es prüfst:
@@ -388,6 +389,31 @@ function Stapel(props: { dokumente: Row[]; onFertig: () => void; onLoeschen: () 
     await call('stapelAblegen', props.dokumente.map((x) => x.id), felder, ablegen);
     props.onFertig();
   };
+  // The pages of one bill uploaded as separate documents: put together as one PDF (order and pages can be changed).
+  const [zusammenLaeuft, setZusammenLaeuft] = useState(false);
+  const zusammen = async () => {
+    setZusammenLaeuft(true);
+    // Pages in the order they came in (the inbox shows the newest first).
+    const docs = [...props.dokumente].sort((a, b) => a.id - b.id);
+    try {
+      const dateien = await Promise.all(docs.map(async (d) => {
+        const r = await fetch(`/dateien/dokument/${encodeURIComponent(d.datei)}`, { credentials: 'same-origin' });
+        if (!r.ok) throw new Error(`„${d.titel}“ ließ sich nicht laden.`);
+        const b = await r.blob();
+        return new File([b], d.name ?? d.datei, { type: b.type });
+      }));
+      const nicht = dateien.filter((f) => !seitenTauglich(f));
+      if (nicht.length) return void await hinweis('Zusammenfügen geht nur mit Fotos, Bildern und PDF-Dateien.');
+      setZusammenLaeuft(false);
+      const r = await seitenBearbeiten({ dateien, titel: `${dateien.length} Dokumente zusammenfügen`, name: docs.find((d) => d.absender)?.absender ?? undefined });
+      if (!r || r.art !== 'eins') return;
+      setZusammenLaeuft(true);
+      const [x] = await window.hv.importieren([r.datei], { status: 'postfach', typ: docs.find((d) => d.typ)?.typ ?? null });
+      if (!x) return;
+      await call('dokumenteZusammengefuegt', x.id, docs.map((d) => d.id));
+      props.onFertig();
+    } catch (e) { fehler(e); } finally { setZusammenLaeuft(false); }
+  };
   const sel = (k: string, opts: [number | string, string][], leer: string) => (
     <select value={f[k] ?? ''} onChange={(e) => setF({ ...f, [k]: e.target.value === '' ? '' : isNaN(Number(e.target.value)) ? e.target.value : Number(e.target.value), ...(k === 'objekt_id' ? { einheit_id: '' } : {}) })}>
       <option value="">{leer}</option>{opts.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
@@ -402,6 +428,8 @@ function Stapel(props: { dokumente: Row[]; onFertig: () => void; onLoeschen: () 
         {sel('projekt_id', (projekte ?? []).map((p) => [p.id, p.titel]), 'Projekt unverändert')}
         {sel('typ', (typen ?? []).map((t) => [t, t]), 'Typ unverändert')}
         <span className="spacer" />
+        {props.dokumente.length > 1 && <button onClick={zusammen} disabled={zusammenLaeuft} title="Die Seiten einer Rechnung zu einem Dokument (PDF) zusammenfügen – die einzelnen kommen in den Papierkorb">
+          {zusammenLaeuft ? 'Lädt …' : 'Zusammenfügen …'}</button>}
         <button className="danger" onClick={props.onLoeschen} title="In den Papierkorb (30 Tage wiederherstellbar)">Löschen</button>
         <button onClick={() => go(false)}>Nur zuordnen</button>
         <button className="primary" onClick={() => go(true)}>Zuordnen & ablegen</button>
@@ -446,7 +474,7 @@ export function Archiv(props: { objekte: Row[] }) {
         <select value={jahr} onChange={(e) => setJahr(e.target.value)}><option value="">alle Jahre</option>{Array.from({ length: 12 }, (_, i) => diesesJahr() - i).map((j) => <option key={j}>{j}</option>)}</select>
         <span className="spacer" />
         <span className="hinweis klein">{liste?.length ?? 0} Treffer</span>
-        <button onClick={() => window.hv.dateienImportieren({ status: 'abgelegt', objekt_id: hausId }).then(reload)}>Direkt ablegen…</button>
+        <button onClick={() => window.hv.dateienImportieren({ status: 'abgelegt', objekt_id: hausId }, { dokument: true }).then(reload)}>Direkt ablegen…</button>
       </div>
       <table>
         <thead><tr><th>Datum</th><th>Titel</th><th>Typ</th><th>Objekt / Person</th><th className="num">Betrag</th><th /></tr></thead>

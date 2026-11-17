@@ -1259,6 +1259,35 @@ Stadtsparkasse München | IBAN DE02 7015 0000 0000 1234 56 | BIC SSKMDEMMXXX`;
   gleich('Original im Papierkorb: die Kopie zählt nicht mehr als Duplikat', t.dokument(o4).duplikat, null);
   t.dokumentWiederherstellen([o1]);
 
+  // The pages of one bill, uploaded as two documents, put together as one PDF.
+  {
+    const s1 = beleg('Seite 1 Malerbetrieb', { objekt_id: ob, typ: 'Rechnung' });
+    const s2 = beleg('Seite 2 Gesamt 80,00');
+    const zus = beleg('Seite 1 Malerbetrieb\fSeite 2 Gesamt 80,00');
+    const r = t.dokumenteZusammengefuegt(zus, [s1, s2]);
+    const z = t.dokument(zus);
+    gleich('Zusammengefügt: neues Dokument übernimmt Haus und Typ, die Seiten liegen im Papierkorb',
+      [r, z.objekt_id, z.typ, z.status, t.dokument(s1).status, t.dokument(s2).status, t.dokument(s1).geloescht_aus],
+      [{ id: zus, entfernt: 2 }, ob, 'Rechnung', 'postfach', 'papierkorb', 'papierkorb', 'postfach']);
+    t.dokumentWiederherstellen([s1, s2]);
+    const b1 = beleg('Gebuchte Seite', { objekt_id: ob });
+    const b2 = beleg('Andere gebuchte Seite', { objekt_id: ob });
+    t.dokumentSpeichern({ id: b1, betrag_ct: 100, datum: '2026-09-01', absender: 'Seitentest A', rechnungsnr: 'S-1' });
+    t.dokumentSpeichern({ id: b2, betrag_ct: 200, datum: '2026-09-02', absender: 'Seitentest B', rechnungsnr: 'S-2' });
+    t.belegBuchen(b1, { kosten_konto_id: instand, geld_konto_id: bank });
+    t.belegBuchen(b2, { kosten_konto_id: instand, geld_konto_id: bank });
+    const bu1 = t.dokument(b1).buchung_id;
+    const neu2 = beleg('zusammen');
+    let fz = null;
+    try { t.dokumenteZusammengefuegt(neu2, [b1, b2]); } catch (e) { fz = e.message; }
+    gleich('Zwei verschiedene Buchungen: nicht zusammenfügen, nichts gelöscht', [/verschiedenen Buchungen/.test(fz ?? ''), t.dokument(b1).status !== 'papierkorb'], [true, true]);
+    const neu3 = beleg('zusammen 2');
+    t.dokumenteZusammengefuegt(neu3, [b1, s1]);
+    gleich('Eine Seite gebucht: das neue Dokument hängt an der Buchung und ist abgelegt', [t.dokument(neu3).buchung_id, t.dokument(neu3).status], [bu1, 'abgelegt']);
+    t.dokumentLoeschen([s2, b2, neu2, neu3, zus]);
+    t.papierkorbLeeren(30, Date.now() + 31 * 864e5);
+  }
+
   // Recycle bin.
   const k1 = beleg('Doppelt eingelegt\nGesamt 12,00');
   t.dokumentLoeschen([k1]);

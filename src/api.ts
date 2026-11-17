@@ -25,8 +25,9 @@ declare global {
       dokumentAblegen: () => Promise<{ name: string; datei: string; groesse: number }[]>;
       dokumentOeffnen: (datei: string) => Promise<string>;
       dokumentLoeschen: (id: number | number[]) => Promise<void>;
-      importieren: (files: FileList | File[], opt?: Row) => Promise<Hochgeladen[]>;
-      dateienImportieren: (opt?: Row) => Promise<Hochgeladen[]>;
+      // dokument: several files may become one document of several pages (the user is asked).
+      importieren: (files: FileList | File[], opt?: Row, art?: { dokument?: boolean }) => Promise<Hochgeladen[]>;
+      dateienImportieren: (opt?: Row, art?: { dokument?: boolean }) => Promise<Hochgeladen[]>;
       // On a phone the camera opens at once; on a computer it is a picker for images.
       fotoAufnehmen: (opt?: Row, art?: { video?: boolean; mediathek?: boolean }) => Promise<Hochgeladen[]>;
       fotoMitStandort: () => Promise<(Hochgeladen & { objekt?: string })[]>;

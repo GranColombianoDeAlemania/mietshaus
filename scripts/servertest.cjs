@@ -209,6 +209,44 @@ function client(adresse) {
     pruefe('Papierkorb: endgültig gelöscht samt Datei', await anna.call('dokumentEndgueltig', [d.id]) === 1 && !fs.existsSync(datei) && !(await anna.call('dokument', d.id)));
   }
 
+  // ---------- 4a'''. a bill over two pages: two photos become one PDF (src/pdfbau.ts), read as one document ----------
+  {
+    // The page builder of the interface, run here as a module (the package is CommonJS).
+    const tmp = path.join(os.tmpdir(), `pdfbau-${process.pid}.mts`);
+    fs.writeFileSync(tmp, fs.readFileSync(path.join(__dirname, '..', 'src', 'pdfbau.ts'), 'utf8'));
+    const { pdfAusJpegs } = await import(require('node:url').pathToFileURL(tmp).href);
+    fs.rmSync(tmp, { force: true });
+    const { createCanvas, loadImage } = require('@napi-rs/canvas');
+    const bild = await loadImage(fs.readFileSync(path.join(__dirname, 'testdaten', 'rechnung.png')));
+    // Top half (sender) and bottom half (amounts) as two pages.
+    const haelfte = (oben) => {
+      const h = Math.ceil(bild.height / 2) + 20;
+      const c = createCanvas(bild.width, h);
+      const g = c.getContext('2d');
+      g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, h);
+      g.drawImage(bild, 0, oben ? 0 : -(bild.height - h));
+      return { jpeg: new Uint8Array(c.toBuffer('image/jpeg', 92)), breite: c.width, hoehe: h };
+    };
+    const blob = pdfAusJpegs([haelfte(true), haelfte(false)]);
+    const roh = Buffer.from(await blob.arrayBuffer());
+    pruefe('Zwei Seiten: gültige PDF', roh.subarray(0, 8).toString() === '%PDF-1.4' && /\/Count 2/.test(roh.toString('latin1')) && roh.toString('latin1').trimEnd().endsWith('%%EOF'));
+    const up2 = await (await anna.anfrage(`/api/hochladen?name=${encodeURIComponent('Beleg (2 Seiten).pdf')}&opt=${encodeURIComponent(JSON.stringify({ status: 'postfach', typ: 'Rechnung' }))}`, { methode: 'POST', roh })).json();
+    let d;
+    for (let i = 0; i < 400 && (d = await anna.call('dokument', up2[0].id))?.analyse !== 'fertig'; i++) await warte(250);
+    pruefe('Zwei Seiten: ein Dokument, beide gelesen (Absender oben, Betrag unten)', d.seiten === 2 && d.ocr === 1 && d.absender === 'Müller Haustechnik GmbH' && d.betrag_ct === 25466,
+      `${d.analyse} ${d.seiten} ${d.absender} ${d.betrag_ct}`);
+    // The two pages uploaded separately before, put together afterwards in the inbox.
+    const einzeln = [];
+    for (const [i, s] of [haelfte(true), haelfte(false)].entries()) {
+      einzeln.push((await (await anna.anfrage(`/api/hochladen?name=seite${i + 1}.jpg&opt=%7B%7D`, { methode: 'POST', roh: Buffer.from(s.jpeg) })).json())[0].id);
+    }
+    const zus = await anna.call('dokumenteZusammengefuegt', up2[0].id, einzeln);
+    pruefe('Zusammenfügen: Seiten im Papierkorb', zus.entfernt === 2 && (await anna.call('dokument', einzeln[0])).status === 'papierkorb');
+    pruefe('HEIC-Umwandlung lehnt Unlesbares ab', (await anna.anfrage('/api/jpeg', { methode: 'POST', roh: Buffer.from('kein bild') })).status === 415);
+    pruefe('HEIC-Umwandlung nicht für Fremde', (await fremd.anfrage('/api/jpeg', { methode: 'POST', roh: Buffer.from('x') })).status === 401);
+    await anna.call('dokumentLoeschen', [up2[0].id]);
+  }
+
   // ---------- 4a'. meter photo: digits proposed, photo kept with the reading ----------
   {
     const oid = await anna.call('save', 'objekte', { bezeichnung: 'Zählerhaus', art: 'miete' });

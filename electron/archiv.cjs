@@ -248,6 +248,29 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME }) {
       }
       return liste.length;
     }),
+    // Several documents were put together as one PDF (the pages of one bill): the new document takes over where the old
+    // ones belonged (house, unit, project, person, case, booking, type), the old ones go to the bin (30 days to undo).
+    dokumenteZusammengefuegt: (neuId, alteIds) => tx(() => {
+      const neu = get(`SELECT * FROM dokumente WHERE id = ? AND status <> 'papierkorb'`, Number(neuId));
+      if (!neu) throw new Error('Das zusammengefügte Dokument fehlt.');
+      const alte = [alteIds].flat().map(Number).filter((id) => id && id !== neu.id)
+        .map((id) => get(`SELECT * FROM dokumente WHERE id = ? AND status <> 'papierkorb'`, id)).filter(Boolean);
+      const buchungen = [...new Set(alte.map((d) => d.buchung_id).filter((b) => b != null))];
+      if (buchungen.length > 1) throw new Error('Die Dokumente gehören zu verschiedenen Buchungen und lassen sich nicht zusammenfügen.');
+      const felder = ['objekt_id', 'einheit_id', 'projekt_id', 'person_id', 'vorgang_id', 'buchung_id', 'typ', 'kategorie'];
+      const werte = {};
+      for (const k of felder) if (neu[k] == null) { const v = alte.find((d) => d[k] != null)?.[k]; if (v != null) werte[k] = v; }
+      if (alte.some((d) => d.status === 'abgelegt') || werte.buchung_id) werte.status = 'abgelegt';
+      const keys = Object.keys(werte);
+      if (keys.length) db.prepare(`UPDATE dokumente SET ${keys.map((k) => `${k} = ?`).join(', ')} WHERE id = ?`).run(...keys.map((k) => werte[k]), neu.id);
+      const jetzt = new Date().toISOString();
+      for (const d of alte) {
+        db.prepare(`UPDATE dokumente SET geloescht_aus = status, status = 'papierkorb', geloescht = ? WHERE id = ?`).run(jetzt, d.id);
+        db.prepare('DELETE FROM dokumente_fts WHERE rowid = ?').run(d.id);
+      }
+      indexieren(neu.id);
+      return { id: neu.id, entfernt: alte.length };
+    }),
     dokumentWiederherstellen: (ids) => tx(() => { for (const id of [ids].flat()) wiederherstellen(Number(id)); }),
     dokumentEndgueltig: (ids) => tx(() => endgueltig([ids].flat().map(Number))),
     papierkorb: () => all(`SELECT d.id, d.titel, d.typ, d.name, d.datei, d.absender, d.betrag_ct, d.geloescht, d.geloescht_aus, d.buchung_id, o.bezeichnung AS objekt

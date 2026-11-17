@@ -29,7 +29,7 @@ export type Eintrag = {
 // Calls that change data and may wait for the connection; everything else needs the server (or a kept answer).
 const SCHREIBEND = new Set(['save', 'remove', 'dokumentSpeichern', 'dokumentZuordnen', 'vorgangStatus', 'vorgangKommentieren', 'aufgabeVerschieben',
   'hinweisSetzen', 'mitteilungGelesen', 'alleMitteilungenGelesen', 'ablesung', 'uebergabeSpeichern', 'begehungNeu', 'begehungSpeichern', 'begehungMangel',
-  'begehungAbschliessen', 'pflichtenAnlegen', 'pflichtErledigen', 'ablaufStarten', 'buchen', 'belegBuchen', 'stapelAblegen', 'einkaufNeu', 'einkaufGekauft', 'einkaufWagen',
+  'begehungAbschliessen', 'pflichtenAnlegen', 'pflichtErledigen', 'ablaufStarten', 'buchen', 'belegBuchen', 'stapelAblegen', 'dokumenteZusammengefuegt', 'einkaufNeu', 'einkaufGekauft', 'einkaufWagen',
   'einkaufAbschliessen']);
 // Calls that create a record and answer with its number.
 const neueNummer = (fn: string, args: unknown[]) => (fn === 'save' && !(args[1] as { id?: unknown } | undefined)?.id)

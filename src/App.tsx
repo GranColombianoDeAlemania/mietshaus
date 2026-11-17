@@ -10,6 +10,7 @@ import { desktopMitteilungen } from './mitteilungen';
 import { Suche, type Befehl } from './Suche';
 import { Vorschaukarte } from './Vorschaukarte';
 import { FrageHost } from './frage';
+import { SeitenHost } from './Seiten';
 import { kontextmenue, zielZuordnung } from './kontext';
 import { aktionSetzen } from './aktion';
 import { anzeige } from './anzeige';
@@ -408,7 +409,7 @@ export default function App(props: { benutzer?: Row | null }) {
   // Header button: pick files; they go to the inbox, pre-assigned to the current object or project, for review.
   async function schnellAblegen() {
     const opt = modus === 'projekt' ? { projekt_id: objektId } : { objekt_id: objektId };
-    const r = await window.hv.dateienImportieren(objektId ? opt : {});
+    const r = await window.hv.dateienImportieren(objektId ? opt : {}, { dokument: true });
     if (!r.length) return;
     const neu = r.filter((x) => !x.doppelt).length;
     melden(`${neu} Dokument(e) ins Postfach gelegt – bitte dort prüfen und ablegen.${r.length - neu ? ` ${r.length - neu} waren schon vorhanden.` : ''}`, 6000);
@@ -466,11 +467,13 @@ export default function App(props: { benutzer?: Row | null }) {
         return melden(`Dokument ${zuordnung.label} zugeordnet.`);
       }
       if (!e.dataTransfer.files.length) return;
-      const r = await window.hv.importieren(e.dataTransfer.files, { ...zuordnung.felder, status: 'abgelegt' });
+      const r = await window.hv.importieren(e.dataTransfer.files, { ...zuordnung.felder, status: 'abgelegt' }, { dokument: true });
+      if (!r.length) return;
       return melden(`${r.length} Datei(en) ${zuordnung.label} abgelegt.`);
     }
     if (!e.dataTransfer.files.length) return;
-    const r = await window.hv.importieren(e.dataTransfer.files);
+    const r = await window.hv.importieren(e.dataTransfer.files, {}, { dokument: true });
+    if (!r.length) return;
     const neu = r.filter((x) => !x.doppelt).length;
     melden(`${neu} Dokument(e) ins Postfach gelegt${r.length - neu ? `, ${r.length - neu} waren schon vorhanden` : ''}.`);
   }
@@ -704,6 +707,7 @@ export default function App(props: { benutzer?: Row | null }) {
         <Vorschaukarte />
         {dokOffen && <Suspense fallback={null}><DokumentDialog id={dokOffen.id} datei={dokOffen.datei} onClose={() => setDokOffen(null)} /></Suspense>}
         <FrageHost />
+        <SeitenHost />
         <MailHost />
       </div>
     </NaviContext.Provider>

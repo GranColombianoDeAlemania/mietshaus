@@ -63,7 +63,7 @@ const DokListe = (props: { doks: Row[] }) => props.doks.length ? (
 ) : <p className="hinweis klein">Keine Dokumente.</p>;
 
 async function ablegen(opt: Row) {
-  const r = await window.hv.dateienImportieren({ ...opt, status: 'abgelegt' });
+  const r = await window.hv.dateienImportieren({ ...opt, status: 'abgelegt' }, { dokument: true });
   if (r.length) window.dispatchEvent(new Event('hv-daten'));
 }
 

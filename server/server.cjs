@@ -622,6 +622,16 @@ async function starten(o) {
         return json(res, 200, r);
       } finally { t.weg(); }
     }
+    // iPhone photo (HEIC) for the page window of a browser that cannot show it: back as JPEG, nothing is stored.
+    if (post && p === '/api/jpeg') {
+      const t = temporaer('Bild.heic', await lesen(req));
+      try {
+        const jpeg = analyse.heicZuJpeg(t.p, null);
+        if (!jpeg) throw new Fehler(415, 'Das Bild lässt sich nicht umwandeln.');
+        res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Content-Length': jpeg.length, 'Cache-Control': 'no-store' });
+        return res.end(jpeg);
+      } finally { t.weg(); }
+    }
     // Bank access (FinTS): set up, fetch transactions, continue with TAN or approval. The PIN only passes through.
     if (post && p === '/api/fints') {
       const a = await jsonLesen(req);

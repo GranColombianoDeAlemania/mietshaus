@@ -6,6 +6,7 @@ import type { Row } from './api';
 import { bestaetigen, frage } from './frage';
 import * as offline from './offline';
 import * as ausgang from './ausgang';
+import { mehrseitig } from './Seiten';
 
 type DateiFilter = { name: string; extensions: string[] };
 type MenueEintrag = { id: string; label: string; enabled?: boolean } | '-';
@@ -396,10 +397,14 @@ export function brueckeEinrichten() {
       return datei;
     },
     dokumentLoeschen: async (id) => { await anfrage('/api/dokument-loeschen', { json: { id } }); },
-    importieren: (files, opt) => hochladen(files, opt),
-    dateienImportieren: async (opt) => {
+    importieren: async (files, opt, art) => {
+      const liste = art?.dokument ? await mehrseitig([...files]) : [...files];
+      return liste?.length ? hochladen(liste, opt) : [];
+    },
+    dateienImportieren: async (opt, art) => {
       const files = await dateienWaehlen({ mehrere: true });
-      return files.length ? hochladen(files, opt) : [];
+      const liste = art?.dokument && files.length ? await mehrseitig(files) : files;
+      return liste?.length ? hochladen(liste, opt) : [];
     },
     fotoAufnehmen: async (opt, art) => {
       // From the library several at once; the camera takes one at a time.

@@ -4,6 +4,8 @@ import { useState } from 'react';
 import * as I from 'lucide-react';
 import { call, fehler, type Row } from './api';
 import { DokumentDialog } from './views/Archiv';
+import { dateienWaehlen } from './bruecke';
+import { seitenBearbeiten } from './Seiten';
 
 const warte = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export const handy = () => matchMedia('(pointer: coarse)').matches;
@@ -40,16 +42,21 @@ export function FotoKnopf(props: { opt: Row; onFertig?: (ids: number[]) => void;
   );
 }
 
-// Photograph a receipt: upload, wait for the text recognition, then the document opens with amount, date and sender
-// filled in – there it is booked. Without a result it stays in the inbox as before.
+// Photograph a receipt: the camera opens at once (it may only open right on a tap); in the page window further pages
+// follow, each cut to the sheet. All pages become one PDF – one document, one booking. Then the text recognition runs
+// and the document opens with amount, date and sender filled in. Without a result it stays in the inbox as before.
 export function BelegFoto(props: { onFertig?: () => void }) {
   const [stand, setStand] = useState<'' | 'lesen'>('');
   const [offen, setOffen] = useState<Row | null>(null);
   return (
     <>
-      <button title="Beleg fotografieren – wird gelesen und zum Buchen geöffnet" disabled={!!stand} onClick={async () => {
+      <button title="Beleg fotografieren – auch mehrere Seiten; wird gelesen und zum Buchen geöffnet" disabled={!!stand} onClick={async () => {
         try {
-          const [x] = await window.hv.fotoAufnehmen({ status: 'postfach', typ: 'Rechnung' });
+          const erste = await dateienWaehlen(handy() ? { kamera: true } : { mehrere: true, endungen: ['pdf', 'jpg', 'jpeg', 'png', 'heic', 'heif', 'webp'] });
+          if (!erste.length) return;
+          const r = await seitenBearbeiten({ dateien: erste, titel: 'Beleg', name: `Beleg ${new Date().toLocaleDateString('de-DE')}` });
+          if (!r) return;
+          const [x] = await window.hv.importieren(r.art === 'eins' ? [r.datei] : r.dateien, { status: 'postfach', typ: 'Rechnung' });
           if (!x) return;
           setStand('lesen');
           let d: Row = await call('dokument', x.id);

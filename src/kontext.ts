@@ -23,7 +23,7 @@ export async function zielZuordnung(key: string): Promise<{ felder: Row; label: 
 }
 
 async function ablegen(felder: Row, melden: (t: string) => void, label: string) {
-  const r = await window.hv.dateienImportieren({ ...felder, status: 'abgelegt' });
+  const r = await window.hv.dateienImportieren({ ...felder, status: 'abgelegt' }, { dokument: true });
   if (r.length) melden(`${r.length} Datei(en) ${label} abgelegt.`);
 }
 

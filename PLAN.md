@@ -369,6 +369,16 @@ How the depth was found: the installer of a personal finance program the user ow
 
 - The house picker left the header: pages across all houses (tasks, calendar, inbox, cockpit, address book) have none – the house is chosen in their own fields and filters; archive and invoices got their own house filter („alle Häuser“ or one; transfers need the house whose account pays). Pages of one house (bookings, tenants, meters, accounts, statements …) and in Projekte the project pages show the picker right above their heading; the choice still holds for all of them. Detail pages (a person, a unit, a contract, an account) have none; the footer names the house only where the picker is.
 
+### 0.26.0 – one document of several pages, scanning on the device
+
+- A bill over two pages became two documents (and two bookings, the second often with a wrong sender). Now several pages become one PDF before they are uploaded: one document, one analysis over all pages (sender from the first, amount from the last), one booking.
+- „Beleg fotografieren“: the camera opens at once, then the page window: „Nächste Seite fotografieren“, „Aus Fotos“ (several at once), „Datei oder Scan“ (PDFs too, e.g. from the iPhone's „Dokumente scannen“ in the Files or Notes app – their pages join); „Ein Dokument (n Seiten)“ uploads, the text recognition runs, the document opens for booking. On a computer the same window starts from a file picker.
+- Scanner on the device (src/scan.ts, no upload before the end): every photo is cut to the sheet (brightest four-cornered area against the background, with sanity checks; nothing is cut when no sheet is clear), pulled straight (perspective), evened out (paper white, lamp tint removed; robust on nearly empty pages); per page „Farbe“, „Grau“ or „Original“, turn, reorder, remove; tapping a page moves its four corners by hand („Automatisch erkennen“, „Ganzes Foto“).
+- Several files picked or dropped for the inbox, a unit, a person (header button, inbox, archive, files of a record, drag & drop): the app asks „Ein Dokument (n Seiten)“, „Seiten ansehen …“ or „n einzelne Dokumente“.
+- Inbox: „Zusammenfügen …“ for several selected documents (pages already uploaded one by one): page window in the order they came in, one new document that takes over house, unit, project, person, case, type and booking; the single pages go to the bin (30 days to undo). Documents of two different bookings are not put together.
+- The PDF is written by the app itself (src/pdfbau.ts, JPEG pages; no new package); PDF pages are read in the browser with pdf.js (loaded only then). E-invoice PDFs are not put together (their data would be lost). HEIC in a browser that cannot show it: new endpoint /api/jpeg converts it (signed-in only, nothing stored).
+- Fix: the document window after „Beleg fotografieren“ stuck out on the phone (preview and form side by side) – now one column.
+
 ## Development
 
 ```

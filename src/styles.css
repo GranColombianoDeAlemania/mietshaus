@@ -1315,3 +1315,42 @@ tr.fin-vorgemerkt td { color: var(--muted); font-style: italic; }
 .fin-unter li { border-top: 0 !important; padding: 2px 0 !important; }
 .fin-einzug { padding-left: 18px; }
 @media (max-width: 600px) { .fin-teil { grid-template-columns: 90px minmax(0, 1fr); } .fin-teil input:last-child { grid-column: 1 / -1; } }
+
+/* Several pages, one document (Seiten.tsx): page tiles like a scanner app, corner handles on the photo. */
+.bogen-dialog { width: min(860px, 100%); max-height: calc(100dvh - 32px); overflow: auto; }
+.bogen-liste { list-style: none; margin: 10px 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+.bogen-kachel { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.bogen-bild { position: relative; display: grid; place-items: center; aspect-ratio: 3 / 4; padding: 6px; border: 1px solid var(--line); border-radius: 10px; background: var(--feld); cursor: pointer; overflow: hidden; }
+.bogen-bild:disabled { cursor: default; opacity: 1; }
+.bogen-bild img { max-width: 100%; max-height: 100%; object-fit: contain; box-shadow: 0 1px 4px rgb(0 0 0 / 0.18); background: #fff; }
+.bogen-laedt { color: var(--muted); font-size: 13px; }
+.bogen-bild .bogen-laedt { position: absolute; inset: auto 6px 6px auto; background: var(--panel); border-radius: 999px; padding: 1px 8px; }
+.bogen-platz { aspect-ratio: 3 / 4; display: grid; place-items: center; border: 1px dashed var(--line); border-radius: 10px; }
+.bogen-nr { font-size: 13.5px; }
+.bogen-knoepfe { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.bogen-knoepfe button.icon { min-width: 36px; min-height: 36px; }
+.bogen-knoepfe select { padding: 4px 6px; font-size: 13px; min-height: 36px; }
+.bogen-dazu { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0; }
+.bogen-ecken .bogen-eckbild { position: relative; width: fit-content; max-width: 100%; margin: 8px auto; touch-action: none; user-select: none; -webkit-user-select: none; }
+.bogen-eckbild img { display: block; max-width: 100%; max-height: calc(100dvh - 260px); }
+.bogen-eckbild svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.bogen-flaeche { fill: color-mix(in srgb, var(--accent) 18%, transparent); stroke: var(--accent); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.bogen-fang { fill: transparent; cursor: grab; }
+.bogen-griff { fill: var(--panel); stroke: var(--accent); stroke-width: 3; vector-effect: non-scaling-stroke; pointer-events: none; }
+@media (max-width: 640px) {
+  .dialog.bogen-dialog { width: 100%; padding: 16px 16px 0; }
+  .bogen-liste { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .bogen-dazu button { flex: 1 1 100%; justify-content: center; }
+  /* The upload button stays in sight however many pages there are. */
+  .bogen-dialog .buttons { position: sticky; bottom: 0; z-index: 1; flex-wrap: nowrap; margin: 12px -16px 0; padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+    background: var(--panel); border-top: 1px solid var(--line); }
+  .bogen-dialog .buttons .spacer { display: none; }
+  .bogen-dialog .buttons .primary { flex: 1; justify-content: center; }
+  .bogen-dialog .buttons button { white-space: normal; }
+}
+/* A document in its own window (after "Beleg fotografieren"): on the phone preview above, form below, one column. */
+@media (max-width: 760px) {
+  .dialog.sehrbreit:has(> .postfach-raster.zwei) { max-height: calc(100dvh - 24px); overflow: auto; padding: 14px; }
+  .postfach-raster.zwei { grid-template-columns: minmax(0, 1fr); height: auto; min-height: 0; }
+  .postfach-raster.zwei > :first-child { height: 45dvh; min-height: 220px; }
+}

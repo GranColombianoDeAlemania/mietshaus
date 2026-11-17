@@ -205,6 +205,8 @@ module.exports = function analyse({ db, dokumentOrdner, vorschauOrdner, onFertig
   };
 };
 
+module.exports.heicZuJpeg = (...a) => heicZuJpeg(...a);
+
 // HEIC/HEIF → JPEG, or null when it cannot be converted (the file is then kept as it is).
 function heicZuJpeg(datei, daten) {
   if (process.platform === 'darwin') {
