@@ -285,6 +285,8 @@ function AnlageV(props: { objekt: Row }) {
       </div>
       {a.gemischt && <p className="fehler">Gemischtes Objekt: Die Kosten gelten für das ganze Haus. Für deine Steuer zählt nur dein Anteil – bitte entsprechend anpassen.</p>}
       {!a.objekt.afa_satz && <p className="hinweis">Für die AfA unter Objekte → Bearbeiten Kaufpreis, Kaufdatum, Gebäudeanteil und AfA-Satz eintragen.</p>}
+      {!!a.objekt.afa_satz && !!a.objekt.kaufpreis_ct && !a.objekt.kaufdatum && <p className="fehlertext">Das Kaufdatum fehlt: Die Gebäude-AfA steht deshalb jedes Jahr mit dem vollen Satz drin – ohne anteiliges erstes Jahr
+        und ohne Ende, wenn der Kaufpreis abgeschrieben ist. Bitte unter Objekte → Bearbeiten das Kaufdatum eintragen.</p>}
       {a.selbstnutzung && <Aufteilung s={a.selbstnutzung} />}
       <div className="zweispaltig">
         <div>

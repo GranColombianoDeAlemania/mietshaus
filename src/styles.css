@@ -1080,6 +1080,7 @@ button.haken.gross { width: 26px; height: 26px; }
 .blatt-seite { border-left: 1px solid var(--line); padding-left: 18px; }
 .blatt.eingebettet .blatt-raster { grid-template-columns: minmax(0, 1fr); gap: 10px; }
 .blatt.eingebettet .blatt-seite { border-left: 0; padding-left: 0; order: -1; }
+.blatt.eingebettet .blatt-fuss { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
 .eig { display: grid; grid-template-columns: 18px 96px minmax(0, 1fr); align-items: center; gap: 4px 8px; padding: 7px 0; border-bottom: 1px solid var(--line); }
 .eig-symbol { color: var(--muted); display: flex; }
 .eig-name { font-size: 12.5px; color: var(--muted); font-weight: 400; }
@@ -1164,8 +1165,21 @@ ul.bon-liste li.bon-gesamt { font-weight: 600; border-bottom: 0; }
 .postfach-detail { display: grid; grid-template-columns: minmax(0, 1fr) 430px; gap: 14px; height: calc(100vh - 230px); min-height: 420px; }
 .postfach-detail .dokformular { overflow-y: auto; }
 .korb-alle { padding: 8px 12px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--panel); z-index: 1; }
-.korb-haken { margin: 12px 0 0 10px; flex: none; }
+/* the box sits in a label whose padding is part of the tap area */
+.korb-haken { padding: 12px 0 0 10px; flex: none; cursor: pointer; }
+.korb-haken input { margin: 0; }
 .korb-liste li.eintrag .loeschen { margin-top: 9px; }
+/* On the phone the inbox is one column (tap an item to open it); box and bin are 44 px to tap. */
+.postfach-schmal { display: none; }
+@media (max-width: 800px) {
+  .postfach-breit { display: none; }
+  .postfach-schmal { display: inline; }
+}
+@media (pointer: coarse) {
+  .korb-haken { min-width: 44px; min-height: 44px; padding: 11px 0 0 8px; }
+  .korb-haken input { width: 22px; height: 22px; }
+  .korb-liste li.eintrag .loeschen { min-width: 44px; min-height: 44px; margin-top: 0; display: inline-flex; align-items: center; justify-content: center; }
+}
 .wie-bisher { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: space-between; }
 @media (max-width: 1200px) {
   .postfach-detail { grid-template-columns: minmax(0, 1fr); height: auto; }

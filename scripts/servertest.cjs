@@ -77,6 +77,28 @@ function client(adresse) {
   pruefe('Nach 5 Fehlversuchen gesperrt', (await fremd.anfrage('/api/anmelden', { methode: 'POST', json: { login: 'anna', passwort: 'geheim-genug-1' } })).status === 429);
   pruefe('Andere Logins nicht gesperrt', (await client(s.url).anfrage('/api/anmelden', { methode: 'POST', json: { login: 'ben', passwort: 'auch-geheim-22' } })).ok);
 
+  // ---------- 1d. roles: Anna set up the server and is the Verwalter; Ben may change only his own account ----------
+  {
+    const liste = await anna.call('benutzerListe');
+    pruefe('Erster Benutzer ist Verwalter', liste.find((b) => b.login === 'anna')?.verwalter === true && liste.find((b) => b.login === 'ben')?.verwalter === false, JSON.stringify(liste));
+    const verboten = (p) => p.then(() => false, (e) => e.status === 403);
+    pruefe('Ben setzt kein Passwort für Anna', await verboten(ben.call('benutzerAendern', 1, { passwort: 'uebernommen-1234' })));
+    pruefe('Ben sperrt niemanden, auch sich nicht', await verboten(ben.call('benutzerAendern', 1, { aktiv: false })) && await verboten(ben.call('benutzerAendern', benId, { aktiv: false })));
+    pruefe('Ben macht sich nicht zum Verwalter', await verboten(ben.call('benutzerAendern', benId, { verwalter: true })));
+    pruefe('Ben erstellt keinen Link für Anna', await verboten(ben.call('einladungErneuern', 1)));
+    pruefe('Ben lädt niemanden ein', await verboten(ben.call('personEinladen', { login: 'mallory' })) && await verboten(ben.call('benutzerAnlegen', { login: 'mallory', passwort: 'mallory-passwort-1' })));
+    pruefe('Ben ändert seinen eigenen Namen', await ben.call('benutzerAendern', benId, { name: 'Ben Becker' }).then(() => true, () => false));
+    // A backup holds every account: restoring an older one would undo the roles, downloading it gives all password hashes.
+    pruefe('Ben lädt keine Sicherung herunter und spielt keine ein', (await ben.anfrage('/api/sicherung')).status === 403
+      && (await ben.anfrage('/api/sicherung/pruefen', { methode: 'POST', roh: 'x' })).status === 403
+      && (await ben.anfrage('/api/sicherung/einspielen', { methode: 'POST', json: { kennung: 'x' } })).status === 403);
+    pruefe('Letzter Verwalter bleibt Verwalter', await anna.call('benutzerAendern', 1, { verwalter: false }).then(() => false, (e) => /Mindestens ein aktiver Verwalter/.test(e.message)));
+    await anna.call('benutzerAendern', benId, { verwalter: true });
+    pruefe('Verwalter ernennt einen weiteren', (await ben.call('benutzerListe')).find((b) => b.id === benId)?.verwalter === true);
+    await ben.call('benutzerAendern', benId, { verwalter: false });
+    pruefe('… der das Recht wieder abgibt', (await anna.call('benutzerListe')).find((b) => b.id === benId)?.verwalter === false);
+  }
+
   // ---------- 1a. static files: logo and icons are there, a missing file is no page ----------
   {
     const logo = await fremd.anfrage('/logo.svg');
@@ -179,6 +201,15 @@ function client(adresse) {
   pruefe('Dokument für Angemeldete', (await anna.anfrage(`/dateien/dokument/${dok.datei}`)).headers.get('content-type') === 'application/pdf');
   pruefe('Dokument nicht für Fremde', (await fremd.anfrage(`/dateien/dokument/${dok.datei}`)).status === 401);
   pruefe('Kein Pfad aus dem Ordner heraus', (await anna.anfrage('/dateien/dokument/..%2F..%2Fmietshaus.sqlite')).status === 404);
+  {
+    // An XML file from the e-mail intake must not run script with the app's login: it opens sandboxed.
+    const xml = await (await anna.anfrage('/api/hochladen?name=skript.xml&opt=%7B%7D', { methode: 'POST',
+      roh: '<?xml version="1.0"?><a xmlns:h="http://www.w3.org/1999/xhtml"><h:script>alert(1)</h:script></a>' })).json();
+    const r = await anna.anfrage(`/dateien/dokument/${(await anna.call('dokument', xml[0].id)).datei}`);
+    pruefe('XML-Dokument abgeschottet (sandbox)', r.ok && /^sandbox;.*default-src 'none'/.test(r.headers.get('content-security-policy') ?? ''), String(r.headers.get('content-security-policy')));
+    pruefe('PDF bleibt ohne Sandbox (Vorschau)', !(await anna.anfrage(`/dateien/dokument/${dok.datei}`)).headers.get('content-security-policy'));
+    await anna.anfrage('/api/dokument-loeschen', { methode: 'POST', json: { id: xml[0].id } });
+  }
 
   // ---------- 4a. photographed receipt: OCR finds the amount ----------
   {
@@ -538,6 +569,10 @@ function client(adresse) {
   const st = await (await anna.anfrage('/api/systemstatus')).json();
   pruefe('Status: Version, Platz, Sicherung', st.version && st.platz?.frei > 0 && st.sicherung.anzahl >= 1 && st.sicherung.test?.ok, JSON.stringify(st).slice(0, 300));
   pruefe('Status: Geräte mit eigenem markiert', st.sitzungen.length >= 2 && st.sitzungen.filter((x) => x.eigene).length === 1);
+  const benSt = await (await ben.anfrage('/api/systemstatus')).json();
+  pruefe('Ben sieht nur seine eigenen Geräte', benSt.sitzungen.length >= 1 && benSt.sitzungen.every((x) => x.name === 'Ben Becker'), JSON.stringify(benSt.sitzungen));
+  await ben.anfrage('/api/sitzung-beenden', { methode: 'POST', json: { id: st.sitzungen.find((x) => x.eigene).id } });
+  pruefe('Ben meldet Anna nicht ab', await anna.call('objekte', 'miete').then(() => true, () => false));
   const benSitzung = st.sitzungen.find((x) => !x.eigene && x.name === 'Ben Becker');
   await anna.anfrage('/api/sitzung-beenden', { methode: 'POST', json: { id: benSitzung.id } });
   pruefe('Gerät abgemeldet', await ben.call('objekte', 'miete').then(() => false, (e) => e.status === 401));

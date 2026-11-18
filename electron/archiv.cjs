@@ -211,6 +211,26 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME }) {
     db.prepare(`UPDATE dokumente SET status = coalesce(geloescht_aus, 'postfach'), geloescht = NULL, geloescht_aus = NULL WHERE id = ? AND status = 'papierkorb'`).run(id);
     indexieren(id);
   }
+  // Every column that refers to a document, read from the schema, so new tables count by themselves.
+  let verweise = null;
+  const dokumentVerweise = () => (verweise ??= db.prepare(`SELECT m.name AS tabelle, f."from" AS spalte
+    FROM sqlite_master m, pragma_foreign_key_list(m.name) f WHERE m.type = 'table' AND f."table" = 'dokumente'`).all());
+  // These show the document as a picture; a merged PDF cannot stand in for it.
+  const BILDVERWEISE = [['objekte', 'titelbild_id'], ['inventar', 'foto_id'], ['zaehlerstaende', 'dokument_id']];
+  // What a merged document takes over from its pages, where it has nothing of its own.
+  const UEBERNEHMEN = ['objekt_id', 'einheit_id', 'projekt_id', 'person_id', 'vorgang_id', 'buchung_id', 'typ', 'kategorie'];
+  // The documents a merge takes over, in the given order. Refused for pages of different bookings and for pictures in use.
+  function zusammenPruefen(ids, neuId = null) {
+    const alte = all(`SELECT d.id, d.titel, d.status, ${UEBERNEHMEN.map((k) => `d.${k}`).join(', ')} FROM json_each(?) j JOIN dokumente d ON d.id = j.value
+      WHERE d.status <> 'papierkorb' ORDER BY j.key`, JSON.stringify([ids].flat().map(Number).filter((id) => id && id !== neuId)));
+    if (new Set(alte.map((d) => d.buchung_id).filter((b) => b != null)).size > 1) throw new Error('Die Dokumente gehören zu verschiedenen Buchungen und lassen sich nicht zusammenfügen.');
+    for (const [tabelle, spalte] of BILDVERWEISE) {
+      const r = get(`SELECT ${spalte} AS id FROM ${tabelle} WHERE ${spalte} IN (SELECT value FROM json_each(?)) LIMIT 1`, JSON.stringify(alte.map((d) => d.id)));
+      if (r) throw new Error(`„${alte.find((d) => d.id === r.id).titel}“ ist als Bild in Gebrauch (Titelbild, Inventar- oder Zählerfoto) und lässt sich nicht in ein PDF zusammenfügen.`);
+    }
+    return alte;
+  }
+
   // Removes records for good and returns their files, which the caller deletes (only from the recycle bin).
   function endgueltig(ids) {
     const dateien = [];
@@ -248,18 +268,20 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME }) {
       }
       return liste.length;
     }),
+    // Asked before the merged PDF is made, so a refused merge leaves no extra copy in the inbox.
+    dokumenteZusammenfuegbar: (ids) => { zusammenPruefen(ids); return true; },
     // Several documents were put together as one PDF (the pages of one bill): the new document takes over where the old
-    // ones belonged (house, unit, project, person, case, booking, type), the old ones go to the bin (30 days to undo).
+    // ones belonged (house, unit, project, person, case, booking, type) and what referred to them (inventory, proof of a
+    // duty, project item …); the old ones go to the bin (30 days to undo).
     dokumenteZusammengefuegt: (neuId, alteIds) => tx(() => {
       const neu = get(`SELECT * FROM dokumente WHERE id = ? AND status <> 'papierkorb'`, Number(neuId));
       if (!neu) throw new Error('Das zusammengefügte Dokument fehlt.');
-      const alte = [alteIds].flat().map(Number).filter((id) => id && id !== neu.id)
-        .map((id) => get(`SELECT * FROM dokumente WHERE id = ? AND status <> 'papierkorb'`, id)).filter(Boolean);
-      const buchungen = [...new Set(alte.map((d) => d.buchung_id).filter((b) => b != null))];
-      if (buchungen.length > 1) throw new Error('Die Dokumente gehören zu verschiedenen Buchungen und lassen sich nicht zusammenfügen.');
-      const felder = ['objekt_id', 'einheit_id', 'projekt_id', 'person_id', 'vorgang_id', 'buchung_id', 'typ', 'kategorie'];
+      const alte = zusammenPruefen(alteIds, neu.id);
+      const ids = JSON.stringify(alte.map((d) => d.id));
+      for (const { tabelle, spalte } of dokumentVerweise())
+        db.prepare(`UPDATE ${tabelle} SET ${spalte} = ? WHERE ${spalte} IN (SELECT value FROM json_each(?))`).run(neu.id, ids);
       const werte = {};
-      for (const k of felder) if (neu[k] == null) { const v = alte.find((d) => d[k] != null)?.[k]; if (v != null) werte[k] = v; }
+      for (const k of UEBERNEHMEN) if (neu[k] == null) { const v = alte.find((d) => d[k] != null)?.[k]; if (v != null) werte[k] = v; }
       if (alte.some((d) => d.status === 'abgelegt') || werte.buchung_id) werte.status = 'abgelegt';
       const keys = Object.keys(werte);
       if (keys.length) db.prepare(`UPDATE dokumente SET ${keys.map((k) => `${k} = ?`).join(', ')} WHERE id = ?`).run(...keys.map((k) => werte[k]), neu.id);

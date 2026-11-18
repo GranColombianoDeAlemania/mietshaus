@@ -211,7 +211,7 @@ module.exports = function kennzahlen({ all, get, PERSON_NAME, bh, aw, ab, vw, dl
         const r = vw.indexBerechnung(v.id, null, plusTage(stichtag, 3));
         if (r.neue_miete_ct > r.alte_miete_ct) out.push({ art: 'index', ab: r.frueheste_wirkung, alt_ct: r.alte_miete_ct, neu_ct: r.neue_miete_ct, plus_ct: r.neue_miete_ct - r.alte_miete_ct,
           text: `Indexmiete (${r.basis_monat} → ${r.neu_monat}: +${prozentDe(r.aenderung_prozent)} %)`,
-          notiz: `Index ${r.neu_monat}: ${r.neu_wert} (Basis ${r.basis_monat}: ${r.basis_wert})` });
+          index_monat: r.neu_monat, notiz: `Index ${r.neu_monat}: ${r.neu_wert} (Basis ${r.basis_monat}: ${r.basis_wert})` });
       } catch { /* index values missing */ }
       return out;
     }

@@ -107,7 +107,7 @@ export function CockpitRadar(props: { c: Row; children?: ReactNode }) {
   const k = props.c.kosten;
   const teile = k.gruppen.length > 6 ? [...k.gruppen.slice(0, 5), { label: 'Übrige', ct: k.gruppen.slice(5).reduce((s: number, g: Row) => s + g.ct, 0) }] : k.gruppen;
   const vorbereiten = (x: Row) => {
-    sessionStorage.setItem('anpassungVorlage', JSON.stringify({ vertrag_id: x.vertrag_id, gueltig_ab: x.ab, grund: x.art === '558' ? 'erhoehung' : 'index', kaltmiete_ct: x.neu_ct, notiz: x.notiz ?? null }));
+    sessionStorage.setItem('anpassungVorlage', JSON.stringify({ vertrag_id: x.vertrag_id, gueltig_ab: x.ab, grund: x.art === '558' ? 'erhoehung' : 'index', kaltmiete_ct: x.neu_ct, index_monat: x.index_monat ?? null, notiz: x.notiz ?? null }));
     navi.zu({ seite: 'anpassung', objektId: x.objekt_id });
   };
   return (

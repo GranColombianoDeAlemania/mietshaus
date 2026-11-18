@@ -62,12 +62,26 @@ module.exports = function verwaltung({ db, all, get, tx, PERSON_NAME, bh }) {
 
     kautionsbewegungen: (kautionId) => all('SELECT * FROM kautionsbewegungen WHERE kaution_id = ? ORDER BY datum', kautionId),
 
-    // Simple annual interest on the balance since the last interest entry (for savings-account deposits).
+    // Interest of a savings-account deposit since the last interest entry, as the bank credits it: per day on that day's
+    // balance (top-ups and payouts count from their date), added to the deposit at each year's end (§ 551 Abs. 3 BGB:
+    // the returns increase the deposit). A full year gives exactly the rate, also in a leap year.
     kautionZinsVorschlag: (kautionId, bis) => {
-      const k = get('SELECT * FROM kautionen WHERE id = ?', kautionId);
-      const letzte = get(`SELECT max(datum) AS d FROM kautionsbewegungen WHERE kaution_id = ? AND art IN ('zinsen','einzahlung')`, kautionId).d;
-      if (!k?.zinssatz || !letzte) return 0;
-      return Math.max(0, Math.round(kautionStand(kautionId, bis) * k.zinssatz / 100 * tageZwischen(letzte, bis) / 365));
+      const satz = get('SELECT zinssatz FROM kautionen WHERE id = ?', kautionId)?.zinssatz;
+      const bew = all('SELECT datum, art FROM kautionsbewegungen WHERE kaution_id = ? AND datum <= ? ORDER BY datum', kautionId, bis);
+      if (!satz || !bew.length) return 0;
+      // Interest up to the last interest entry is booked; without one it runs from the first movement.
+      const von = bew.filter((b) => b.art === 'zinsen').at(-1)?.datum ?? bew[0].datum;
+      const stopps = [bis, ...bew.map((b) => b.datum).filter((d) => d > von)];
+      for (let j = Number(von.slice(0, 4)) + 1; j <= Number(bis.slice(0, 4)); j++) stopps.push(`${j}-01-01`);
+      // Up to the next stop the balance stays: the movements up to the day plus the interest credited so far.
+      let tag = von, offen = 0, gesamt = 0;
+      for (const s of [...new Set(stopps)].sort()) {
+        const j = Number(tag.slice(0, 4));
+        offen += Math.max(0, kautionStand(kautionId, tag) + gesamt) * satz / 100 * tageZwischen(tag, s) / tageZwischen(`${j}-01-01`, `${j + 1}-01-01`);
+        tag = s;
+        if (s.endsWith('-01-01')) { gesamt += Math.round(offen); offen = 0; }
+      }
+      return gesamt + Math.round(offen);
     },
 
     // ---------- indexed and stepped rent ----------
@@ -93,7 +107,9 @@ module.exports = function verwaltung({ db, all, get, tx, PERSON_NAME, bh }) {
       const m = get('SELECT * FROM mietmodelle WHERE vertrag_id = ?', vertragId);
       if (!m || m.art !== 'index') throw new Error('Für diesen Vertrag ist keine Indexmiete hinterlegt.');
       const letzte = get(`SELECT * FROM anpassungen WHERE vertrag_typ = 'miete' AND vertrag_id = ? AND grund = 'index' ORDER BY gueltig_ab DESC LIMIT 1`, vertragId);
-      const basisMonat = letzte?.notiz?.match(/Index (\d{4}-\d{2})/)?.[1] ?? m.basis_monat;
+      // The base is the index month of the last adjustment; the contract's base month would count that increase twice.
+      if (letzte && !letzte.index_monat) throw new Error(`Bei der Indexanpassung ab ${letzte.gueltig_ab.split('-').reverse().join('.')} fehlt der Indexmonat. Bitte dort eintragen.`);
+      const basisMonat = letzte ? letzte.index_monat : m.basis_monat;
       const alt = get('SELECT wert FROM indexwerte WHERE monat = ?', basisMonat)?.wert;
       const neuM = neuMonat ?? get('SELECT max(monat) AS m FROM indexwerte').m;
       const neu = get('SELECT wert FROM indexwerte WHERE monat = ?', neuM)?.wert;

@@ -379,6 +379,19 @@ How the depth was found: the installer of a personal finance program the user ow
 - The PDF is written by the app itself (src/pdfbau.ts, JPEG pages; no new package); PDF pages are read in the browser with pdf.js (loaded only then). E-invoice PDFs are not put together (their data would be lost). HEIC in a browser that cannot show it: new endpoint /api/jpeg converts it (signed-in only, nothing stored).
 - Fix: the document window after „Beleg fotografieren“ stuck out on the phone (preview and form side by side) – now one column.
 
+### 0.27.0 – fixes from a full review: roles, safe documents, exact sums
+
+- Documents a browser could run script in (XML, HTML, SVG – e.g. from the e-mail intake) open sandboxed (CSP sandbox, no script, not the app's origin); PDFs, pictures and videos unchanged.
+- Verwalter role (migration: the first active user with a password): only a Verwalter invites, locks, makes password links for others, names other Verwalter, downloads or restores backups. Everyone else changes only their own name and password and sees and ends only their own sessions. At least one active Verwalter stays. Emergency: `docker exec mietshaus node server/server.cjs passwort-link <login>`.
+- Deposit interest per day on that day's balance (top-ups and payouts from their date), credited at each year's end (§ 551 Abs. 3 BGB).
+- Indexed rent: the index month of an adjustment in its own column (migration takes it from the app's note); the next adjustment builds on it, a free-text note no longer matters. Missing month: a clear message instead of counting the increase twice.
+- Merging documents repoints what referred to the pages (all foreign keys to documents, from the schema); a picture in use (title, inventory or meter photo) stops the merge; the check runs before the PDF is made.
+- Inventory: GWG and book value with the house's input-tax setting, as in the Anlage V.
+- Cent shares by the largest remainder: shares of service charges, house money, budget plan, special levy and CO₂ credit add up exactly to the amount.
+- Anlage V: hint when the building has an AfA rate but no purchase date.
+- Private finances: „Differenz ausbuchen“ (reconciliation), payment history of a contract, price history of a security.
+- Inbox on the phone: 44 px tap areas for boxes and bin, own hint text. Tasks: delete in the embedded task sheet.
+
 ## Development
 
 ```

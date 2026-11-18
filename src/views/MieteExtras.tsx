@@ -140,14 +140,16 @@ function Anpassungen(props: { vertrag: Row; objekt: Row; vorlage?: Row | null; o
   const [liste, reload] = useLoad<Row[]>(() => call('anpassungen', 'miete', v.id), [v.id]);
   const [modell, ladeModell] = useLoad<Row | null>(() => call('mietmodell', v.id), [v.id]);
   const [edit, setEdit] = useState<Row | null>(() => (props.vorlage
-    ? { gueltig_ab: props.vorlage.gueltig_ab, grund: props.vorlage.grund, kaltmiete_ct: props.vorlage.kaltmiete_ct, notiz: props.vorlage.notiz ?? '' } : null));
+    ? { gueltig_ab: props.vorlage.gueltig_ab, grund: props.vorlage.grund, kaltmiete_ct: props.vorlage.kaltmiete_ct, index_monat: props.vorlage.index_monat ?? null, notiz: props.vorlage.notiz ?? '' } : null));
   const [index, setIndex] = useState<Row | null>(null);
   const [pruefung, setPruefung] = useState<Row | null>(null);
   const [briefFuer, setBriefFuer] = useState<Row | null>(null);
 
-  const felder: Field[] = [
+  // An index adjustment names its index month: the base of the next one (the note stays free text).
+  const felder = (r: Row): Field[] => [
     { key: 'gueltig_ab', label: 'Gültig ab', type: 'date', required: true },
     { key: 'grund', label: 'Grund', type: 'select', required: true, options: Object.entries(GRUENDE) },
+    ...(r.grund === 'index' ? [{ key: 'index_monat', label: 'Indexmonat der neuen Miete (JJJJ-MM)', required: true } as Field] : []),
     { key: 'kaltmiete_ct', label: 'Neue Kaltmiete', type: 'money' },
     { key: 'bk_vz_ct', label: 'Neue BK-Vorauszahlung', type: 'money' },
     { key: 'hk_vz_ct', label: 'Neue HK-Vorauszahlung', type: 'money' },
@@ -182,7 +184,7 @@ function Anpassungen(props: { vertrag: Row; objekt: Row; vorlage?: Row | null; o
         <div className="panel">
           <p>Index {index.basis_monat}: <b>{zahl(index.basis_wert)}</b> → {index.neu_monat}: <b>{zahl(index.neu_wert)}</b> ({zahl(+index.aenderung_prozent.toFixed(2))} %)</p>
           <p>Kaltmiete {euro(index.alte_miete_ct)} → <b>{euro(index.neue_miete_ct)}</b>, frühestens ab {datum(index.frueheste_wirkung)}.</p>
-          <button className="primary" onClick={() => { setEdit({ gueltig_ab: index.frueheste_wirkung, grund: 'index', kaltmiete_ct: index.neue_miete_ct, notiz: `Index ${index.neu_monat}: ${index.neu_wert} (Basis ${index.basis_monat}: ${index.basis_wert})` }); setIndex(null); }}>Als Anpassung übernehmen</button>
+          <button className="primary" onClick={() => { setEdit({ gueltig_ab: index.frueheste_wirkung, grund: 'index', kaltmiete_ct: index.neue_miete_ct, index_monat: index.neu_monat, notiz: `Index ${index.neu_monat}: ${index.neu_wert} (Basis ${index.basis_monat}: ${index.basis_wert})` }); setIndex(null); }}>Als Anpassung übernehmen</button>
         </div>
       )}
       {pruefung && (
@@ -208,6 +210,10 @@ function Anpassungen(props: { vertrag: Row; objekt: Row; vorlage?: Row | null; o
       {briefFuer && <AnpassungBrief v={v} a={briefFuer} objekt={props.objekt} anpassungen={liste ?? []} onClose={() => setBriefFuer(null)} onGeaendert={reload} />}
       {edit && <FormDialog title="Anpassung" row={edit} fields={felder}
         onSave={async (r) => {
+          if (r.grund === 'index') {
+            r.index_monat = String(r.index_monat ?? '').trim();
+            if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(r.index_monat)) throw new Error('Den Indexmonat bitte als JJJJ-MM eintragen, z. B. 2026-07.');
+          } else r.index_monat = null;
           if (r.grund === 'erhoehung' && r.kaltmiete_ct) {
             const p = await call('mieterhoehungPruefen', v.id, r.kaltmiete_ct, r.gueltig_ab);
             setPruefung(p);

@@ -11,6 +11,8 @@ function gleich(name, ist, soll) {
   console.log(`FEHLER ${name}\n   ist:  ${a}\n   soll: ${b}`);
   return false;
 }
+// The message a call is refused with ('kein Fehler' when it goes through).
+const fehlerVon = (f) => { try { f(); return 'kein Fehler'; } catch (e) { return e.message; } };
 
 // ---------- independent date helpers ----------
 const pad = (n) => String(n).padStart(2, '0');
@@ -87,8 +89,20 @@ db.indexwerteSetzen([['2025-09', 121.7], ['2026-07', 124.5]]);
 const idx = db.indexBerechnung(V.v4.id, '2026-07', '2026-08-20');
 gleich('Index neue Miete', idx.neue_miete_ct, Math.round(72000 * 124.5 / 121.7));
 gleich('Index frühestens (1 Jahr seit 10.10.2025 → 1.11.2026)', idx.frueheste_wirkung, '2026-11-01');
-ANPASSUNGEN.push({ v: 'v4', gueltig_ab: idx.frueheste_wirkung, grund: 'index', kaltmiete_ct: idx.neue_miete_ct, notiz: `Index 2026-07: 124.5 (Basis 2025-09: 121.7)` });
-for (const a of ANPASSUNGEN) db.save('anpassungen', { vertrag_typ: 'miete', vertrag_id: V[a.v].id, gueltig_ab: a.gueltig_ab, grund: a.grund, kaltmiete_ct: a.kaltmiete_ct, notiz: a.notiz ?? null });
+ANPASSUNGEN.push({ v: 'v4', gueltig_ab: idx.frueheste_wirkung, grund: 'index', kaltmiete_ct: idx.neue_miete_ct, index_monat: '2026-07', notiz: `Index 2026-07: 124.5 (Basis 2025-09: 121.7)` });
+for (const a of ANPASSUNGEN) db.save('anpassungen', { vertrag_typ: 'miete', vertrag_id: V[a.v].id, gueltig_ab: a.gueltig_ab, grund: a.grund, kaltmiete_ct: a.kaltmiete_ct, index_monat: a.index_monat ?? null, notiz: a.notiz ?? null });
+{
+  // The base of the next index adjustment is the index month of the last one, whatever its note says (free text).
+  const a = db.anpassungen('miete', V.v4.id).find((x) => x.grund === 'index');
+  db.save('anpassungen', { id: a.id, notiz: 'Erklärung per Einschreiben verschickt' });
+  db.indexwerteSetzen([['2027-07', 126.0]]);
+  const r = db.indexBerechnung(V.v4.id, '2027-07', '2027-08-20');
+  gleich('Index: Basis bleibt der Indexmonat der letzten Anpassung', [r.basis_monat, r.basis_wert], ['2026-07', 124.5]);
+  db.save('anpassungen', { id: a.id, index_monat: null });
+  gleich('Index: ohne Indexmonat eine klare Meldung', /fehlt der Indexmonat/.test(fehlerVon(() => db.indexBerechnung(V.v4.id, '2027-07'))), true);
+  db.save('anpassungen', { id: a.id, index_monat: '2026-07', notiz: `Index 2026-07: 124.5 (Basis 2025-09: 121.7)` });
+  db.indexwertLoeschen('2027-07');
+}
 
 // ---------- 3. Monthly debits ----------
 function betraegeAm(k, datum) {
@@ -211,7 +225,30 @@ for (const [durch, zugang, zum, rechtzeitig] of KUENDIGUNG) {
 const kaution = db.kautionAnlegen(V.v1.id);
 db.save('kautionen', { id: kaution, art: 'konto', zinssatz: 0.25 });
 db.save('kautionsbewegungen', { kaution_id: kaution, datum: '2020-04-01', art: 'einzahlung', betrag_ct: 234000 });
-gleich('Kautionszinsen bis 31.12.2025', db.kautionZinsVorschlag(kaution, '2025-12-31'), Math.round(234000 * 0.0025 * (tageInkl('2020-04-01', '2025-12-31') - 1) / 365));
+// Credited at each year's end and earning interest from then on (§ 551 Abs. 3 BGB):
+// 2020: 234000 × 0.25 % × 275/366 = 439.55 → 440 · 2021: 234440 × 0.25 % = 586.10 → 586 · 2022: 235026 → 587.57 → 588
+// 2023: 235614 → 589.04 → 589 · 2024: 236203 → 590.51 → 591 · 2025 to 30.12.: 236794 × 0.25 % × 364/365 = 590.36 → 590
+gleich('Kautionszinsen bis 31.12.2025 mit Zinseszins', db.kautionZinsVorschlag(kaution, '2025-12-31'), 440 + 586 + 588 + 589 + 591 + 590);
+{
+  // A top-up in the middle of the year keeps the half year before it; a payout lowers the balance from its date.
+  const k2 = db.kautionAnlegen(V.v5.id);
+  db.save('kautionen', { id: k2, art: 'konto', zinssatz: 1 });
+  db.save('kautionsbewegungen', { kaution_id: k2, datum: '2024-01-01', art: 'einzahlung', betrag_ct: 100000 });
+  db.save('kautionsbewegungen', { kaution_id: k2, datum: '2024-07-01', art: 'einzahlung', betrag_ct: 50000 });
+  // 182 days × 100000 × 1 % / 366 = 497.27 plus 183 days × 150000 × 1 % / 366 = 750.00
+  gleich('Kautionszinsen: Nachzahlung verliert den Zeitraum davor nicht', db.kautionZinsVorschlag(k2, '2024-12-31'), 1247);
+  db.save('kautionsbewegungen', { kaution_id: k2, datum: '2024-12-31', art: 'zinsen', betrag_ct: 1247 });
+  // From the interest entry: 1 day of 2024 on 151247 = 4.13 → 4 (credited), then 364 days of 2025 on 151251 = 1508.37
+  gleich('Kautionszinsen: ab der letzten Zinsbuchung', db.kautionZinsVorschlag(k2, '2025-12-31'), 4 + 1508);
+  const k3 = db.kautionAnlegen(V.v6.id);
+  db.save('kautionen', { id: k3, art: 'konto', zinssatz: 1 });
+  db.save('kautionsbewegungen', { kaution_id: k3, datum: '2024-01-01', art: 'einzahlung', betrag_ct: 100000 });
+  db.save('kautionsbewegungen', { kaution_id: k3, datum: '2024-07-01', art: 'auszahlung', betrag_ct: 40000 });
+  // 497.27 + 183 days × 60000 × 1 % / 366 = 300.00
+  gleich('Kautionszinsen: Auszahlung zählt ab ihrem Tag', db.kautionZinsVorschlag(k3, '2024-12-31'), 797);
+  db.remove('kautionen', k2);
+  db.remove('kautionen', k3);
+}
 
 // ---------- 8. Loan ----------
 const darlehen = db.darlehenSpeichern({ objekt_id: o, bank: 'Sparkasse', betrag_ct: 30000000, auszahlung: '2024-05-15', zinssatz: 3.5, tilgung_satz: 2, erste_rate: '2024-06-30' });
@@ -318,11 +355,22 @@ const nk = db.nkAbrechnung(o, '2025-01-01', '2025-12-31', { heizung: 'intern', v
   gleich('CO₂ kg/m²', +nk.co2.kg_pro_qm.toFixed(4), +kg.toFixed(4));
   gleich('CO₂ Stufe (42–47 kg → 70 %)', nk.co2.vermieter_prozent, 70);
   const heizGesamt = 987654;
+  // Shares in whole cents by the largest remainder (Hare-Niemeyer): each exact share rounded down, then the largest
+  // remainders (ties: in order) get one cent more until the shares add up to the amount.
+  const hare = (ct, gewichte, gesamt) => {
+    const genau = gewichte.map((g) => Math.abs(ct) * g / gesamt);
+    const teile = genau.map((x) => Math.floor(x));
+    const fehlt = Math.round(genau.reduce((a, b) => a + b, 0)) - teile.reduce((a, b) => a + b, 0);
+    [...genau.keys()].sort((a, b) => (genau[b] - teile[b]) - (genau[a] - teile[a]) || a - b).slice(0, fehlt).forEach((i) => teile[i]++);
+    return teile.map((t) => (ct < 0 ? -t : t));
+  };
+  const verteilt = Object.fromEntries(POSTEN.map(([l, ct, f, g]) => [l, hare(ct, seg.map(f), g)]));
+  const co2Je = hare(-Math.round(99000 * 70 / 100), seg.map((_, i) => verteilt[POSTEN[8][0]][i] + verteilt[POSTEN[9][0]][i]), heizGesamt);
+  gleich('NK: die Anteile jeder Kostenart ergeben genau ihren Betrag, auch die CO₂-Gutschrift', nk.posten.map((p, j) => nk.ergebnisse.reduce((s, e) => s + e.anteile[j].ct, 0)),
+    nk.posten.map((p) => p.gesamt_ct));
   for (const [i, s] of seg.entries()) {
-    const anteile = {};
-    for (const [l, ct, f, g] of POSTEN) anteile[l] = Math.round(ct * f(s) / g);
-    const heiz = anteile[POSTEN[8][0]] + anteile[POSTEN[9][0]];
-    const co2 = -Math.round(99000 * 70 / 100 * heiz / heizGesamt);
+    const anteile = Object.fromEntries(POSTEN.map(([l]) => [l, verteilt[l][i]]));
+    const co2 = co2Je[i];
     const kostenSoll = Object.values(anteile).reduce((x, y) => x + y, 0) + co2;
     // Advance payments charged (by due date) within the segment.
     let bk = 0, hk = 0;
@@ -408,6 +456,7 @@ const wa = db.wegAbrechnung(w, '2025-01-01', '2025-12-31');
     const kostenSoll = anteile.reduce((a, b) => a + b, 0);
     gleich(`WEG ${WE[x.e].b} ${x.von} Anteile/Ergebnis`, [e.anteile.map((a) => a.ct), e.kosten_ct, e.hausgeld_soll_ct, e.ergebnis_ct], [anteile, kostenSoll, hgNetto, kostenSoll - hgNetto]);
   }
+  gleich('WEG: die Anteile jedes Kontos ergeben genau seine Kosten', wa.posten.map((p, j) => wa.ergebnisse.reduce((s, e) => s + e.anteile[j].ct, 0)), wa.posten.map((p) => p.gesamt_ct));
   gleich('WEG Rücklage', [wa.ruecklage.anfang_ct, wa.ruecklage.zufuehrung_soll_ct, wa.ruecklage.entnahmen_ct, wa.ruecklage.ende_ct],
     [2000000, 12 * (6000 + 6000 + 7200 + 4800), 500000, 2000000 + 12 * 24000 - 500000]);
   // Budget plan 2026: monthly house money rounded up to whole euros, costs and reserve separately.
@@ -1284,7 +1333,22 @@ Stadtsparkasse München | IBAN DE02 7015 0000 0000 1234 56 | BIC SSKMDEMMXXX`;
     const neu3 = beleg('zusammen 2');
     t.dokumenteZusammengefuegt(neu3, [b1, s1]);
     gleich('Eine Seite gebucht: das neue Dokument hängt an der Buchung und ist abgelegt', [t.dokument(neu3).buchung_id, t.dokument(neu3).status], [bu1, 'abgelegt']);
-    t.dokumentLoeschen([s2, b2, neu2, neu3, zus]);
+    // What referred to a page (here the invoice of a kitchen in the inventory) refers to the merged document afterwards,
+    // so it survives the bin; a picture in use stops the merge before anything is made.
+    const r1 = beleg('Küche Seite 1', { objekt_id: ob });
+    const r2 = beleg('Küche Seite 2', { objekt_id: ob });
+    const inv = t.save('inventar', { objekt_id: ob, bezeichnung: 'Einbauküche', dokument_id: r2 });
+    const abgelehnt = (ids, muster) => muster.test(fehlerVon(() => t.dokumenteZusammenfuegbar(ids)));
+    gleich('Vorab-Prüfung: zwei Buchungen abgelehnt, Seiten ohne Buchung gehen', [abgelehnt([neu3, b2], /verschiedenen Buchungen/), t.dokumenteZusammenfuegbar([r1, r2])], [true, true]);
+    const neu4 = beleg('Küche zusammen');
+    t.dokumenteZusammengefuegt(neu4, [r1, r2]);
+    gleich('Zusammengefügt: das Inventar zeigt auf das neue Dokument', t.get('inventar', inv).dokument_id, neu4);
+    const foto = beleg('Hausfoto', { objekt_id: ob });
+    t.save('objekte', { id: ob, titelbild_id: foto });
+    gleich('Titelbild: nicht in ein PDF zusammenfügen', abgelehnt([foto, s2], /als Bild in Gebrauch/), true);
+    t.save('objekte', { id: ob, titelbild_id: null });
+    t.remove('inventar', inv);
+    t.dokumentLoeschen([s2, b2, neu2, neu3, zus, neu4, foto]);
     t.papierkorbLeeren(30, Date.now() + 31 * 864e5);
   }
 
@@ -1557,6 +1621,12 @@ Stadtsparkasse München | IBAN DE02 7015 0000 0000 1234 56 | BIC SSKMDEMMXXX`;
   gleich('Anlage V: Hinweis auf Anschaffung ohne Inventar', t.anlageV(ob, 2025).anschaffung_ohne_inventar_ct, 10500);
   t.save('inventar', { objekt_id: ob, einheit_id: e1, bezeichnung: 'Waschmaschine', kaufdatum: '2026-08-01', garantie_bis: require('../electron/zeit.cjs').heute().slice(0, 4) + '-12-31', preis_ct: 70000 });
   gleich('Inventar: Liste der Einheit mit Restwert', t.inventar(ob, e1).map((x) => [x.bezeichnung, x.restwert_ct != null]), [['Einbauküche', true], ['Waschmaschine', true]]);
+  // The inventory list and the Anlage V agree on the GWG limit: the 900 € paid are net once the house deducts input tax.
+  const herd = t.save('inventar', { objekt_id: ob, einheit_id: e1, bezeichnung: 'Herd', kategorie: 'geraet', kaufdatum: '2025-06-01', preis_ct: 90000, nutzungsdauer_jahre: 10 });
+  const gwg = () => [t.inventar(ob, e1).find((x) => x.id === herd).gwg, t.anlageV(ob, 2025).inventar.find((x) => x.id === herd).art === 'gwg'];
+  gleich('Ohne Vorsteuerabzug: 900 € brutto = 756 € netto, GWG in Liste und Anlage V', gwg(), [true, true]);
+  t.save('objekte', { id: ob, vorsteuer_quote: 100 });
+  gleich('Mit Vorsteuerabzug: 900 € netto, kein GWG – in Liste und Anlage V gleich', gwg(), [false, false]);
 }
 
 // ---------- 0.20: workflow templates ----------
@@ -1781,9 +1851,7 @@ Stadtsparkasse München | IBAN DE02 7015 0000 0000 1234 56 | BIC SSKMDEMMXXX`;
   const u = t.finUebersicht(A);
   gleich('Übersicht: Vermögen; Umbuchung ist weder Einnahme noch Ausgabe', [u.vermoegen_ct, u.ein_ct, u.aus_ct, u.sparquote], [895750, 300000, 4250, 98.6]);
   gleich('Verlauf: zwölf Monate, letzter ist heute', [u.verlauf.length, u.verlauf[11].vermoegen_ct, u.verlauf[10].vermoegen_ct], [12, 895750, 600000]);
-  gleich('Benutzer B sieht nichts von A', [t.finKonten(Bn).map((k) => k.name), t.finBuchungen(Bn).length, t.finUebersicht(Bn).vermoegen_ct], [['Giro B'], 0, 7700]);
-  const fehlerVon = (f) => { try { f(); return 'kein Fehler'; } catch (e) { return e.message; } };
-  gleich('B kann A nicht buchen, ändern oder löschen', [fehlerVon(() => t.finBuchungSpeichern(Bn, { konto_id: giro, datum: heute, betrag_ct: -1 })),
+  gleich('Benutzer B sieht nichts von A', [t.finKonten(Bn).map((k) => k.name), t.finBuchungen(Bn).length, t.finUebersicht(Bn).vermoegen_ct], [['Giro B'], 0, 7700]);  gleich('B kann A nicht buchen, ändern oder löschen', [fehlerVon(() => t.finBuchungSpeichern(Bn, { konto_id: giro, datum: heute, betrag_ct: -1 })),
     fehlerVon(() => t.finBuchungLoeschen(Bn, essen)), fehlerVon(() => t.finKontoSpeichern(Bn, { id: giro, name: 'meins' })), fehlerVon(() => t.finBuchungSpeichern(Bn, { konto_id: fremd, datum: heute, betrag_ct: -1, kategorie_id: kat(A, 'Gehalt') }))],
     Array(4).fill('Diesen Eintrag gibt es nicht (mehr).'));
   gleich('Finanztabellen sind über save/liste nicht erreichbar', [fehlerVon(() => t.liste('fin_buchungen')), fehlerVon(() => t.save('fin_konten', { name: 'x' }))], ['Unbekannte Tabelle: fin_buchungen', 'Unbekannte Tabelle: fin_konten']);
@@ -1850,9 +1918,7 @@ Stadtsparkasse München | IBAN DE02 7015 0000 0000 1234 56 | BIC SSKMDEMMXXX`;
   const heute = require('../electron/zeit.cjs').heute();
   const monat = heute.slice(0, 7), jahr = heute.slice(0, 4);
   const plusT = (n) => new Date(Date.parse(`${heute}T12:00:00Z`) + n * 864e5).toISOString().slice(0, 10);
-  const U = 5;
-  const fehlerVon = (f) => { try { f(); return 'kein Fehler'; } catch (e) { return e.message; } };
-  const giro = t.finKontoSpeichern(U, { name: 'Giro', anfang_ct: 200000, dispo_ct: 50000, min_ct: 30000 });
+  const U = 5;  const giro = t.finKontoSpeichern(U, { name: 'Giro', anfang_ct: 200000, dispo_ct: 50000, min_ct: 30000 });
   const kat = (name) => t.finKategorien(U).find((c) => c.name === name).id;
   // Sub-categories.
   const auto = t.finKategorieSpeichern(U, { name: 'Tanken', art: 'ausgabe', eltern_id: kat('Mobilität') });

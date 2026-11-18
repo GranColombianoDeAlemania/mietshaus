@@ -12,7 +12,7 @@ const WK_GRUPPEN = [
 ];
 
 const { tageZwischen, einheitVonSql } = require('./buchhaltung.cjs');
-const { afaPosten } = require('./inventar.cjs');
+const { afaPosten, vorsteuerAbzug } = require('./inventar.cjs');
 const ortszeit = require('./zeit.cjs');
 const maxD = (a, b) => (a > b ? a : b);
 const minD = (a, b) => (a < b ? a : b);
@@ -117,6 +117,7 @@ module.exports = function auswertung({ db, all, get, tx, bh, ab }) {
     if (!o.kaufpreis_ct || !o.afa_satz) return 0;
     const basis = (o.kaufpreis_ct + (o.kaufnebenkosten_ct ?? 0)) * (o.gebaeudeanteil ?? 100) / 100;
     const voll = Math.round(basis * o.afa_satz / 100);
+    // Without a purchase date neither the first year nor the end can be told: the full rate, and the Anlage V asks for the date.
     if (!o.kaufdatum) return voll;
     const kaufjahr = Number(o.kaufdatum.slice(0, 4));
     if (kaufjahr > jahr) return 0;
@@ -180,7 +181,7 @@ module.exports = function auswertung({ db, all, get, tx, bh, ab }) {
     const zinsRegel = manuell.zins_anteil != null ? `eigener Satz ${String(manuell.zins_anteil).replace('.', ',')} %` : 'nach Fläche, änderbar';
     const afaGesamt = afa(o, jahr);
     // Inventory: items of a unit count for the days it was let (or vacant), the house's own items by the rented share.
-    const mitVorsteuer = (o.vorsteuer_quote ?? 0) > 0;
+    const mitVorsteuer = vorsteuerAbzug(o.vorsteuer_quote);
     const T = tageZwischen(von, bis) + 1;
     let afaInventar = 0, afaInventarAbsetzbar = 0, inventarGekauft = 0;
     const inventarPosten = [];

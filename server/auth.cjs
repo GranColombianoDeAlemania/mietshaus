@@ -43,8 +43,12 @@ module.exports = function auth(rawDb) {
   const pruefePasswort = (p) => {
     if (typeof p !== 'string' || p.length < 10) throw new Error('Das Passwort braucht mindestens 10 Zeichen.');
   };
-  const oeffentlich = (b) => b && { id: b.id, login: b.login, name: b.name, aktiv: !!b.aktiv, claude: !!b.claude_token_hash, erstellt: b.erstellt,
+  const oeffentlich = (b) => b && { id: b.id, login: b.login, name: b.name, aktiv: !!b.aktiv, verwalter: !!b.verwalter, claude: !!b.claude_token_hash, erstellt: b.erstellt,
     eingeladen: b.passwort_hash === KEIN_PASSWORT, einladung_bis: b.einladung_bis ?? null };
+  const anzahl = () => db().prepare('SELECT count(*) AS n FROM benutzer').get().n;
+  // At least one active Verwalter stays, else nobody could manage the users any more.
+  const letzterVerwalter = (id) => !!db().prepare('SELECT verwalter FROM benutzer WHERE id = ? AND aktiv = 1').get(id)?.verwalter
+    && db().prepare('SELECT count(*) AS n FROM benutzer WHERE verwalter = 1 AND aktiv = 1 AND id <> ?').get(id).n === 0;
   const einladung = (id) => {
     const token = crypto.randomBytes(24).toString('base64url');
     const bis = new Date(Date.now() + EINLADUNG_TAGE * 864e5).toISOString();
@@ -53,17 +57,22 @@ module.exports = function auth(rawDb) {
   };
 
   return {
-    anzahl: () => db().prepare('SELECT count(*) AS n FROM benutzer').get().n,
+    anzahl,
     benutzer: (id) => oeffentlich(db().prepare('SELECT * FROM benutzer WHERE id = ? AND aktiv = 1').get(id)),
     liste: () => db().prepare('SELECT * FROM benutzer ORDER BY name').all().map(oeffentlich),
     anlegen: ({ login, name, passwort }) => {
       if (!/^[a-z0-9._-]{2,40}$/i.test(login ?? '')) throw new Error('Der Login darf nur Buchstaben, Ziffern, Punkt, Minus und Unterstrich enthalten (2–40 Zeichen).');
       pruefePasswort(passwort);
       if (db().prepare('SELECT 1 FROM benutzer WHERE login = ?').get(login)) throw new Error('Diesen Login gibt es schon.');
-      const r = db().prepare('INSERT INTO benutzer (login, name, passwort_hash) VALUES (?, ?, ?)').run(login, (name || login).trim(), hashen(passwort));
+      // The first user (who sets up the server) is the Verwalter.
+      const r = db().prepare('INSERT INTO benutzer (login, name, passwort_hash, verwalter) VALUES (?, ?, ?, ?)').run(login, (name || login).trim(), hashen(passwort), anzahl() === 0 ? 1 : 0);
       return Number(r.lastInsertRowid);
     },
-    aendern: (id, { name, passwort, aktiv }) => {
+    aendern: (id, { name, passwort, aktiv, verwalter }) => {
+      if (verwalter !== undefined) {
+        if (!verwalter && letzterVerwalter(id)) throw new Error('Mindestens ein aktiver Verwalter muss bleiben.');
+        db().prepare('UPDATE benutzer SET verwalter = ? WHERE id = ?').run(verwalter ? 1 : 0, id);
+      }
       if (passwort !== undefined) {
         pruefePasswort(passwort);
         db().prepare('UPDATE benutzer SET passwort_hash = ? WHERE id = ?').run(hashen(passwort), id);
@@ -73,6 +82,7 @@ module.exports = function auth(rawDb) {
       if (aktiv !== undefined) {
         if (!aktiv && db().prepare('SELECT count(*) AS n FROM benutzer WHERE aktiv = 1 AND id <> ?').get(id).n === 0)
           throw new Error('Mindestens ein Benutzer muss aktiv bleiben.');
+        if (!aktiv && letzterVerwalter(id)) throw new Error('Mindestens ein aktiver Verwalter muss bleiben.');
         db().prepare('UPDATE benutzer SET aktiv = ? WHERE id = ?').run(aktiv ? 1 : 0, id);
         if (!aktiv) db().prepare('DELETE FROM sitzungen WHERE benutzer_id = ?').run(id);
       }
@@ -140,10 +150,12 @@ module.exports = function auth(rawDb) {
       db().prepare('DELETE FROM sitzungen WHERE benutzer_id = ?').run(b.id);
       return oeffentlich(b);
     },
-    // Signed-in devices: an id (start of the token hash), user, device (browser) and last use.
-    sitzungen: (eigenesToken) => db().prepare(`SELECT substr(s.token_hash, 1, 16) AS id, s.token_hash = ? AS eigene, s.erstellt, s.zuletzt, s.geraet, b.name
-        FROM sitzungen s JOIN benutzer b ON b.id = s.benutzer_id ORDER BY s.zuletzt DESC`).all(sha(String(eigenesToken ?? ''))).map((x) => ({ ...x, eigene: !!x.eigene })),
-    sitzungBeendenId: (id) => db().prepare(`DELETE FROM sitzungen WHERE substr(token_hash, 1, 16) = ?`).run(String(id)),
+    // Signed-in devices: an id (start of the token hash), user, device (browser) and last use. With a user id only theirs
+    // (everyone but a Verwalter sees and ends only their own).
+    sitzungen: (eigenesToken, nurBenutzer = null) => db().prepare(`SELECT substr(s.token_hash, 1, 16) AS id, s.token_hash = ?1 AS eigene, s.erstellt, s.zuletzt, s.geraet, b.name
+        FROM sitzungen s JOIN benutzer b ON b.id = s.benutzer_id WHERE ?2 IS NULL OR s.benutzer_id = ?2 ORDER BY s.zuletzt DESC`)
+      .all(sha(String(eigenesToken ?? '')), nurBenutzer).map((x) => ({ ...x, eigene: !!x.eigene })),
+    sitzungBeendenId: (id, nurBenutzer = null) => db().prepare(`DELETE FROM sitzungen WHERE substr(token_hash, 1, 16) = ?1 AND (?2 IS NULL OR benutzer_id = ?2)`).run(String(id), nurBenutzer),
     bremse: bremse(),
   };
 };

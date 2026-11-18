@@ -555,14 +555,20 @@ export function Aufgabenblatt(props: {
       {eigen.dialoge}
     </>
   );
-  if (props.eingebettet) return <section className="blatt eingebettet" aria-label={d.titel ?? 'Aufgabe'}>{inhalt}</section>;
+  const loeschKnopf = !neu && <button type="button" className="link gefahr" onClick={loeschen}><I.Trash2 size={14} aria-hidden="true" /> Löschen</button>;
+  if (props.eingebettet) return (
+    <section className="blatt eingebettet" aria-label={d.titel ?? 'Aufgabe'}>
+      {inhalt}
+      {loeschKnopf && <div className="buttons blatt-fuss">{loeschKnopf}</div>}
+    </section>
+  );
   return (
     <Fenster onClose={props.onClose}>
       <div className="dialog breit blatt blatt-fenster">
         <FensterTitel className="sr-only">{neu ? (einkauf ? 'Neuer Artikel' : 'Neue Aufgabe') : d.titel}</FensterTitel>
         {inhalt}
         <div className="buttons">
-          {!neu && <button type="button" className="link gefahr" onClick={loeschen}><I.Trash2 size={14} aria-hidden="true" /> Löschen</button>}
+          {loeschKnopf}
           <span className="spacer" />
           {neu && !d.id ? <>
             <button type="button" onClick={props.onClose}>Abbrechen</button>

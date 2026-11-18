@@ -103,6 +103,8 @@ export function Einstellungen() {
   const [e, reload] = useLoad<Row>(() => call('einstellungen'), []);
   const [info] = useLoad(() => window.hv.info(), []);
   const [wiederherstellen, setWiederherstellen] = useState(false);
+  // On the server only a Verwalter downloads or restores the whole database (it holds every user's account).
+  const darfSichern = info?.modus !== 'server' || !!(info as Row | null)?.benutzer?.verwalter;
   const [werte, setWerte] = useState<Row>({});
   const [meldung, setMeldung] = useState('');
   const wert = (k: string) => werte[k] ?? e?.[k] ?? '';
@@ -173,13 +175,15 @@ export function Einstellungen() {
           }} /> Täglich automatisch sichern
         </label>
         <div className="buttons">
-          <button className="primary" onClick={async () => {
-            try {
-              const p = await window.hv.sicherung();
-              if (p) setMeldung(`Sicherung gespeichert: ${p}`);
-            } catch (err) { fehler(err); }
-          }}>Sicherung erstellen…</button>
-          <button onClick={() => setWiederherstellen(true)}>Sicherung wiederherstellen…</button>
+          {darfSichern ? <>
+            <button className="primary" onClick={async () => {
+              try {
+                const p = await window.hv.sicherung();
+                if (p) setMeldung(`Sicherung gespeichert: ${p}`);
+              } catch (err) { fehler(err); }
+            }}>Sicherung erstellen…</button>
+            <button onClick={() => setWiederherstellen(true)}>Sicherung wiederherstellen…</button>
+          </> : <span className="hinweis klein">Sicherungen herunterladen und einspielen darf nur ein Verwalter.</span>}
           {window.hvDesktop?.lokal && <button onClick={() => window.hv.sicherungsOrdnerOeffnen()}>Sicherungsordner öffnen</button>}
         </div>
         {wiederherstellen && <Wiederherstellen schliessen={() => setWiederherstellen(false)} />}
@@ -459,10 +463,14 @@ function Wiederherstellen(props: { schliessen: () => void }) {
   );
 }
 
-// Users of the server: all with the same rights. A new password ends that user's sessions.
+// Users of the server: all see and edit the same data; a Verwalter invites, locks and makes password links, everyone else
+// only a password link for themselves. A new password ends that user's sessions.
 function Benutzer() {
   const [liste, reload] = useLoad<Row[]>(() => call('benutzerListe'), []);
   const [ich] = useLoad(() => window.hv.info(), []);
+  const selbst = (ich as Row | null)?.benutzer as Row | undefined;
+  const verwalter = !!selbst?.verwalter;
+  const verwalterNamen = (liste ?? []).filter((b) => b.verwalter && b.aktiv).map((b) => b.name).join(', ');
   const [neu, setNeu] = useState({ login: '', name: '' });
   const [einladung, setEinladung] = useState<Einladung | null>(null);
   const [meldung, setMeldung] = useState('');
@@ -470,24 +478,30 @@ function Benutzer() {
     try { await fn(); setMeldung(text); reload(); } catch (err) { fehler(err); }
   };
   const zeigen = (b: Row, r: Row) =>
-    setEinladung({ name: b.name, login: b.login, token: r.token, bis: r.bis, adresse: location.origin, von: (ich as Row)?.benutzer?.name ?? 'Dein Verwalter', mitApp: !!window.hvDesktop });
+    setEinladung({ name: b.name, login: b.login, token: r.token, bis: r.bis, adresse: location.origin, von: selbst?.name ?? 'Dein Verwalter', mitApp: !!window.hvDesktop });
   return (
     <div className="block">
       <h3>Benutzer</h3>
-      <p className="hinweis">Alle Benutzer haben dieselben Rechte. Im Änderungsprotokoll steht, wer was geändert hat. Neue Personen lädst du ein:
-        sie bekommen ein Paket mit Anleitung und legen ihr Passwort selbst fest – kein Passwort muss weitergegeben werden.</p>
+      <p className="hinweis">Alle Benutzer sehen und bearbeiten dieselben Daten; im Änderungsprotokoll steht, wer was geändert hat.
+        {verwalter ? <> Personen einladen, Zugänge sperren und Passwort-Links erstellen dürfen nur Verwalter. Neue Personen bekommen ein Paket mit Anleitung
+          und legen ihr Passwort selbst fest – kein Passwort muss weitergegeben werden.</>
+          : <> Personen einladen und sperren dürfen nur Verwalter{verwalterNamen ? ` (${verwalterNamen})` : ''}. Einen neuen Passwort-Link für dich selbst erstellst du hier.</>}</p>
       <table className="klein">
         <thead><tr><th>Name</th><th>Benutzername</th><th>Status</th><th /></tr></thead>
         <tbody>{liste?.map((b) => (
           <tr key={b.id}><td>{b.name}</td><td>{b.login}</td>
-            <td>{!b.aktiv ? 'gesperrt' : b.eingeladen ? `eingeladen${b.einladung_bis ? ` (bis ${new Date(b.einladung_bis).toLocaleDateString('de-DE')})` : ''}` : 'aktiv'}{b.claude ? ' · Claude verbunden' : ''}</td>
+            <td>{!b.aktiv ? 'gesperrt' : b.eingeladen ? `eingeladen${b.einladung_bis ? ` (bis ${new Date(b.einladung_bis).toLocaleDateString('de-DE')})` : ''}` : 'aktiv'}{b.verwalter ? ' · Verwalter' : ''}{b.claude ? ' · Claude verbunden' : ''}</td>
             <td className="aktionen">
-              <button title="Neuer Einladungs-Link, z. B. bei vergessenem Passwort" onClick={() => tun(async () => zeigen(b, await call('einladungErneuern', b.id)), '')}>{b.eingeladen ? 'Einladung erneuern' : 'Passwort-Link'}</button>
-              <button onClick={() => tun(() => call('benutzerAendern', b.id, { aktiv: !b.aktiv }), b.aktiv ? 'Gesperrt.' : 'Wieder aktiv.')}>{b.aktiv ? 'Sperren' : 'Entsperren'}</button>
+              {(verwalter || b.id === selbst?.id) && <button title="Neuer Einladungs-Link, z. B. bei vergessenem Passwort" onClick={() => tun(async () => zeigen(b, await call('einladungErneuern', b.id)), '')}>{b.eingeladen ? 'Einladung erneuern' : 'Passwort-Link'}</button>}
+              {verwalter && <button onClick={() => tun(() => call('benutzerAendern', b.id, { aktiv: !b.aktiv }), b.aktiv ? 'Gesperrt.' : 'Wieder aktiv.')}>{b.aktiv ? 'Sperren' : 'Entsperren'}</button>}
+              {verwalter && b.aktiv && <button onClick={async () => {
+                if (!b.verwalter && !await bestaetigen(`${b.name} zum Verwalter machen? Verwalter können Personen einladen, sperren und für jeden ein neues Passwort setzen lassen.`)) return;
+                tun(() => call('benutzerAendern', b.id, { verwalter: !b.verwalter }), b.verwalter ? 'Kein Verwalter mehr.' : 'Ist jetzt Verwalter.');
+              }}>{b.verwalter ? 'Verwalter-Recht entziehen' : 'Zum Verwalter machen'}</button>}
             </td></tr>
         ))}</tbody>
       </table>
-      {einladung ? <EinladungFertig e={einladung} schliessen={() => setEinladung(null)} /> : (
+      {einladung ? <EinladungFertig e={einladung} schliessen={() => setEinladung(null)} /> : verwalter && (
         <div className="panel">
           <b>Person einladen</b>
           <div className="maske">

@@ -30,12 +30,17 @@ const TYPEN = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '
   '.webmanifest': 'application/manifest+json', '.txt': 'text/plain; charset=utf-8', '.csv': 'text/csv; charset=utf-8', '.xml': 'application/xml', '.woff2': 'font/woff2', '.ico': 'image/x-icon', '.tif': 'image/tiff', '.tiff': 'image/tiff',
   '.mp4': 'video/mp4', '.m4v': 'video/mp4', '.mov': 'video/quicktime', '.webm': 'video/webm' };
 const SICHERHEIT = { 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'SAMEORIGIN', 'Cross-Origin-Opener-Policy': 'same-origin' };
+// Archive files come from outside (e-mail intake, uploads). Those a browser could run script in open sandboxed:
+// no script, no requests, not the app's origin. PDFs, pictures and videos stay as they are (the viewers need them so).
+const SKRIPTFAEHIG = new Set(['.html', '.htm', '.xhtml', '.xml', '.svg', '.xsl', '.xslt']);
+const ABGESCHOTTET = "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:";
 const MAX_UPLOAD = 300 * 1024 * 1024;
 // Functions answered by the server itself, not by the database API.
 const MEINE = new Set(['mitteilungen', 'mitteilungenUngelesen', 'mitteilungGelesen', 'alleMitteilungenGelesen', 'aufgabenListe', 'vorgangStatus', 'vorgangKommentieren']);
 const NUR_SERVER = new Set(['bildsucheStatus', 'bildsucheEinschalten', 'bildsucheAusschalten', 'benutzerListe', 'benutzerAnlegen', 'benutzerAendern', 'claudeToken', 'meineAufgaben', 'passkeyListe', 'passkeyLoeschen', 'personEinladen', 'einladungErneuern', 'kalenderAbo']);
 
 class Fehler extends Error { constructor(status, text) { super(text); this.status = status; } }
+const dbDatei = (daten) => path.join(daten, 'mietshaus.sqlite');
 
 /**
  * @param {object} o
@@ -55,7 +60,7 @@ class Fehler extends Error { constructor(status, text) { super(text); this.statu
 async function starten(o) {
   const daten = path.resolve(o.daten);
   fs.mkdirSync(daten, { recursive: true });
-  const dbFile = o.dbFile ?? path.join(daten, 'mietshaus.sqlite');
+  const dbFile = o.dbFile ?? dbDatei(daten);
   const dist = o.dist ?? path.join(__dirname, '..', 'dist');
   const dokumentOrdner = () => path.join(daten, 'dokumente');
   const vorschauOrdner = () => path.join(dokumentOrdner(), 'vorschau');
@@ -312,7 +317,9 @@ async function starten(o) {
     const p = path.join(ordner, path.basename(name));
     if (!fs.existsSync(p)) return json(res, 404, { fehler: 'Datei nicht gefunden.' });
     const groesse = fs.statSync(p).size;
-    const kopf = { 'Content-Type': TYPEN[path.extname(p).toLowerCase()] ?? 'application/octet-stream', 'Accept-Ranges': 'bytes', 'Cache-Control': 'private, max-age=3600', ...SICHERHEIT };
+    const ext = path.extname(p).toLowerCase();
+    const kopf = { 'Content-Type': TYPEN[ext] ?? 'application/octet-stream', 'Accept-Ranges': 'bytes', 'Cache-Control': 'private, max-age=3600', ...SICHERHEIT };
+    if (SKRIPTFAEHIG.has(ext)) kopf['Content-Security-Policy'] = ABGESCHOTTET;
     if (herunterladen) kopf['Content-Disposition'] = `attachment; filename*=UTF-8''${encodeURIComponent(herunterladen)}`;
     const b = /^bytes=(\d*)-(\d*)$/.exec(String(req.headers.range ?? '').trim());
     if (b && (b[1] || b[2])) {
@@ -571,7 +578,7 @@ async function starten(o) {
         sicherung: { automatisch: e.auto_sicherung !== '0', letzte_auto: e.letzte_auto_sicherung ?? null, letzte_manuell: e.letzte_sicherung ?? null,
           anzahl: sich.length, bytes: sich.reduce((s2, x) => s2 + groesse(x.datei), 0), neueste: sich[0] ? { name: path.basename(sich[0].datei), zeit: sich[0].zeit } : null,
           test: JSON.parse(e.sicherungstest ?? 'null'), fehler: JSON.parse(e.letzter_sicherungsfehler ?? 'null') },
-        sitzungen: o.modus === 'server' ? auth.sitzungen(w.token) : [],
+        sitzungen: o.modus === 'server' ? auth.sitzungen(w.token, w.benutzer?.verwalter ? null : w.benutzer?.id) : [],
       });
     }
     if (post && p === '/api/sicherungstest') return json(res, 200, sicherungTesten());
@@ -603,7 +610,7 @@ async function starten(o) {
     }
     if (post && p === '/api/sitzung-beenden') {
       const { id } = await jsonLesen(req);
-      auth.sitzungBeendenId(id);
+      auth.sitzungBeendenId(id, w.benutzer?.verwalter ? null : w.benutzer?.id);
       return json(res, 200, { ok: true });
     }
     if (p.startsWith('/dateien/dokument/')) return datei(req, res, dokumentOrdner(), p.slice('/dateien/dokument/'.length), u.searchParams.get('name'));
@@ -727,6 +734,10 @@ async function starten(o) {
       return res.end(inhalt);
     }
     // ---------- backups ----------
+    // The whole database goes out (all users with their password hashes, everyone's private finances) or is replaced:
+    // only for a Verwalter, else restoring an older state would undo the roles.
+    if (/^\/api\/sicherung(\/pruefen|\/einspielen)?$/.test(p) && o.modus === 'server' && !w.benutzer?.verwalter)
+      throw new Fehler(403, 'Sicherungen herunterladen und einspielen darf nur ein Verwalter.');
     if (p === '/api/sicherung') {
       const name = `Mietshaus-Sicherung-${ortszeit.heute()}.sqlite`;
       const ziel = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'mietshaus-sich-')), name);
@@ -802,20 +813,29 @@ async function starten(o) {
     throw new Fehler(404, 'Unbekannte Adresse.');
   }
 
-  // User management: every user may manage users (same rights for all). Not possible in local mode.
+  // User management: a Verwalter manages all users; everyone else may change only their own name and password and get a
+  // password link for themselves. Not possible in local mode.
   function serverFunktion(fn, args, w) {
     if (fn === 'meineAufgaben') return o.modus === 'server' ? roh.meineAufgaben(w.benutzer.id) : [];
     if (fn === 'bildsucheStatus') return { an: dbSystem.einstellungen().bildsuche === '1', modell: bilder.vorhanden(), laden: bilder.ladestand(), groesse: BILDMODELL.groesse, ...roh.bildsucheZaehlen() };
     if (fn === 'bildsucheEinschalten') { dbSystem.setzeEinstellungen({ bildsuche: '1' }); bilder.herunterladen(); return true; }
     if (fn === 'bildsucheAusschalten') { dbSystem.setzeEinstellungen({ bildsuche: '0' }); if (args[0]?.modellLoeschen) bilder.loeschen(); return true; }
     if (o.modus !== 'server') throw new Fehler(400, 'Benutzer gibt es nur auf dem Server.');
+    // Allowed for a Verwalter, and for the user's own account where `eigenes` names it.
+    const nurVerwalter = (eigenes = null) => {
+      if (!w.benutzer?.verwalter && (eigenes === null || Number(eigenes) !== w.benutzer?.id)) throw new Fehler(403, 'Das darf nur ein Verwalter.');
+    };
     if (fn === 'benutzerListe') return auth.liste();
-    if (fn === 'benutzerAnlegen') return auth.anlegen(args[0] ?? {});
-    if (fn === 'benutzerAendern') return auth.aendern(Number(args[0]), args[1] ?? {});
+    if (fn === 'benutzerAnlegen') { nurVerwalter(); return auth.anlegen(args[0] ?? {}); }
+    if (fn === 'benutzerAendern') {
+      const { name, passwort, aktiv, verwalter } = args[1] ?? {};
+      nurVerwalter(aktiv === undefined && verwalter === undefined ? args[0] : null);
+      return auth.aendern(Number(args[0]), { name, passwort, aktiv, verwalter });
+    }
     if (fn === 'claudeToken') return auth.claudeToken(w.benutzer.id);
     if (fn === 'passkeyListe') return passkeys.liste(w.benutzer.id);
-    if (fn === 'personEinladen') return auth.einladen(args[0] ?? {});
-    if (fn === 'einladungErneuern') return auth.einladungErneuern(Number(args[0]));
+    if (fn === 'personEinladen') { nurVerwalter(); return auth.einladen(args[0] ?? {}); }
+    if (fn === 'einladungErneuern') { nurVerwalter(args[0]); return auth.einladungErneuern(Number(args[0])); }
     if (fn === 'passkeyLoeschen') return passkeys.loeschen(w.benutzer.id, args[0]);
     if (fn === 'kalenderAbo') return { token: auth.kalenderToken(w.benutzer.id) };
     throw new Fehler(400, `Unbekannte Funktion: ${fn}`);
@@ -859,17 +879,29 @@ async function starten(o) {
 module.exports = { starten, VERSION };
 
 // Started directly (container): node server/server.cjs  – settings from the environment.
+// Emergency, e.g. the only Verwalter forgot the password and has no passkey:
+//   sudo docker exec mietshaus node server/server.cjs passwort-link <login>
+// prints a one-time link to set a new password (as „Passwort-Link“ in the settings does).
 if (require.main === module) {
-  const { geraet } = require('../electron/geraet.cjs');
   const daten = process.env.MIETSHAUS_DATEN ?? '/daten';
-  starten({
-    modus: 'server', daten, port: Number(process.env.PORT ?? 8080), host: process.env.HOST ?? '0.0.0.0',
-    geraet: geraet(daten), eingang: process.env.MIETSHAUS_EINGANG || undefined,
-    mcp: require('./mcp-http.cjs').bearbeiten,
-  }).then((s) => {
-    console.log(`Mietshaus ${VERSION} läuft auf Port ${s.port}, Daten in ${daten}.`);
-    const ende = () => s.beenden().finally(() => process.exit(0));
-    process.on('SIGTERM', ende);
-    process.on('SIGINT', ende);
-  }).catch((e) => { console.error(e); process.exit(1); });
+  if (process.argv[2] === 'passwort-link') {
+    const db = open(dbDatei(daten));
+    const b = db.prepare('SELECT id, name FROM benutzer WHERE login = ? AND aktiv = 1').get(String(process.argv[3] ?? ''));
+    if (!b) { console.error('Kein aktiver Benutzer mit diesem Login.'); process.exit(1); }
+    const { token, bis } = authModul(() => db).einladungErneuern(b.id);
+    console.log(`Link für ${b.name}, gilt einmal bis ${bis.slice(0, 10)}:\nhttps://<Adresse des Servers>/?einladung=${encodeURIComponent(token)}`);
+    db.close();
+  } else {
+    const { geraet } = require('../electron/geraet.cjs');
+    starten({
+      modus: 'server', daten, port: Number(process.env.PORT ?? 8080), host: process.env.HOST ?? '0.0.0.0',
+      geraet: geraet(daten), eingang: process.env.MIETSHAUS_EINGANG || undefined,
+      mcp: require('./mcp-http.cjs').bearbeiten,
+    }).then((s) => {
+      console.log(`Mietshaus ${VERSION} läuft auf Port ${s.port}, Daten in ${daten}.`);
+      const ende = () => s.beenden().finally(() => process.exit(0));
+      process.on('SIGTERM', ende);
+      process.on('SIGINT', ende);
+    }).catch((e) => { console.error(e); process.exit(1); });
+  }
 }

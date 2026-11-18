@@ -12,6 +12,19 @@ const min = (a, b) => (a < b ? a : b);
 const CO2_STUFEN = [[12, 0], [17, 10], [22, 20], [27, 30], [32, 40], [37, 50], [42, 60], [47, 70], [52, 80], [Infinity, 95]];
 const co2Vermieteranteil = (kgProQm) => CO2_STUFEN.find(([grenze]) => kgProQm < grenze)[1];
 
+// Shares of an amount in whole cents for these segments, by the key r ({ wert, gesamt }; none: all 0). Rounding each
+// share on its own leaves a few cents over or missing; here the largest remainders (ties: in order) get the missing
+// cents, so the shares add up to the amount (to the part these segments carry). ct and the key values w per segment.
+function anteileCt(r, betrag, liste) {
+  if (!r?.gesamt) return { ct: liste.map(() => 0), w: liste.map(() => 0) };
+  const w = liste.map((s) => r.wert(s));
+  const exakt = w.map((x) => Math.abs(betrag) * x / r.gesamt);
+  const ct = exakt.map(Math.floor);
+  const rest = Math.round(exakt.reduce((a, b) => a + b, 0)) - ct.reduce((a, b) => a + b, 0);
+  [...ct.keys()].sort((a, b) => (exakt[b] - ct[b]) - (exakt[a] - ct[a])).slice(0, rest).forEach((i) => ct[i]++);
+  return { ct: betrag < 0 ? ct.map((c) => -c) : ct, w };
+}
+
 module.exports = function abrechnung({ db, all, get, tx, PERSON_NAME, bh }) {
   const vertragTabelle = (typ) => (typ === 'weg' ? 'eigentum' : 'mietverhaeltnisse');
 
@@ -162,12 +175,8 @@ module.exports = function abrechnung({ db, all, get, tx, PERSON_NAME, bh }) {
       const r = rechner(schluesselId, segmente);
       const p = posten.length;
       posten.push({ label, konto: k, gesamt_ct: betrag, schluessel: r?.k?.bezeichnung ?? '–', einheit: r?.k?.einheit ?? '', gesamt_einheiten: r?.gesamt ?? 0, ...extra });
-      segmente.forEach((s, i) => {
-        if (!r || !r.gesamt) return add(i, p, 0, 0);
-        const w = r.wert(s);
-        const ct = Math.round(betrag * w / r.gesamt);
-        add(i, p, s.vertrag && ausnahme.has(`${s.vertrag.id}:${k?.id}`) ? 0 : ct, w);
-      });
+      const { ct, w } = anteileCt(r, betrag, segmente);
+      segmente.forEach((s, i) => add(i, p, s.vertrag && ausnahme.has(`${s.vertrag.id}:${k?.id}`) ? 0 : ct[i], w[i]));
     };
 
     const heizkonten = konten.filter((k) => k.heizkosten);
@@ -206,11 +215,11 @@ module.exports = function abrechnung({ db, all, get, tx, PERSON_NAME, bh }) {
       const heizIdx = posten.map((p, i) => (p.heizung || p.heizkosten ? i : -1)).filter((i) => i >= 0);
       const heizGesamt = heizIdx.reduce((s, i) => s + posten[i].gesamt_ct, 0) || 1;
       const p = posten.length;
-      posten.push({ label: `CO₂-Kostenanteil Vermieter (${prozent} %, ${kgProQm.toFixed(1).replace('.', ',')} kg CO₂/m²·a)`, gesamt_ct: -Math.round(o.co2_kosten_ct * prozent / 100), schluessel: 'Heizkostenanteil', einheit: '', gesamt_einheiten: 0, co2: true });
-      segmente.forEach((s, i) => {
-        const heiz = heizIdx.reduce((sum, j) => sum + (anteil.get(i)?.[j]?.ct ?? 0), 0);
-        add(i, p, -Math.round(o.co2_kosten_ct * prozent / 100 * heiz / heizGesamt), 0);
-      });
+      const gutschrift = -Math.round(o.co2_kosten_ct * prozent / 100);
+      posten.push({ label: `CO₂-Kostenanteil Vermieter (${prozent} %, ${kgProQm.toFixed(1).replace('.', ',')} kg CO₂/m²·a)`, gesamt_ct: gutschrift, schluessel: 'Heizkostenanteil', einheit: '', gesamt_einheiten: 0, co2: true });
+      const heiz = segmente.map((_, i) => heizIdx.reduce((sum, j) => sum + (anteil.get(i)?.[j]?.ct ?? 0), 0));
+      const { ct } = anteileCt({ wert: (h) => h, gesamt: heizGesamt }, gutschrift, heiz);
+      segmente.forEach((_, i) => add(i, p, ct[i], 0));
       co2 = { kg: o.co2_kg, kg_pro_qm: kgProQm, vermieter_prozent: prozent, kosten_ct: o.co2_kosten_ct };
     }
 
@@ -407,12 +416,11 @@ module.exports = function abrechnung({ db, all, get, tx, PERSON_NAME, bh }) {
       return { label: k.bezeichnung, konto: k, gesamt_ct: k.betrag_ct, umlagefaehig: !!k.umlagefaehig, p35a: k.p35a,
         schluessel: r?.k?.bezeichnung ?? '–', einheit: r?.k?.einheit ?? '', gesamt_einheiten: r?.gesamt ?? 0, r };
     });
+    // Shared over all segments (also those without an owner), so the shares add up to each account's costs.
+    const verteilt = posten.map((p) => anteileCt(p.r, p.gesamt_ct, segmente));
     const ergebnisse = segmente.filter((s) => s.vertrag).map((s) => {
-      const anteile = posten.map((p) => {
-        if (!p.r || !p.r.gesamt) return { ct: 0, einheiten: 0 };
-        const w = p.r.wert(s);
-        return { ct: Math.round(p.gesamt_ct * w / p.r.gesamt), einheiten: w };
-      });
+      const i = segmente.indexOf(s);
+      const anteile = verteilt.map((v) => ({ ct: v.ct[i], einheiten: v.w[i] }));
       const konto = bh.kontoVon('weg', s.vertrag.id);
       const [hgSoll, rlSoll, suSoll] = konto ? vorauszahlungen(konto.id, ['hausgeld', 'ruecklage', 'sonderumlage'], s.von, s.bis) : [0, 0, 0];
       const kosten = anteile.reduce((sum, a) => sum + a.ct, 0);
@@ -516,10 +524,12 @@ module.exports = function abrechnung({ db, all, get, tx, PERSON_NAME, bh }) {
       return { konto_id: k.id, label: k.bezeichnung, gesamt_ct: p.betrag_ct, schluessel: r?.k?.bezeichnung ?? '–', r };
     });
     const rl = ruecklageCt ? schluessel(ruecklageSchluesselId ?? meaKey) : null;
-    const zeilen = einheiten.map((s) => {
-      const anteile = posten.map((p) => (p.r && p.r.gesamt ? Math.round(p.gesamt_ct * p.r.wert(s) / p.r.gesamt) : 0));
+    const verteilt = posten.map((p) => anteileCt(p.r, p.gesamt_ct, einheiten).ct);
+    const rlVerteilt = anteileCt(rl, ruecklageCt, einheiten).ct;
+    const zeilen = einheiten.map((s, i) => {
+      const anteile = verteilt.map((v) => v[i]);
       const kosten = anteile.reduce((a, b) => a + b, 0);
-      const rlAnteil = rl && rl.gesamt ? Math.round(ruecklageCt * rl.wert(s) / rl.gesamt) : 0;
+      const rlAnteil = rlVerteilt[i];
       const eigentum = get(`SELECT g.*, ${PERSON_NAME} AS name FROM eigentum g JOIN personen p ON p.id = g.person_id
         WHERE g.einheit_id = ? AND g.beginn <= ? AND (g.ende IS NULL OR g.ende = '' OR g.ende >= ?) ORDER BY g.beginn DESC LIMIT 1`, s.einheit.id, bis, von);
       return {
@@ -585,9 +595,10 @@ module.exports = function abrechnung({ db, all, get, tx, PERSON_NAME, bh }) {
       const ertrag = get(`SELECT id FROM konten WHERE objekt_id = ? AND klasse = 'einnahme' AND kategorie = 'sonderumlage' ORDER BY nr LIMIT 1`, objektId);
       const st = db.prepare(`INSERT INTO buchungen (objekt_id, datum, text, betrag_ct, soll_id, haben_id, art) VALUES (?, ?, ?, ?, ?, ?, 'soll')`);
       const out = [];
-      for (const s of segmente) {
+      const { ct: anteile } = anteileCt(r, betrag_ct, segmente);
+      for (const [i, s] of segmente.entries()) {
         const konto = bh.kontoVon('weg', s.vertrag.id);
-        const ct = Math.round(betrag_ct * r.wert(s) / r.gesamt);
+        const ct = anteile[i];
         if (konto && ct > 0) {
           st.run(objektId, datum, text, ct, konto.id, ertrag.id);
           out.push({ name: s.vertrag.name, einheit: s.einheit.bezeichnung, betrag_ct: ct });

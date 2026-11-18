@@ -12,6 +12,9 @@ const KATEGORIEN = [
 const GWG_GRENZE_NETTO_CT = 80000;
 // Net amount for the GWG limit: the price as paid includes 19 % VAT unless the house deducts input tax (then it is net).
 const netto = (preisCt, mitVorsteuer) => (mitVorsteuer ? preisCt : Math.round(preisCt / 1.19));
+// A house deducts input tax when its quota is above 0 (inventory and Anlage V go by this).
+const vorsteuerAbzug = (quote) => (quote ?? 0) > 0;
+const istGwg = (preisCt, mitVorsteuer) => netto(preisCt, mitVorsteuer) <= GWG_GRENZE_NETTO_CT;
 
 // Write-off of one item in a year (cents): [AfA of the year, kind]. In the year of disposal the AfA runs up to the
 // month of disposal; the remaining book value is deducted only when the item was scrapped (AfaA, § 7 Abs. 1 S. 7
@@ -22,7 +25,7 @@ function afaPosten(x, jahr, mitVorsteuer = false) {
   const abgangsjahr = x.abgang_am ? Number(x.abgang_am.slice(0, 4)) : null;
   if (kaufjahr > jahr || (abgangsjahr && abgangsjahr < jahr)) return [0, null];
   const basis = x.preis_ct;
-  if (netto(basis, mitVorsteuer) <= GWG_GRENZE_NETTO_CT) return [kaufjahr === jahr ? basis : 0, 'gwg'];
+  if (istGwg(basis, mitVorsteuer)) return [kaufjahr === jahr ? basis : 0, 'gwg'];
   const nd = Math.max(1, Number(x.nutzungsdauer_jahre) || 10);
   const voll = basis / nd;
   const kaufmonat = Number(x.kaufdatum.slice(5, 7));
@@ -46,13 +49,15 @@ function restwert(x, jahr, mitVorsteuer = false) {
 }
 
 module.exports = function inventar({ db, all, get, tx }) {
+  // GWG and book value as in the Anlage V: net prices when the house deducts input tax.
   const liste = (where, ...args) => {
     const jahr = Number(ortszeit.heute().slice(0, 4));
-    return all(`SELECT i.*, e.bezeichnung AS einheit, d.datei AS rechnung_datei, d.titel AS rechnung_titel, f.datei AS foto_datei
+    return all(`SELECT i.*, e.bezeichnung AS einheit, d.datei AS rechnung_datei, d.titel AS rechnung_titel, f.datei AS foto_datei, o.vorsteuer_quote
       FROM inventar i LEFT JOIN einheiten e ON e.id = i.einheit_id LEFT JOIN dokumente d ON d.id = i.dokument_id AND d.status <> 'papierkorb'
-      LEFT JOIN dokumente f ON f.id = i.foto_id AND f.status <> 'papierkorb'
+      LEFT JOIN dokumente f ON f.id = i.foto_id AND f.status <> 'papierkorb' LEFT JOIN objekte o ON o.id = i.objekt_id
       WHERE ${where} ORDER BY i.abgang_am IS NOT NULL, coalesce(e.nr, 0), i.bezeichnung`, ...args)
-      .map((x) => ({ ...x, restwert_ct: restwert(x, jahr), gwg: x.preis_ct && x.kategorie !== 'haustechnik' ? netto(x.preis_ct, false) <= GWG_GRENZE_NETTO_CT : null }));
+      .map(({ vorsteuer_quote: quote, ...x }) => ({ ...x, restwert_ct: restwert(x, jahr, vorsteuerAbzug(quote)),
+        gwg: x.preis_ct && x.kategorie !== 'haustechnik' ? istGwg(x.preis_ct, vorsteuerAbzug(quote)) : null }));
   };
   return {
     inventarKategorien: () => KATEGORIEN,
@@ -69,4 +74,4 @@ module.exports = function inventar({ db, all, get, tx }) {
   };
 };
 
-Object.assign(module.exports, { KATEGORIEN, afaPosten, restwert, netto, GWG_GRENZE_NETTO_CT });
+Object.assign(module.exports, { KATEGORIEN, afaPosten, restwert, netto, vorsteuerAbzug, GWG_GRENZE_NETTO_CT });

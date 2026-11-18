@@ -1096,6 +1096,20 @@ const MIGRATIONS = [
   // Several users in charge of a case: zustaendig stays the first one (old code and devices keep working), the others
   // are a JSON list of user ids here.
   `ALTER TABLE vorgaenge ADD COLUMN mit_zustaendig TEXT;`,
+  // A Verwalter manages the users (invite, lock, password links); everyone else only their own account.
+  // The first active user with a password (who set up the server) becomes the Verwalter.
+  `ALTER TABLE benutzer ADD COLUMN verwalter INTEGER NOT NULL DEFAULT 0;
+   UPDATE benutzer SET verwalter = 1 WHERE id = (SELECT id FROM benutzer WHERE aktiv = 1 ORDER BY passwort_hash = '!', id LIMIT 1);`,
+  // The index month behind an indexed rent adjustment (base of the next one) in its own column instead of the note,
+  // which stays free text. Existing adjustments take it from the note the app wrote („Index 2026-07: …“).
+  (db) => {
+    db.exec('ALTER TABLE anpassungen ADD COLUMN index_monat TEXT');
+    const st = db.prepare('UPDATE anpassungen SET index_monat = ? WHERE id = ?');
+    for (const a of db.prepare(`SELECT id, notiz FROM anpassungen WHERE grund = 'index' AND notiz IS NOT NULL`).all()) {
+      const m = /Index (\d{4}-\d{2})/.exec(a.notiz)?.[1];
+      if (m) st.run(m, a.id);
+    }
+  },
 ];
 
 // Tables without change time: the log itself, settings of this installation and page state.
@@ -1171,7 +1185,7 @@ const TABLES = {
   konten: ['objekt_id', 'nr', 'bezeichnung', 'klasse', 'kategorie', 'umlagefaehig', 'heizkosten', 'schluessel_id',
     'weg_schluessel_id', 'aus_ruecklage', 'p35a', 'iban', 'inaktiv'],
   anpassungen: ['vertrag_typ', 'vertrag_id', 'gueltig_ab', 'grund', 'kaltmiete_ct', 'bk_vz_ct', 'hk_vz_ct',
-    'sonstiges_ct', 'hausgeld_ct', 'ruecklage_ct', 'notiz'],
+    'sonstiges_ct', 'hausgeld_ct', 'ruecklage_ct', 'notiz', 'index_monat'],
   zaehler: ['objekt_id', 'einheit_id', 'art', 'nummer', 'ort', 'einheit', 'faktor', 'einbau', 'ausbau', 'eichung_bis', 'notiz'],
   zaehlerstaende: ['zaehler_id', 'datum', 'stand', 'notiz', 'dokument_id'],
   bankregeln: ['objekt_id', 'muster', 'konto_id'],

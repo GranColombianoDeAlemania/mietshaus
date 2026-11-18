@@ -305,7 +305,8 @@ export function Postfach() {
       </div>
       <p className="hinweis klein">
         Das Programm hat die Dokumente gelesen und Vorschläge eingetragen. Nichts wird abgelegt oder gebucht, bevor du es prüfst:
-        einzeln rechts, oder mehrere links anhaken und gemeinsam zuordnen. Alternativ in Claude Desktop: „Arbeite das Postfach im Mietshaus ab“.
+        <span className="postfach-breit"> einzeln rechts, oder mehrere links anhaken und gemeinsam zuordnen. Alternativ in Claude Desktop: „Arbeite das Postfach im Mietshaus ab“.</span>
+        <span className="postfach-schmal"> ein Dokument antippen und prüfen, oder mehrere anhaken und gemeinsam zuordnen.</span>
       </p>
       {liste && !liste.length ? (
         <div className="leerseite ablagezone alles-erledigt">
@@ -322,7 +323,7 @@ export function Postfach() {
               onChange={(e) => setAuswahl(e.target.checked ? Object.fromEntries((liste ?? []).map((x) => [x.id, true])) : {})} /> <b className="klein">Alle auswählen</b></label>}
             liProps={(x) => ({ draggable: true, title: 'Zum Zuordnen auf eine Person, Einheit oder Buchung ziehen',
               onDragStart: (e) => { e.dataTransfer.setData('application/x-hv-dokument', String(x.id)); e.dataTransfer.effectAllowed = 'link'; } })}
-            vor={(x) => <input type="checkbox" className="korb-haken" aria-label={`${x.titel} auswählen`} checked={!!auswahl[x.id]} onChange={(e) => setAuswahl({ ...auswahl, [x.id]: e.target.checked })} />}
+            vor={(x) => <label className="korb-haken"><input type="checkbox" aria-label={`${x.titel} auswählen`} checked={!!auswahl[x.id]} onChange={(e) => setAuswahl({ ...auswahl, [x.id]: e.target.checked })} /></label>}
             nach={(x) => <button className="link loeschen" title="In den Papierkorb" aria-label="In den Papierkorb" onClick={() => loeschen([x])}><SYMBOL.papierkorb size={15} /></button>}
             zeile={(x) => <>
               <b>{x.titel}</b>
@@ -396,6 +397,8 @@ function Stapel(props: { dokumente: Row[]; onFertig: () => void; onLoeschen: () 
     // Pages in the order they came in (the inbox shows the newest first).
     const docs = [...props.dokumente].sort((a, b) => a.id - b.id);
     try {
+      // A refused merge (pages of different bookings, a picture in use) is told before the PDF exists: no extra copy.
+      await call('dokumenteZusammenfuegbar', docs.map((d) => d.id));
       const dateien = await Promise.all(docs.map(async (d) => {
         const r = await fetch(`/dateien/dokument/${encodeURIComponent(d.datei)}`, { credentials: 'same-origin' });
         if (!r.ok) throw new Error(`„${d.titel}“ ließ sich nicht laden.`);
@@ -410,7 +413,13 @@ function Stapel(props: { dokumente: Row[]; onFertig: () => void; onLoeschen: () 
       setZusammenLaeuft(true);
       const [x] = await window.hv.importieren([r.datei], { status: 'postfach', typ: docs.find((d) => d.typ)?.typ ?? null });
       if (!x) return;
-      await call('dokumenteZusammengefuegt', x.id, docs.map((d) => d.id));
+      try {
+        await call('dokumenteZusammengefuegt', x.id, docs.map((d) => d.id));
+      } catch (e) {
+        // Refused after all (changed meanwhile): the new copy goes to the bin, unless the archive had that file before.
+        if (!x.doppelt) await window.hv.dokumentLoeschen(x.id).catch(() => {});
+        throw e;
+      }
       props.onFertig();
     } catch (e) { fehler(e); } finally { setZusammenLaeuft(false); }
   };

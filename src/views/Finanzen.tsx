@@ -10,6 +10,7 @@ import { FormDialog, type Field } from '../Form';
 import { Dialog, Tabs } from '../ui';
 import { bestaetigen, hinweis } from '../frage';
 import { leseKontoauszug } from '../bankformate';
+import { prozent as prozentKz } from '../zeiger';
 
 const KONTOART: [string, string][] = [['giro', 'Girokonto'], ['spar', 'Tagesgeld / Sparkonto'], ['bar', 'Bargeld'], ['karte', 'Kreditkarte'], ['depot', 'Depot'], ['kredit', 'Kredit / Darlehen'], ['sonstig', 'Sonstiges']];
 const VERTRAGSART = ['Miete', 'Strom / Gas', 'Internet / Telefon', 'Mobilfunk', 'Versicherung', 'Abo', 'Mitgliedschaft', 'Kredit', 'Sparplan', 'Gehalt', 'Sonstiges'];
@@ -408,6 +409,7 @@ export function FinDauer() {
   const [edit, setEdit] = useState<Row | null>(null);
   // The amount of this run when the contract's amount varies (asked in the app's own window, also in the Mac app).
   const [betrag, setBetrag] = useState<{ d: Row; text: string } | null>(null);
+  const [verlauf, setVerlauf] = useState<Row | null>(null);
   const aktiv = (konten ?? []).filter((k) => !k.archiviert);
   const felder = (f: Row): Field[] => [
     { key: 'empfaenger', label: 'Vertrag / Empfänger', required: true, wide: true },
@@ -456,7 +458,8 @@ export function FinDauer() {
                 onClick={async () => {
                   if (d.variabel) { setBetrag({ d, text: (Math.abs(d.betrag_ct) / 100).toFixed(2).replace('.', ',') }); return; }
                   try { await call('finDauerBuchen', d.id); reload(); } catch (e) { fehler(e); }
-                }}>Buchen</button>}</td>
+                }}>Buchen</button>}
+                <button className="link" title="Was bisher gezahlt wurde, je Jahr und wie sich der Betrag geändert hat" onClick={() => setVerlauf(d)}>Verlauf</button></td>
             </tr>
           ))}
           {rows && !rows.length && <tr><td colSpan={8} className="hinweis">Noch keine Verträge. Miete, Strom, Versicherungen und Abos hier einzutragen macht die Prognose möglich.</td></tr>}
@@ -479,7 +482,54 @@ export function FinDauer() {
           ende: r.ende, aktiv: r.aktiv ? 1 : 0, variabel: r.variabel ? 1 : 0, typ: r.typ, vertragsnummer: r.vertragsnummer, kundennummer: r.kundennummer, beginn: r.beginn,
           laufzeit_bis: r.laufzeit_bis, verlaengerung_monate: r.verlaengerung_monate, kuendigungsfrist_tage: r.kuendigungsfrist_tage, gekuendigt_am: r.gekuendigt_am, notiz: r.notiz })}
         onDelete={edit.id ? () => call('finDauerLoeschen', edit.id) : undefined} onClose={() => { setEdit(null); reload(); ladeErkannt(); }} />}
+      {verlauf && <DauerVerlauf d={verlauf} onClose={() => setVerlauf(null)} />}
     </section>
+  );
+}
+
+// What was really paid on a contract: the sum per year and each payment, with the change of the amount.
+function DauerVerlauf(props: { d: Row; onClose: () => void }) {
+  const [v] = useLoad<Row>(() => call('finDauerVerlauf', props.d.id), [props.d.id]);
+  return (
+    <Dialog titel={`Verlauf: ${props.d.empfaenger}`} onClose={props.onClose}>
+      {v && !v.zeilen.length && <p className="hinweis">Noch keine Zahlungen zu diesem Vertrag gebucht.</p>}
+      {!!v?.jahre.length && (
+        <table className="klein">
+          <thead><tr><th>Jahr</th><th className="num">Summe</th></tr></thead>
+          <tbody>{v.jahre.map((j: Row) => <tr key={j.jahr}><td>{j.jahr}</td><td className={zahlKlasse(j.summe_ct)}>{euro(j.summe_ct)}</td></tr>)}</tbody>
+        </table>
+      )}
+      {!!v?.zeilen.length && (
+        <table className="klein">
+          <thead><tr><th>Datum</th><th className="num">Betrag</th><th className="num">Änderung</th></tr></thead>
+          <tbody>{v.zeilen.map((z: Row, i: number) => {
+            const vorher = v.zeilen[i + 1]?.betrag_ct;
+            return <tr key={z.id}><td>{datum(z.datum)}</td><td className={zahlKlasse(z.betrag_ct)}>{euro(z.betrag_ct)}</td>
+              <td className="num">{vorher != null && vorher !== z.betrag_ct ? `${z.betrag_ct > vorher ? '+' : ''}${euro(z.betrag_ct - vorher)}` : ''}</td></tr>;
+          })}</tbody>
+        </table>
+      )}
+    </Dialog>
+  );
+}
+
+// The prices entered for a security, newest first, with the change to the price before.
+function Kursverlauf(props: { w: Row; onClose: () => void }) {
+  const [kurse] = useLoad<Row[]>(() => call('finKurse', props.w.id), [props.w.id]);
+  return (
+    <Dialog titel={`Kursverlauf: ${props.w.name}`} onClose={props.onClose}>
+      {kurse && !kurse.length && <p className="hinweis">Noch kein Kurs eingetragen. Jeder neue Kurs beim Bearbeiten bleibt hier im Verlauf.</p>}
+      {!!kurse?.length && (
+        <table className="klein">
+          <thead><tr><th>Datum</th><th className="num">Kurs</th><th className="num">Änderung</th></tr></thead>
+          <tbody>{kurse.map((k, i) => {
+            const vorher = kurse[i + 1]?.kurs_ct;
+            return <tr key={k.datum}><td>{datum(k.datum)}</td><td className="num">{euro(k.kurs_ct)}</td>
+              <td className={vorher && k.kurs_ct < vorher ? 'num negativ' : 'num'}>{vorher ? `${k.kurs_ct >= vorher ? '+' : ''}${prozentKz((k.kurs_ct / vorher - 1) * 100, 1)}` : ''}</td></tr>;
+          })}</tbody>
+        </table>
+      )}
+    </Dialog>
   );
 }
 
@@ -571,6 +621,11 @@ export function FinStammdaten() {
   const [regeln, ladeRegeln] = useLoad<Row[]>(() => call('finRegeln'), []);
   const [edit, setEdit] = useState<{ art: typeof tab; row: Row } | null>(null);
   const zu = () => { setEdit(null); ladeKonten(); ladeKat(); ladeRegeln(); };
+  // The difference to the bank's balance booked as a correction (better: enter the missing movement).
+  const ausbuchen = async (k: Row) => {
+    if (!await bestaetigen(`Die Differenz von ${euro(k.abgleich_ct)} als Korrektur am ${datum(k.bank_saldo_datum)} auf „${k.name}“ buchen? Danach stimmt der Stand mit der Bank überein.\n\nFehlt eine bestimmte Zahlung, trage besser sie ein.`, { ja: 'Ausbuchen' })) return;
+    try { await call('finAbgleich', k.id, { bank_saldo_ct: k.bank_saldo_ct, datum: k.bank_saldo_datum, ausgleichen: true }); ladeKonten(); } catch (e) { fehler(e); }
+  };
   return (
     <section>
       <div className="toolbar"><h1>Konten & Kategorien</h1><span className="spacer" />
@@ -584,7 +639,8 @@ export function FinStammdaten() {
           <tbody>
             {konten?.map((k) => <tr key={k.id} className={`klickbar${k.archiviert ? ' inaktiv' : ''}`} onClick={() => setEdit({ art: 'konten', row: k })}>
               <td><b>{k.name}</b>{k.gruppe && <span className="klein hinweis"> {k.gruppe}</span>}{!!k.archiviert && <span className="chip">archiviert</span>}</td><td>{KONTOART.find(([a]) => a === k.art)?.[1]}</td><td className="klein">{[k.bank, k.iban].filter(Boolean).join(' · ')}</td>
-              <td className="num">{k.buchungen}</td><td className={zahlKlasse(k.wert_ct)}>{euro(k.wert_ct)}{k.abgleich_ct ? <div className="klein fehlertext">Bank: {euro(k.bank_saldo_ct)} ({k.abgleich_ct > 0 ? '+' : ''}{euro(k.abgleich_ct)})</div> : k.bank_saldo_ct != null ? <div className="klein hinweis">abgeglichen {datum(k.bank_saldo_datum)}</div> : null}</td></tr>)}
+              <td className="num">{k.buchungen}</td><td className={zahlKlasse(k.wert_ct)}>{euro(k.wert_ct)}{k.abgleich_ct ? <div className="klein fehlertext">Bank: {euro(k.bank_saldo_ct)} ({k.abgleich_ct > 0 ? '+' : ''}{euro(k.abgleich_ct)})
+                {' '}<button className="link" onClick={(e) => { e.stopPropagation(); ausbuchen(k); }}>Differenz ausbuchen</button></div> : k.bank_saldo_ct != null ? <div className="klein hinweis">abgeglichen {datum(k.bank_saldo_datum)}</div> : null}</td></tr>)}
             {konten && !konten.length && <tr><td colSpan={5} className="hinweis">Noch kein Konto. Beginne mit dem Girokonto und seinem heutigen Kontostand als Anfangsbestand.</td></tr>}
           </tbody>
         </table>
@@ -645,6 +701,7 @@ export function FinVermoegen() {
   const [konten, ladeKonten] = useLoad<Row[]>(() => call('finKonten'), []);
   const [papiere, ladePapiere] = useLoad<Row[]>(() => call('finWertpapiere'), []);
   const [edit, setEdit] = useState<Row | null>(null);
+  const [kurse, setKurse] = useState<Row | null>(null);
   const aktiv = (konten ?? []).filter((k) => !k.archiviert);
   const depots = aktiv.filter((k) => k.art === 'depot'), kredite = aktiv.filter((k) => k.art === 'kredit' && k.saldo_ct < 0), laufend = aktiv.filter((k) => ['giro', 'spar', 'karte'].includes(k.art));
   const wert = (papiere ?? []).reduce((s, w) => s + w.wert_ct, 0), einstand = (papiere ?? []).reduce((s, w) => s + w.einstand_ct, 0);
@@ -657,11 +714,12 @@ export function FinVermoegen() {
         {!depots.length && <p className="hinweis klein">Für ein Depot legst du unter „Konten & Kategorien“ ein Konto der Art „Depot“ an. Kurse trägst du selbst ein; jeder neue Kurs bleibt im Verlauf.</p>}
         {!!papiere?.length && (
           <table>
-            <thead><tr><th>Wertpapier</th><th className="num">Stück</th><th className="num">Kurs</th><th className="num">Einstand</th><th className="num">Wert</th><th className="num">Gewinn / Verlust</th></tr></thead>
+            <thead><tr><th>Wertpapier</th><th className="num">Stück</th><th className="num">Kurs</th><th className="num">Einstand</th><th className="num">Wert</th><th className="num">Gewinn / Verlust</th><th /></tr></thead>
             <tbody>{papiere.map((w) => <tr key={w.id} className="klickbar" onClick={() => setEdit(w)}>
               <td><b>{w.name}</b><div className="klein hinweis">{[w.isin, w.konto].filter(Boolean).join(' · ')}</div></td><td className="num">{String(w.stueck).replace('.', ',')}</td>
               <td className="num">{w.kurs_ct != null ? euro(w.kurs_ct) : '–'}<div className="klein hinweis">{datum(w.kurs_datum)}</div></td><td className="num">{euro(w.einstand_ct)}</td><td className="num">{euro(w.wert_ct)}</td>
-              <td className={w.gewinn_ct != null && w.gewinn_ct < 0 ? 'num negativ' : 'num'}>{w.gewinn_ct != null ? `${w.gewinn_ct >= 0 ? '+' : ''}${euro(w.gewinn_ct)}${w.gewinn_prozent != null ? ` (${String(w.gewinn_prozent).replace('.', ',')} %)` : ''}` : '–'}</td></tr>)}</tbody>
+              <td className={w.gewinn_ct != null && w.gewinn_ct < 0 ? 'num negativ' : 'num'}>{w.gewinn_ct != null ? `${w.gewinn_ct >= 0 ? '+' : ''}${euro(w.gewinn_ct)}${w.gewinn_prozent != null ? ` (${String(w.gewinn_prozent).replace('.', ',')} %)` : ''}` : '–'}</td>
+              <td className="aktionen" onClick={(e) => e.stopPropagation()}><button className="link" onClick={() => setKurse(w)}>Kursverlauf</button></td></tr>)}</tbody>
           </table>
         )}
       </div>
@@ -674,6 +732,7 @@ export function FinVermoegen() {
           { key: 'kurs_ct', label: 'Aktueller Kurs je Stück', type: 'money' }, { key: 'kurs_datum', label: 'Kurs vom', type: 'date' }]}
         onSave={(r) => call('finWertpapierSpeichern', { ...r, konto_id: Number(r.konto_id), id: edit.id, kurs_ct: r.kurs_ct || null })}
         onDelete={edit.id ? () => call('finWertpapierLoeschen', edit.id) : undefined} onClose={() => { setEdit(null); ladePapiere(); ladeKonten(); }} />}
+      {kurse && <Kursverlauf w={kurse} onClose={() => setKurse(null)} />}
     </section>
   );
 }
