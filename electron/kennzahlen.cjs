@@ -23,6 +23,7 @@ const euro = (ct) => new Intl.NumberFormat('de-DE', { style: 'currency', currenc
 const datumDe = (iso) => (iso ? iso.slice(0, 10).split('-').reverse().join('.') : '');
 const prozentDe = (x, d = 1) => x.toLocaleString('de-DE', { minimumFractionDigits: d, maximumFractionDigits: d });
 const vertragTab = (typ) => (typ === 'weg' ? 'eigentum' : 'mietverhaeltnisse');
+const { KW, zeileSql } = require('./welt.cjs');
 const artenFuer = (modus) => (modus === 'weg' ? ['weg', 'gemischt'] : ['miete', 'gemischt']);
 // Full years between two dates (as for notice periods, § 573c BGB).
 const volleJahre = (von, bis) => {
@@ -833,24 +834,27 @@ module.exports = function kennzahlen({ all, get, PERSON_NAME, bh, aw, ab, vw, dl
       const k = `${x.datum}|${x.titel}`;
       if (!gesehen.has(k)) { gesehen.add(k); out.push(x); }
     };
-    for (const typ of ['miete', 'weg']) {
+    // Only the world being worked in (none: both, e.g. the subscription); every entry says its world.
+    const welt = get(`SELECT ${KW} AS w`)?.w ?? null;
+    const WELT = `coalesce((SELECT j.bereich FROM projekte j WHERE j.id = x.projekt_id), (SELECT CASE o.art WHEN 'weg' THEN 'weg' WHEN 'miete' THEN 'privat' END FROM objekte o WHERE o.id = x.objekt_id))`;
+    for (const typ of ['miete', 'weg'].filter((t) => !welt || (t === 'weg') === (welt === 'weg'))) {
       for (const f of fristen(objekteFuer(typ), typ, vorTag(von), tageZwischen(von, bis) + 1, Infinity)) {
         add({ datum: f.datum, titel: f.text, kurz: f.kurz ?? null, art: /^(Einzug|Auszug)/.test(f.text) ? 'umzug' : /Versammlung$|^Eigentümerversammlung/.test(f.text) ? 'termin' : 'frist',
-          wichtig: !!f.wichtig, ziel: f.ziel ?? null });
+          wichtig: !!f.wichtig, ziel: f.ziel ?? null, welt: typ === 'weg' ? 'weg' : 'privat' });
       }
     }
-    for (const t of all(`SELECT t.*, o.bezeichnung AS objekt FROM termine t LEFT JOIN objekte o ON o.id = t.objekt_id WHERE t.datum BETWEEN ? AND ?`, von, bis)) {
+    for (const t of all(`SELECT x.*, o.bezeichnung AS objekt, ${WELT} AS welt FROM termine x LEFT JOIN objekte o ON o.id = x.objekt_id WHERE x.datum BETWEEN ? AND ? AND ${zeileSql('x')}`, von, bis)) {
       add({ datum: t.datum, uhrzeit: t.uhrzeit || null, dauer_min: t.dauer_min ?? null, titel: t.titel, ort: t.ort || null, objekt: t.objekt, art: 'termin',
-        erledigt: !!t.erledigt, termin_id: t.id, ziel: { seite: 'kalender' } });
+        erledigt: !!t.erledigt, termin_id: t.id, ziel: { seite: 'kalender' }, welt: t.welt });
     }
-    for (const v of all(`SELECT v.*, o.bezeichnung AS objekt FROM vorgaenge v LEFT JOIN objekte o ON o.id = v.objekt_id
-        WHERE v.status <> 'erledigt' AND v.faellig BETWEEN ? AND ?`, von, bis)) {
+    for (const v of all(`SELECT x.*, o.bezeichnung AS objekt, ${WELT} AS welt FROM vorgaenge x LEFT JOIN objekte o ON o.id = x.objekt_id
+        WHERE x.status <> 'erledigt' AND x.faellig BETWEEN ? AND ? AND ${zeileSql('x')}`, von, bis)) {
       add({ datum: v.faellig, titel: v.titel, objekt: v.objekt, art: 'vorgang', wichtig: v.prioritaet === 1, meins: benutzerId != null && zustaendige.alle(v).includes(benutzerId),
-        zustaendig: v.zustaendig ?? null, ziel: { vorgang: v.id, objektId: v.objekt_id } });
+        zustaendig: v.zustaendig ?? null, ziel: { vorgang: v.id, objektId: v.objekt_id }, welt: v.welt });
     }
-    for (const a of all(`SELECT a.*, p.titel AS projekt FROM projektaufgaben a JOIN projekte p ON p.id = a.projekt_id
-        WHERE p.status <> 'abgeschlossen' AND a.fortschritt < 100 AND a.ende BETWEEN ? AND ?`, von, bis)) {
-      add({ datum: a.ende, titel: `${a.meilenstein ? 'Meilenstein' : 'Ende'}: ${a.titel}`, objekt: a.projekt, art: 'projekt', ziel: { projekt: a.projekt_id } });
+    for (const a of all(`SELECT a.*, p.titel AS projekt, p.bereich AS welt FROM projektaufgaben a JOIN projekte p ON p.id = a.projekt_id
+        WHERE p.status <> 'abgeschlossen' AND a.fortschritt < 100 AND a.ende BETWEEN ? AND ? AND (${KW} IS NULL OR p.bereich = ${KW})`, von, bis)) {
+      add({ datum: a.ende, titel: `${a.meilenstein ? 'Meilenstein' : 'Ende'}: ${a.titel}`, objekt: a.projekt, art: 'projekt', ziel: { projekt: a.projekt_id, welt: a.welt }, welt: a.welt });
     }
     return out.sort((a, b) => a.datum.localeCompare(b.datum) || String(a.uhrzeit ?? '').localeCompare(String(b.uhrzeit ?? '')));
   }

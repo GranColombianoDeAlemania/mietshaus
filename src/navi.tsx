@@ -2,19 +2,21 @@
 // people, units, contracts, accounts, documents and pages.
 import { createContext, useContext, useEffect, type ReactNode } from 'react';
 import type { Modus } from './api';
+import type { Welt } from './welt';
 
-export type Ort = { modus: Modus; seite: string; objektId: number | null; param?: string };
+// welt: Privat or WEG (src/welt.ts); modus: the tab within it (rental or WEG houses, projects, finances).
+export type Ort = { welt: Welt; modus: Modus; seite: string; objektId: number | null; param?: string };
 
 export type Ziel =
   | { person: number }
-  | { einheit: number }
+  | { einheit: number; welt?: Welt }
   | { vertrag: number; typ: 'miete' | 'weg' }
   | { konto: number }
   | { objekt: number }
   | { dokument: number; datei?: string }
   | { vorgang: number; objektId?: number | null }
-  | { projekt: number }
-  | { seite: string; objektId?: number | null; modus?: Modus; aktion?: string };
+  | { projekt: number; welt?: Welt }
+  | { seite: string; objektId?: number | null; modus?: Modus; welt?: Welt; aktion?: string };
 
 export type PfadTeil = { label: string; ziel?: Ziel };
 

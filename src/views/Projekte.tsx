@@ -1,6 +1,6 @@
 // Projects mode: overview with year plan, project list, schedule (Gantt), costs and budget, documents.
 import { useState } from 'react';
-import { betrag, call, datum, diesesJahr, euro, fehler, heute, personName, type Row } from '../api';
+import { betrag, call, datum, diesesJahr, euro, fehler, heute, personName, type Row, objekteDerWelt } from '../api';
 import { useLoad } from '../useLoad';
 import { L, useNavi } from '../navi';
 import { FormDialog, type Field } from '../Form';
@@ -9,6 +9,8 @@ import { Tabs } from '../ui';
 import { DokumentDialog } from './Archiv';
 import { Galerie } from '../Galerie';
 import { SYMBOL } from '../icons';
+import { bestaetigen } from '../frage';
+import { WELT_NAME } from '../welt';
 
 export const PROJEKT_STATUS: [string, string][] = [['planung', 'in Planung'], ['laufend', 'läuft'], ['pausiert', 'pausiert'], ['abgeschlossen', 'abgeschlossen']];
 const statusName = (s: string) => PROJEKT_STATUS.find(([k]) => k === s)?.[1] ?? s;
@@ -92,9 +94,16 @@ export function ProjektCockpit(props: { oeffne: (seite: string, id?: number) => 
 
 export function ProjektListe(props: { reload: () => void; oeffne: (seite: string, id?: number) => void }) {
   const [liste, reload] = useLoad<Row[]>(() => call('projektListe'), []);
-  const [objekte] = useLoad<Row[]>(async () => [...new Map([...await call('objekte', 'miete'), ...await call('objekte', 'weg')].map((o: Row) => [o.id, o])).values()], []);
+  const [objekte] = useLoad<Row[]>(objekteDerWelt, []);
   const [edit, setEdit] = useState<Row | null>(null);
   const [konten] = useLoad<Row[]>(async () => (edit?.objekt_id ? call('konten', edit.objekt_id) : []), [edit?.objekt_id]);
+  // A project sorted to the wrong world (only one without a house of this world's kind) moves to the other one.
+  const navi = useNavi();
+  const andere = navi.ort.welt === 'weg' ? 'privat' : 'weg';
+  const verschieben = async (p: Row) => {
+    if (!await bestaetigen(`„${p.titel}“ mit Zeitplan, Kosten und Dokumenten in die Welt ${WELT_NAME[andere]} verschieben? Es erscheint dann nur noch dort.`, { ja: `Nach ${WELT_NAME[andere]} verschieben` })) return;
+    try { await call('projektWelt', p.id, andere); reload(); props.reload(); } catch (e) { fehler(e); }
+  };
   return (
     <section>
       <div className="toolbar"><h1>Projekte</h1><span className="spacer" />
@@ -108,7 +117,8 @@ export function ProjektListe(props: { reload: () => void; oeffne: (seite: string
               <td><b>{p.titel}</b></td><td>{statusName(p.status)}</td><td>{p.objekt_id ? <L zu={{ objekt: p.objekt_id }}>{p.objekt}</L> : "eigenständig"}</td>
               <td className="num">{p.budget_ct != null ? euro(p.budget_ct) : ''}</td><td className="num">{euro(p.rechnungen_ct)}</td>
               <td className={`num ${p.budget_ct && p.prognose_ct > p.budget_ct ? 'fehlertext' : ''}`}>{euro(p.prognose_ct)}</td>
-              <td className="aktionen"><button onClick={() => props.oeffne('zeitplan', p.id)}>Öffnen</button><button onClick={() => setEdit(p)}>Bearbeiten</button></td>
+              <td className="aktionen"><button onClick={() => props.oeffne('zeitplan', p.id)}>Öffnen</button><button onClick={() => setEdit(p)}>Bearbeiten</button>
+                {(!p.objekt_id || p.objekt_art === 'gemischt') && <button className="link" title={`In die Welt ${WELT_NAME[andere]} verschieben`} onClick={() => verschieben(p)}>Nach {WELT_NAME[andere]}</button>}</td>
             </tr>
           ))}
           {liste && !liste.length && <tr><td colSpan={7} className="hinweis">Noch keine Projekte.</td></tr>}

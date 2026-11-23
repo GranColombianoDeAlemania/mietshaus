@@ -7,6 +7,7 @@ import { bestaetigen, frage } from './frage';
 import * as offline from './offline';
 import * as ausgang from './ausgang';
 import { mehrseitig } from './Seiten';
+import { weltKopf } from './welt';
 
 type DateiFilter = { name: string; extensions: string[] };
 type MenueEintrag = { id: string; label: string; enabled?: boolean } | '-';
@@ -98,7 +99,7 @@ export async function anfrage(pfad: string, opt: { methode?: string; json?: unkn
   try {
     r = await fetch(pfad, {
     method: methode, credentials: 'same-origin',
-    headers: { 'X-Mietshaus': '1', 'X-Client': CLIENT, 'X-Geraet': geraet().id, ...opt.kopf,
+    headers: { 'X-Mietshaus': '1', 'X-Client': CLIENT, 'X-Geraet': geraet().id, ...weltKopf(), ...opt.kopf,
       ...(opt.json !== undefined ? { 'Content-Type': 'application/json' } : opt.typ ? { 'Content-Type': opt.typ } : {}) },
     body: opt.json !== undefined ? JSON.stringify(opt.json) : opt.roh,
     });
@@ -243,8 +244,8 @@ const base64 = async (f: File) => {
   return btoa(s);
 };
 
-const hochladenDirekt = async (f: Blob, name: string, opt: Row) =>
-  (await anfrage(`/api/hochladen?name=${encodeURIComponent(name)}&opt=${encodeURIComponent(JSON.stringify(opt))}`, { roh: f, typ: 'application/octet-stream' })).json();
+const hochladenDirekt = async (f: Blob, name: string, opt: Row, kopf?: Record<string, string>) =>
+  (await anfrage(`/api/hochladen?name=${encodeURIComponent(name)}&opt=${encodeURIComponent(JSON.stringify(opt))}`, { roh: f, typ: 'application/octet-stream', kopf })).json();
 // Without a connection (or while changes wait) a file is kept on this device and sent later; until then it has a
 // provisional number and a preview from the device.
 async function hochladen(files: FileList | File[], opt0: Row = {}) {
@@ -256,7 +257,8 @@ async function hochladen(files: FileList | File[], opt0: Row = {}) {
       ergebnis.push(...(await hochladenDirekt(f, f.name, opt)));
     } catch (e) {
       if (!(e instanceof HttpFehler) || e.status !== 0) throw e;
-      const id = await ausgang.ablegen({ art: 'upload', blob: f, name: f.name, opt, schluessel: zufall(), titel: `Datei „${f.name}“` }) as number;
+      // Kept with the world it was added in (a document without house belongs to that world's inbox).
+      const id = await ausgang.ablegen({ art: 'upload', blob: f, name: f.name, opt, kopf: weltKopf(), schluessel: zufall(), titel: `Datei „${f.name}“` }) as number;
       ergebnis.push({ id, doppelt: false, name: f.name, datei: null, vorschau: URL.createObjectURL(f), offline: true });
       offlineGemerkt();
     }
@@ -295,7 +297,7 @@ async function aufrufSenden(fn: string, args: unknown[], kopf: Record<string, st
       // A read with a kept answer shows that at once; anything else is tried again after 1, 2 and 4 seconds.
       // Offline for a while already (in the cellar, on the road): no waiting – the change goes into the outbox at once.
       const langeWeg = zustand.wegSeit != null && Date.now() - zustand.wegSeit > 10_000;
-      if (versuch >= 3 || langeWeg || await offline.holen(fn, args)) {
+      if (versuch >= 3 || langeWeg || await offline.holen(`${kopf['X-Welt'] ?? ''}|${fn}`, args)) {
         throw Object.assign(new HttpFehler(0, 'Keine Verbindung zum Mietshaus-Server. Ob die Änderung gespeichert wurde, ist nicht sicher. '
           + 'Speichere nach dem Wiederverbinden einfach noch einmal, ohne etwas zu ändern – es wird dann nicht doppelt angelegt.'), { schluessel });
       }
@@ -313,8 +315,8 @@ export function brueckeEinrichten() {
       const r = await anfrage('/api/call', { json: { fn, args }, kopf: { ...kopf, 'X-Vorgang': schluessel } });
       return (await r.json()).wert;
     },
-    hochladen: async (blob, name, opt) => {
-      const [r] = await hochladenDirekt(blob, name, opt);
+    hochladen: async (blob, name, opt, kopf) => {
+      const [r] = await hochladenDirekt(blob, name, opt, kopf);
       const d2 = await jsonVon('/api/call', { fn: 'dokument', args: [r.id] }).catch(() => null);
       return { id: r.id, datei: d2?.wert?.datei ?? null };
     },
@@ -324,40 +326,43 @@ export function brueckeEinrichten() {
     plattform: d?.plattform ?? 'web',
     zoom: (f) => (d ? d.zoom(f) : void (document.documentElement.style.zoom = String(f))),
     call: async (fn, ...args0) => {
+      // The world being worked in, taken now (before anything waits): kept answers and waiting changes keep it.
+      const welt = weltKopf();
+      const merkName = `${welt['X-Welt']}|${fn}`;
       // Provisional numbers of records made offline and sent meanwhile are replaced by the real ones.
       const args = ausgang.umschreiben(args0);
       // While changes wait on this device, a new change queues behind them – their order counts.
       if (ausgang.schreibend(fn) && ausgang.wartend() > 0) {
-        const v = await ausgang.ablegen({ art: 'call', fn, args, kopf: {}, schluessel: zufall() });
+        const v = await ausgang.ablegen({ art: 'call', fn, args, kopf: welt, schluessel: zufall() });
         ausgang.senden();
         return v;
       }
       try {
-        const r = await aufrufSenden(fn, args);
+        const r = await aufrufSenden(fn, args, welt);
         const { wert } = await r.json();
-        if (r.headers.get('x-lesend') === '1') offline.merken(fn, args, wert);
+        if (r.headers.get('x-lesend') === '1') offline.merken(merkName, args, wert);
         return wert;
       } catch (e) {
         if (e instanceof HttpFehler && e.status === 0) {
           // No connection: reading shows the last kept answer (marked in the traffic light); a change is kept on this
           // device with its key and sent later.
-          const alt = await offline.holen(fn, args);
+          const alt = await offline.holen(merkName, args);
           if (alt) { zustand.offline = Math.min(zustand.offline ?? alt.zeit, alt.zeit); melden(); return alt.wert; }
           if (ausgang.schreibend(fn)) {
             offlineGemerkt();
-            return ausgang.ablegen({ art: 'call', fn, args, kopf: {}, schluessel: (e as HttpFehler & { schluessel?: string }).schluessel ?? zufall() });
+            return ausgang.ablegen({ art: 'call', fn, args, kopf: welt, schluessel: (e as HttpFehler & { schluessel?: string }).schluessel ?? zufall() });
           }
         }
         // A plausibility question of the server: asked here, then sent again as confirmed.
         if (e instanceof HttpFehler && e.bestaetigen) {
           if (!await bestaetigen(e.bestaetigen, { titel: 'Bitte prüfen', ja: 'Ja, so speichern' })) throw new StillerFehler('Nicht gespeichert.');
-          return (await (await aufrufSenden(fn, args, { 'X-Bestaetigt': '1' })).json()).wert;
+          return (await (await aufrufSenden(fn, args, { ...welt, 'X-Bestaetigt': '1' })).json()).wert;
         }
         if (!(e instanceof HttpFehler) || !e.konflikt) throw e;
         // Someone else changed the record meanwhile: overwrite on purpose, or keep theirs and see it.
         const wahl = await frage({ titel: 'Inzwischen geändert', text: <>{absatz(e.message)}{absatz('Speicherst du trotzdem, ersetzt deine Änderung die andere. Wenn du abbrichst, siehst du den neuen Stand und kannst deine Änderung dort noch einmal eintragen.')}</>,
           optionen: [{ id: 'neu', label: 'Abbrechen, neuen Stand zeigen' }, { id: 'ueber', label: 'Meine Änderung speichern', primary: true }] });
-        if (wahl === 'ueber') return (await (await aufrufSenden(fn, args, { 'X-Ueberschreiben': '1' })).json()).wert;
+        if (wahl === 'ueber') return (await (await aufrufSenden(fn, args, { ...welt, 'X-Ueberschreiben': '1' })).json()).wert;
         for (const h of hoerer.get('aktualisiert') ?? []) h(null);
         throw new StillerFehler('Nicht gespeichert.');
       }

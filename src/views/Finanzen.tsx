@@ -4,13 +4,14 @@
 // budgets, contracts and standing orders, evaluation with forecast, and the master data (accounts, categories, rules).
 import { useState, type ReactNode } from 'react';
 import * as I from 'lucide-react';
-import { call, datum, euro, fehler, heute, inTagen, type Row } from '../api';
+import { call, datum, euro, fehler, heute, inTagen, type Row, objekteDerWelt } from '../api';
 import { useLoad } from '../useLoad';
 import { FormDialog, type Field } from '../Form';
 import { Dialog, Tabs } from '../ui';
 import { bestaetigen, hinweis } from '../frage';
 import { leseKontoauszug } from '../bankformate';
 import { prozent as prozentKz } from '../zeiger';
+import { aktuelleWelt, WELT_NAME } from '../welt';
 
 const KONTOART: [string, string][] = [['giro', 'Girokonto'], ['spar', 'Tagesgeld / Sparkonto'], ['bar', 'Bargeld'], ['karte', 'Kreditkarte'], ['depot', 'Depot'], ['kredit', 'Kredit / Darlehen'], ['sonstig', 'Sonstiges']];
 const VERTRAGSART = ['Miete', 'Strom / Gas', 'Internet / Telefon', 'Mobilfunk', 'Versicherung', 'Abo', 'Mitgliedschaft', 'Kredit', 'Sparplan', 'Gehalt', 'Sonstiges'];
@@ -32,9 +33,11 @@ export function FinCockpit(props: { oeffne: (seite: string) => void }) {
   if (!d) return null;
   if (!d.konten.length) return (
     <section>
-      <div className="toolbar"><h1>Finanzen</h1></div>
+      <div className="toolbar"><h1>{aktuelleWelt() === 'weg' ? 'Geschäftsfinanzen' : 'Finanzen'}</h1></div>
       <Leer aktion={<button className="primary" onClick={() => props.oeffne('fstamm')}>Erstes Konto anlegen</button>}>
-        Hier verwaltest du dein privates Geld: Konten, Ausgaben nach Kategorien, Budgets, Verträge und Auswertungen. Nur du siehst diese Daten.
+        {aktuelleWelt() === 'weg'
+          ? 'Hier verwaltest du das Geld deiner Hausverwaltung: Geschäftskonto, Honorare, Bürokosten, Budgets und Auswertungen – getrennt von deinem privaten Geld und von den Konten der Eigentümergemeinschaften. Nur du siehst diese Daten.'
+          : 'Hier verwaltest du dein privates Geld: Konten, Ausgaben nach Kategorien, Budgets, Verträge und Auswertungen. Nur du siehst diese Daten.'}
       </Leer>
     </section>
   );
@@ -284,7 +287,7 @@ function Aufteilen(props: { buchung: Row; kategorien: Row[]; onClose: () => void
 function Uebergeben(props: { buchung: Row; onClose: () => void }) {
   const x = props.buchung;
   const [ziel, setZiel] = useState<'objekt' | 'projekt'>(x.betrag_ct < 0 ? 'projekt' : 'objekt');
-  const [objekte] = useLoad<Row[]>(async () => [...new Map([...await call('objekte', 'miete'), ...await call('objekte', 'weg')].map((o: Row) => [o.id, o])).values()], []);
+  const [objekte] = useLoad<Row[]>(objekteDerWelt, []);
   const [projekte] = useLoad<Row[]>(() => call<Row[]>('projektListe'), []);
   const [objektId, setObjektId] = useState<number | ''>('');
   const [projektId, setProjektId] = useState<number | ''>('');
@@ -321,7 +324,7 @@ function Uebergeben(props: { buchung: Row; onClose: () => void }) {
 // The other way: a movement of a house's bank account or a paid project invoice becomes a private movement.
 function Uebernehmen(props: { konten: Row[]; kategorien: Row[]; vorgabe?: number; onClose: () => void }) {
   const [art, setArt] = useState<'objekt' | 'projekt'>('objekt');
-  const [objekte] = useLoad<Row[]>(async () => [...new Map([...await call('objekte', 'miete'), ...await call('objekte', 'weg')].map((o: Row) => [o.id, o])).values()], []);
+  const [objekte] = useLoad<Row[]>(objekteDerWelt, []);
   const [projekte] = useLoad<Row[]>(() => call<Row[]>('projektListe'), []);
   const [id, setId] = useState<number | ''>('');
   const [kontoId, setKontoId] = useState<number | ''>(props.vorgabe ?? '');
@@ -626,6 +629,15 @@ export function FinStammdaten() {
     if (!await bestaetigen(`Die Differenz von ${euro(k.abgleich_ct)} als Korrektur am ${datum(k.bank_saldo_datum)} auf „${k.name}“ buchen? Danach stimmt der Stand mit der Bank überein.\n\nFehlt eine bestimmte Zahlung, trage besser sie ein.`, { ja: 'Ausbuchen' })) return;
     try { await call('finAbgleich', k.id, { bank_saldo_ct: k.bank_saldo_ct, datum: k.bank_saldo_datum, ausgleichen: true }); ladeKonten(); } catch (e) { fehler(e); }
   };
+  // An account sorted to the wrong world (private or business) moves with its movements; their categories stay behind.
+  const andere = aktuelleWelt() === 'weg' ? 'privat' : 'weg';
+  const verschieben = async (k: Row) => {
+    if (!await bestaetigen(`„${k.name}“ mit allen Buchungen, Daueraufträgen und Wertpapieren in die Welt ${WELT_NAME[andere]} verschieben?
+
+Die Kategorien der Buchungen gehören zu dieser Welt und werden geleert; Umbuchungen zu Konten, die hier bleiben, werden getrennt.`,
+      { ja: `Nach ${WELT_NAME[andere]} verschieben` })) return;
+    try { await call('finKontoWelt', k.id, andere); zu(); } catch (e) { fehler(e); }
+  };
   return (
     <section>
       <div className="toolbar"><h1>Konten & Kategorien</h1><span className="spacer" />
@@ -638,7 +650,8 @@ export function FinStammdaten() {
           <thead><tr><th>Konto</th><th>Art</th><th>Bank / IBAN</th><th className="num">Buchungen</th><th className="num">Kontostand</th></tr></thead>
           <tbody>
             {konten?.map((k) => <tr key={k.id} className={`klickbar${k.archiviert ? ' inaktiv' : ''}`} onClick={() => setEdit({ art: 'konten', row: k })}>
-              <td><b>{k.name}</b>{k.gruppe && <span className="klein hinweis"> {k.gruppe}</span>}{!!k.archiviert && <span className="chip">archiviert</span>}</td><td>{KONTOART.find(([a]) => a === k.art)?.[1]}</td><td className="klein">{[k.bank, k.iban].filter(Boolean).join(' · ')}</td>
+              <td><b>{k.name}</b>{k.gruppe && <span className="klein hinweis"> {k.gruppe}</span>}{!!k.archiviert && <span className="chip">archiviert</span>}
+                {' '}<button className="link klein" title={`In die Welt ${WELT_NAME[andere]} verschieben`} onClick={(e) => { e.stopPropagation(); verschieben(k); }}>Nach {WELT_NAME[andere]}</button></td><td>{KONTOART.find(([a]) => a === k.art)?.[1]}</td><td className="klein">{[k.bank, k.iban].filter(Boolean).join(' · ')}</td>
               <td className="num">{k.buchungen}</td><td className={zahlKlasse(k.wert_ct)}>{euro(k.wert_ct)}{k.abgleich_ct ? <div className="klein fehlertext">Bank: {euro(k.bank_saldo_ct)} ({k.abgleich_ct > 0 ? '+' : ''}{euro(k.abgleich_ct)})
                 {' '}<button className="link" onClick={(e) => { e.stopPropagation(); ausbuchen(k); }}>Differenz ausbuchen</button></div> : k.bank_saldo_ct != null ? <div className="klein hinweis">abgeglichen {datum(k.bank_saldo_datum)}</div> : null}</td></tr>)}
             {konten && !konten.length && <tr><td colSpan={5} className="hinweis">Noch kein Konto. Beginne mit dem Girokonto und seinem heutigen Kontostand als Anfangsbestand.</td></tr>}

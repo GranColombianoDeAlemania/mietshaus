@@ -1982,7 +1982,7 @@ Stadtsparkasse München | IBAN DE02 7015 0000 0000 1234 56 | BIC SSKMDEMMXXX`;
   gleich('Vertrag: Kündigung bis Laufzeitende minus Frist, bald fällig', [handy.kuendigen_bis, handy.vertragsstand], [plusT(10), 'bald']);
   const alt = v({ empfaenger: 'Fitness', laufzeit_bis: plusT(-20), verlaengerung_monate: 12, kuendigungsfrist_tage: 30 });
   gleich('Vertrag: abgelaufene Laufzeit hat sich verlängert', [alt.laufzeit_ende > heute, alt.vertragsstand], [true, 'ok']);
-  const weg = v({ empfaenger: 'Zeitung', laufzeit_bis: plusT(40), verlaengerung_monate: 12, kuendigungsfrist_tage: 30, gekuendigt_am: heute });
+  const weg = v({ empfaenger: 'Zeitung', laufzeit_bis: plusT(45), verlaengerung_monate: 12, kuendigungsfrist_tage: 30, gekuendigt_am: heute });
   gleich('Vertrag gekündigt: keine Frist mehr, Zahlungen enden mit der Laufzeit', [weg.vertragsstand, weg.kuendigen_bis, t.finKontoPrognose(U, giro, 400).punkte.filter((p) => p.text === 'Zeitung').length], ['gekuendigt', null, 2]);
   gleich('Übersicht: Kündigungsfrist steht an', t.finUebersicht(U).kuendigen.map((d) => d.empfaenger), ['Mobilfunk']);
   // Variable amount and history.
@@ -2035,6 +2035,37 @@ Stadtsparkasse München | IBAN DE02 7015 0000 0000 1234 56 | BIC SSKMDEMMXXX`;
   gleich('Vergleich zweier Zeiträume', [vg.a_ct, vg.b_ct, vg.diff_ct, vg.prozent], [6000, 9000, -3000, -33.3]);
   gleich('Anderer Benutzer: weder Teile noch Depot noch Tilgungsplan', [fehlerVon(() => t.finBuchungTeile(9, einkauf)), fehlerVon(() => t.finKurse(9, etf)), fehlerVon(() => t.finTilgungsplan(9, kredit)), t.finWertpapiere(9).length],
     ['Diesen Eintrag gibt es nicht (mehr).', 'Diesen Eintrag gibt es nicht (mehr).', 'Diesen Eintrag gibt es nicht (mehr).', 0]);
+}
+
+// ---------- 0.28: Jago – help topics, ideas and faults ----------
+{
+  const { THEMEN } = require('../electron/jago.cjs');
+  const seiten = new Set([...require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src', 'App.tsx'), 'utf8').matchAll(/\{ id: '([a-z]+)'/g)].map((m) => m[1]));
+  gleich('Jago: mindestens 250 Hilfethemen, jedes mit Antwort', [THEMEN.length >= 250, THEMEN.every((x) => x.titel && x.stichworte && x.antwort.length > 20)], [true, true]);
+  gleich('Jago: jedes Thema führt auf eine vorhandene Seite', THEMEN.filter((x) => !seiten.has(x.seite)).map((x) => x.titel), []);
+  gleich('Jago: Titel nicht doppelt', THEMEN.length - new Set(THEMEN.map((x) => x.titel)).size, 0);
+  const raw2 = open(':memory:');
+  const t = api(raw2);
+  const erstes = (frage) => t.jagoHilfe(frage)[0]?.titel ?? null;
+  gleich('Jago versteht typische Fragen', ['Wie mache ich die Nebenkostenabrechnung?', 'wo trage ich zählerstände ein', 'passwort vergessen', 'Kaution Zinsen', 'wie buche ich eine rechnung', 'kann ich das rückgängig machen'].map(erstes),
+    ['Nebenkostenabrechnung', 'Zählerstand erfassen', 'Passwort vergessen', 'Kautionszinsen', 'Rechnung buchen', 'Rückgängig']);
+  gleich('Jago: nur Füllwörter ergeben nichts', t.jagoHilfe('wie kann ich das'), []);
+  // Ideas and faults: everyone their own, a Verwalter all; on a Mac working alone (null) everything.
+  const ich = { id: 1, verwalter: false }, andere = { id: 2, verwalter: false }, chef = { id: 3, verwalter: true };
+  const f1 = t.rueckmeldungNeu(ich, { art: 'fehler', text: 'Postfach lädt nicht', seite: 'miete/postfach', diagnose: { geraet: 'iPhone · Safari', fehler: [{ zeit: '10:00', text: 'Server nicht erreichbar' }], wege: ['miete/uebersicht', 'miete/postfach'] } });
+  t.rueckmeldungNeu(andere, { art: 'idee', text: 'Zählerstände per Foto' });
+  gleich('Rückmeldung braucht Text und Art', [fehlerVon(() => t.rueckmeldungNeu(ich, { art: 'fehler', text: ' ' })), fehlerVon(() => t.rueckmeldungNeu(ich, { art: 'lob', text: 'x' }))],
+    ['Was ist passiert? Bitte kurz beschreiben.', 'Fehler oder Idee?']);
+  gleich('Rückmeldungen: jeder sieht seine, der Verwalter alle', [t.rueckmeldungen(ich).map((x) => x.text), t.rueckmeldungen(chef).length, t.rueckmeldungen(null).length, t.rueckmeldungenOffen(andere)],
+    [['Postfach lädt nicht'], 2, 2, 1]);
+  gleich('Fremde Rückmeldung nicht änderbar', fehlerVon(() => t.rueckmeldungAendern(andere, f1, { status: 'erledigt' })), 'Diese Rückmeldung gibt es nicht (mehr).');
+  t.rueckmeldungAendern(chef, f1, { status: 'erledigt', notiz: 'behoben in 0.28' });
+  const r = t.rueckmeldungen(ich)[0];
+  gleich('Erledigt mit Notiz und Diagnose', [r.status, r.notiz, !!r.erledigt_am, r.diagnose.geraet, r.version], ['erledigt', 'behoben in 0.28', true, 'iPhone · Safari', require('../package.json').version]);
+  t.rueckmeldungAendern(ich, f1, { status: 'offen' });
+  const text = t.rueckmeldungenText(chef);
+  gleich('Als Text: Fehler mit Gerät, Weg und Meldungen, dann Ideen', [/## Fehler \(1\)/.test(text), /iPhone · Safari/.test(text), /miete\/uebersicht → miete\/postfach/.test(text), /Server nicht erreichbar/.test(text), /## Ideen \(1\)/.test(text), text.indexOf('## Fehler') < text.indexOf('## Ideen')],
+    [true, true, true, true, true, true]);
 }
 
 console.log(`\nRechentest: ${ok} Prüfungen richtig, ${falsch} falsch.`);

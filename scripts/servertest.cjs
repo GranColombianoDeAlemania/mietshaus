@@ -87,6 +87,15 @@ function client(adresse) {
     pruefe('Ben macht sich nicht zum Verwalter', await verboten(ben.call('benutzerAendern', benId, { verwalter: true })));
     pruefe('Ben erstellt keinen Link für Anna', await verboten(ben.call('einladungErneuern', 1)));
     pruefe('Ben lädt niemanden ein', await verboten(ben.call('personEinladen', { login: 'mallory' })) && await verboten(ben.call('benutzerAnlegen', { login: 'mallory', passwort: 'mallory-passwort-1' })));
+    // Jago: everyone notes ideas and faults; Ben sees his own, Anna as Verwalter all.
+    const fb = await ben.call('rueckmeldungNeu', { art: 'fehler', text: 'Knopf reagiert nicht', seite: 'miete/postfach', diagnose: { geraet: 'Mac · Safari' } });
+    await anna.call('rueckmeldungNeu', { art: 'idee', text: 'Dunkler Kalender' });
+    pruefe('Jago: Ben sieht nur seine Rückmeldungen, Anna alle', (await ben.call('rueckmeldungen', {})).map((x) => x.text).join() === 'Knopf reagiert nicht'
+      && (await anna.call('rueckmeldungen', {})).length === 2 && (await ben.call('rueckmeldungen', {}))[0].von === 'Ben Becker');
+    pruefe('Jago: Ben ändert keine fremde Rückmeldung', await ben.call('rueckmeldungAendern', (await anna.call('rueckmeldungen', {})).find((x) => x.art === 'idee').id, { status: 'erledigt' })
+      .then(() => false, (e) => /gibt es nicht/.test(e.message)));
+    pruefe('Jago: Anna erledigt Bens Fehler, Hilfe antwortet', await anna.call('rueckmeldungAendern', fb, { status: 'erledigt' }).then(() => true, () => false)
+      && (await ben.call('jagoHilfe', 'Passwort vergessen'))[0]?.titel === 'Passwort vergessen');
     pruefe('Ben ändert seinen eigenen Namen', await ben.call('benutzerAendern', benId, { name: 'Ben Becker' }).then(() => true, () => false));
     // A backup holds every account: restoring an older one would undo the roles, downloading it gives all password hashes.
     pruefe('Ben lädt keine Sicherung herunter und spielt keine ein', (await ben.anfrage('/api/sicherung')).status === 403
@@ -494,6 +503,71 @@ function client(adresse) {
     pruefe('Finanzen: nicht über die allgemeine Liste lesbar', await ben.call('liste', 'fin_buchungen').then(() => false, (e) => /Unbekannte Tabelle/.test(e.message)));
   }
 
+  // ---------- two worlds (privat / WEG): what is made in one is not seen in the other, and nothing links across ----------
+  {
+    const inWelt = (welt) => async (fn, ...args) => {
+      const r = await anna.anfrage('/api/call', { methode: 'POST', kopf: welt ? { 'X-Welt': welt } : {}, json: { fn, args } });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.fehler);
+      return j.wert;
+    };
+    const privat = inWelt('privat'), weg = inWelt('weg'), beide = inWelt(null);
+    const abgelehnt = (p, muster) => p.then(() => false, (e) => muster.test(e.message));
+    const wegHaus = await weg('neuesObjekt', { bezeichnung: 'WEG Lindenhof', art: 'weg', plz: '10117', ort: 'Berlin' });
+
+    // Finances: own accounts and categories per world.
+    const gk = await weg('finKontoSpeichern', { name: 'Geschäftskonto', anfang_ct: 50000 });
+    pruefe('Welt: WEG-Konto nur in der WEG-Welt', (await weg('finKonten')).some((k) => k.id === gk) && !(await privat('finKonten')).some((k) => k.id === gk));
+    pruefe('Welt: WEG-Finanzen haben Geschäftskategorien', (await weg('finKategorien')).some((c) => c.name === 'Verwaltervergütung') && !(await privat('finKategorien')).some((c) => c.name === 'Verwaltervergütung'));
+    pruefe('Welt: privat nicht auf das WEG-Konto buchen', await abgelehnt(privat('finBuchungSpeichern', { konto_id: gk, datum: '2026-11-02', betrag_ct: -100 }), /gibt es nicht/));
+    const pb = await privat('finBuchungSpeichern', { konto_id: (await privat('finKonten'))[0].id, datum: '2026-11-03', betrag_ct: -2500, empfaenger: 'Baumarkt' });
+
+    // Projects: a project of the WEG world stays there.
+    const wp = await weg('save', 'projekte', { titel: 'Büroumbau', status: 'laufend' });
+    await privat('save', 'projekte', { titel: 'Gartenhaus', status: 'planung' });
+    pruefe('Welt: neues Projekt in der WEG-Welt', (await weg('projektListe')).some((p) => p.id === wp && p.bereich === 'weg') && !(await privat('projektListe')).some((p) => p.id === wp));
+    pruefe('Welt: Projekt der anderen Welt nicht zu öffnen', await abgelehnt(privat('projekt', wp), /Welt WEG/));
+    pruefe('Welt: ohne Welt (Claude) beide sichtbar', (await beide('projektListe')).some((p) => p.id === wp) && (await beide('projektListe')).some((p) => p.bereich === 'privat'));
+    pruefe('Welt: private Ausgabe nicht an ein WEG-Projekt übergeben', await abgelehnt(privat('finUebergeben', pb, { ziel: 'projekt', projekt_id: wp }), /Welt WEG|gibt es nicht/));
+    pruefe('Welt: Vorgang mit Miethaus und WEG-Projekt abgelehnt', await abgelehnt(beide('save', 'vorgaenge', { titel: 'Gemischt', objekt_id: o, projekt_id: wp }), /beiden Welten/));
+    pruefe('Welt: in der Miet-Welt kein Vorgang am WEG-Haus', await abgelehnt(privat('save', 'vorgaenge', { titel: 'Falsch', objekt_id: wegHaus }), /Welt WEG/));
+    const va = await privat('save', 'vorgaenge', { titel: 'Heizung prüfen', objekt_id: o });
+    const vb = await weg('save', 'vorgaenge', { titel: 'Beirat einladen', objekt_id: wegHaus });
+    const ids = async (f) => (await f('aufgabenListe', {})).map((v) => v.id);
+    pruefe('Welt: Aufgaben je Welt, ohne Welt alle', (await ids(privat)).includes(va) && !(await ids(privat)).includes(vb) && (await ids(weg)).includes(vb) && !(await ids(weg)).includes(va)
+      && (await ids(beide)).includes(va) && (await ids(beide)).includes(vb));
+    pruefe('Welt: Aufgabe trägt ihre Welt', (await beide('aufgabenListe', {})).find((v) => v.id === vb)?.welt === 'weg');
+
+    // Inbox: an unassigned document is in both worlds until sorted.
+    const up = await (await anna.anfrage(`/api/hochladen?name=welt.txt&opt=${encodeURIComponent(JSON.stringify({ status: 'postfach' }))}`, { methode: 'POST', roh: Buffer.from('Brief ohne Haus ' + Date.now()) })).json();
+    const doc = up[0].id;
+    const imPostfach = async (f) => (await f('dokumentListe', { status: 'postfach' })).some((d) => d.id === doc);
+    pruefe('Welt: unzugeordnetes Dokument in beiden Postfächern', await imPostfach(privat) && await imPostfach(weg));
+    await privat('dokumentWelt', doc, 'weg');
+    pruefe('Welt: nach „Gehört zu WEG“ nur noch dort', !(await imPostfach(privat)) && await imPostfach(weg) && (await privat('postfachAnderswo')) >= 1);
+    pruefe('Welt: Dokument der WEG-Welt nicht dem Miethaus zuordnen', await abgelehnt(weg('dokumentSpeichern', { id: doc, objekt_id: o }), /Welt Privat|beiden Welten/));
+
+    // Invoices: never booked onto another house's (another world's) accounts.
+    const inv = await (await anna.anfrage(`/api/hochladen?name=rechnung-welt.txt&opt=${encodeURIComponent(JSON.stringify({ objekt_id: o, status: 'postfach', typ: 'Rechnung' }))}`, { methode: 'POST', roh: Buffer.from('Rechnung Welt ' + Date.now()) })).json();
+    const kosten = (await privat('konten', o)).find((k) => k.klasse === 'kosten');
+    const wegGeld = (await weg('konten', wegHaus)).find((k) => k.klasse === 'geld');
+    pruefe('Welt: Miet-Rechnung nicht über ein WEG-Konto buchen', await abgelehnt(privat('belegBuchen', inv[0].id, { kosten_konto_id: kosten.id, geld_konto_id: wegGeld.id, betrag_ct: 1000 }), /beiden Welten|Welt WEG|nicht zu diesem Haus/));
+    pruefe('Welt: keine Buchung mit Konten zweier Häuser', await abgelehnt(beide('buchen', { objekt_id: o, datum: '2026-11-04', text: 'quer', positionen: [{ soll_id: kosten.id, haben_id: wegGeld.id, betrag_ct: 100 }] }), /nicht zu diesem Haus/));
+
+    // Claude's proposals and the server's own functions follow the world of the request.
+    const vw = await beide('vorschlagAnlegen', 'buchen', { objekt_id: wegHaus, datum: '2026-11-05', text: 'Test', positionen: [] }, 'Buchung am Lindenhof');
+    pruefe('Welt: Claude-Vorschlag nur in seiner Welt', (await weg('vorschlaege', 'offen')).some((v) => v.id === vw) && !(await privat('vorschlaege', 'offen')).some((v) => v.id === vw));
+    await weg('aufgabenListe', {});
+    pruefe('Welt: Serverfunktion mit der Welt der Anfrage', Array.isArray(await privat('meineAufgaben')));
+
+    // Moving: a project without a house can change worlds, an account too (with its movements).
+    await weg('projektWelt', wp, 'privat');
+    pruefe('Welt: Projekt verschoben', (await privat('projektListe')).some((p) => p.id === wp) && !(await weg('projektListe')).some((p) => p.id === wp));
+    await weg('finKontoWelt', gk, 'privat');
+    pruefe('Welt: Konto verschoben', (await privat('finKonten')).some((k) => k.id === gk) && !(await weg('finKonten')).some((k) => k.id === gk));
+    pruefe('Welt: Kalender nur der eigenen Welt', !(await privat('kalender', '2026-01-01', '2027-12-31')).some((x) => x.welt === 'weg'));
+  }
+
   // ---------- a receipt sent twice (connection lost while paying) is booked once ----------
   {
     const pr = await anna.call('save', 'projekte', { titel: 'Bon-Test', status: 'laufend' });
@@ -565,7 +639,7 @@ function client(adresse) {
   // ---------- 5b. status page ----------
   pruefe('Jetzt sichern', (await anna.anfrage('/api/jetzt-sichern', { methode: 'POST', json: {} })).ok);
   const test = await (await anna.anfrage('/api/sicherungstest', { methode: 'POST', json: {} })).json();
-  pruefe('Sicherungstest: wiederherstellbar', test.ok === true && test.zahlen?.objekte === 1, JSON.stringify(test));
+  pruefe('Sicherungstest: wiederherstellbar', test.ok === true && test.zahlen?.objekte === 2, JSON.stringify(test)); // the rented house and the WEG house
   const st = await (await anna.anfrage('/api/systemstatus')).json();
   pruefe('Status: Version, Platz, Sicherung', st.version && st.platz?.frei > 0 && st.sicherung.anzahl >= 1 && st.sicherung.test?.ok, JSON.stringify(st).slice(0, 300));
   pruefe('Status: Geräte mit eigenem markiert', st.sitzungen.length >= 2 && st.sitzungen.filter((x) => x.eigene).length === 1);

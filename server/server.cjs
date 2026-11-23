@@ -64,7 +64,8 @@ async function starten(o) {
   const dist = o.dist ?? path.join(__dirname, '..', 'dist');
   const dokumentOrdner = () => path.join(daten, 'dokumente');
   const vorschauOrdner = () => path.join(dokumentOrdner(), 'vorschau');
-  const SYSTEM = { quelle: 'app', geraet: o.geraet?.id ?? null, benutzer: null, ueberschreiben: null, rueckfrage: null };
+  // Background work (analysis, inbox, reminders, the calendar subscription) sees both worlds.
+  const SYSTEM = { quelle: 'app', geraet: o.geraet?.id ?? null, benutzer: null, ueberschreiben: null, rueckfrage: null, welt: null };
 
   let raw = null, roh = null;
   // Tests hand over a prepared database (o.verbindung = { raw, api }); restoring a backup then is not possible.
@@ -294,6 +295,8 @@ async function starten(o) {
   }
   const kontext = (req, w, quelle = 'app') => kontextSetzen(raw, { quelle: w.claude ? 'claude' : quelle, geraet: String(req.headers['x-geraet'] ?? '').slice(0, 80) || o.geraet?.id || null,
     benutzer: w.benutzer?.id ?? null, ueberschreiben: req.headers['x-ueberschreiben'] === '1' ? '1' : null,
+    // The world the user works in (electron/welt.cjs); none (Claude, a view of both) shows both.
+    welt: ['privat', 'weg'].includes(req.headers['x-welt']) ? req.headers['x-welt'] : null,
     // Plausibility questions for the app's own requests, unless just confirmed.
     rueckfrage: req.headers['x-bestaetigt'] === '1' ? null : '1' });
 
@@ -380,9 +383,12 @@ async function starten(o) {
     const args = fn === 'kalender' ? [argumente[0], argumente[1], w.benutzer?.id ?? null]
       // The bell shows only the signed-in user's notifications, and creating them is the server's business.
       // Private finances: every fin… function works on the signed-in user's rows only (electron/finanzen.cjs).
-      : MEINE.has(fn) || /^fin[A-Z]/.test(String(fn)) ? [w.benutzer?.id ?? null, ...argumente] : argumente;
+      : MEINE.has(fn) || /^fin[A-Z]/.test(String(fn)) ? [w.benutzer?.id ?? null, ...argumente]
+      // Jago's ideas and faults: everyone their own, a Verwalter all (electron/jago.cjs).
+        : /^rueckmeldung/.test(String(fn)) ? [w.benutzer ? { id: w.benutzer.id, verwalter: !!w.benutzer.verwalter } : null, ...argumente] : argumente;
     if (fn === 'mitteilungAnlegen') throw new Fehler(403, 'Nicht erlaubt.');
-    if (NUR_SERVER.has(fn)) return [await fachlich(() => serverFunktion(fn, args, w)), {}];
+    // The server's own functions (e.g. „Meine Aufgaben“) see this request's user and world too.
+    if (NUR_SERVER.has(fn)) { kontext(req, w); return [await fachlich(() => serverFunktion(fn, args, w)), {}]; }
     if (typeof fn !== 'string' || typeof roh[fn] !== 'function') throw new Fehler(400, `Unbekannte Funktion: ${fn}`);
     // Setting the context writes to temp.kontext: counted before, every read would look like a change (and
     // other windows would reload, which made them reload each other).
@@ -462,7 +468,8 @@ async function starten(o) {
       if (!b) throw new Fehler(404, 'Unbekannter Kalender.');
       const t = ortszeit.heute();
       const plus = (n) => new Date(Date.parse(`${t}T12:00:00Z`) + n * 864e5).toISOString().slice(0, 10);
-      const inhalt = ics(dbSystem.kalender(plus(-90), plus(365), b.id), { name: 'Mietshaus' });
+      // One subscription for both worlds; the WEG entries say so.
+      const inhalt = ics(dbSystem.kalender(plus(-90), plus(365), b.id).map((x) => (x.welt === 'weg' ? { ...x, titel: `WEG · ${x.titel}` } : x)), { name: 'Mietshaus' });
       res.writeHead(200, { 'Content-Type': 'text/calendar; charset=utf-8', 'Cache-Control': 'no-store', 'Content-Disposition': 'inline; filename="mietshaus.ics"', ...SICHERHEIT });
       return res.end(inhalt);
     }
@@ -525,7 +532,7 @@ async function starten(o) {
     if (p === '/mcp') {
       if (!o.mcp) throw new Fehler(404, 'Claude ist auf diesem Server nicht eingerichtet.');
       // Claude's tools run asynchronously: every access to the database marks the change as Claude's, for this user.
-      const k = { quelle: 'claude', geraet: o.geraet?.id ?? null, benutzer: w.benutzer?.id ?? null, ueberschreiben: null, rueckfrage: null };
+      const k = { quelle: 'claude', geraet: o.geraet?.id ?? null, benutzer: w.benutzer?.id ?? null, ueberschreiben: null, rueckfrage: null, welt: null };
       const dbClaude = new Proxy({}, { get: (_t, n) => { kontextSetzen(raw, k); return roh[n]; } });
       return o.mcp(req, res, dbClaude, { dokumente: dokumentOrdner(), aktualisiert: () => senden('aktualisiert') });
     }

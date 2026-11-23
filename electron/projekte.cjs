@@ -1,7 +1,8 @@
 const ortszeit = require('./zeit.cjs');
+const { KW, objektSql, zeileSql } = require('./welt.cjs');
 // Projects: schedule (Gantt), quotes, orders and invoices with budget control. A project can stand alone
 // or be linked to an object, in which case its invoices are booked in that object's ledger.
-module.exports = function projekte({ db, all, get, tx, bh }) {
+module.exports = function projekte({ db, all, get, tx, bh, wl }) {
   const summen = (projektId) => {
     const s = (art, extra = '') => get(`SELECT coalesce(sum(betrag_ct), 0) AS s FROM projektposten WHERE projekt_id = ? AND art = ? ${extra}`, projektId, art).s;
     return {
@@ -23,12 +24,13 @@ module.exports = function projekte({ db, all, get, tx, bh }) {
   };
 
   function projektListe() {
-    return all(`SELECT p.*, o.bezeichnung AS objekt, e.bezeichnung AS einheit,
+    return all(`SELECT p.*, o.bezeichnung AS objekt, o.art AS objekt_art, e.bezeichnung AS einheit,
         (SELECT min(beginn) FROM projektaufgaben a WHERE a.projekt_id = p.id) AS plan_beginn,
         (SELECT max(ende) FROM projektaufgaben a WHERE a.projekt_id = p.id) AS plan_ende,
         (SELECT round(avg(fortschritt)) FROM projektaufgaben a WHERE a.projekt_id = p.id) AS fortschritt,
         (SELECT count(*) FROM projektaufgaben a WHERE a.projekt_id = p.id) AS aufgaben
       FROM projekte p LEFT JOIN objekte o ON o.id = p.objekt_id LEFT JOIN einheiten e ON e.id = p.einheit_id
+      WHERE (${KW} IS NULL OR p.bereich = ${KW})
       ORDER BY p.status = 'abgeschlossen', p.status = 'planung', coalesce(p.beginn, p.erstellt) DESC`)
       .map((p) => { const sm = summen(p.id); return { ...p, ...sm, prognose_ct: prognose(p.id, sm) }; });
   }
@@ -45,7 +47,7 @@ module.exports = function projekte({ db, all, get, tx, bh }) {
         AND lower(trim(x.titel)) = lower(trim(v.titel)) ORDER BY x.id DESC LIMIT 1) AS zuletzt_menge
     FROM vorgaenge v LEFT JOIN projektaufgaben a ON a.id = v.projektaufgabe_id LEFT JOIN projekte pr ON pr.id = v.projekt_id LEFT JOIN objekte o ON o.id = v.objekt_id
       LEFT JOIN einheiten e ON e.id = v.einheit_id
-    WHERE v.kategorie = 'Einkauf' AND (?1 IS NULL OR v.projekt_id = ?1)
+    WHERE v.kategorie = 'Einkauf' AND (?1 IS NULL OR v.projekt_id = ?1) AND ${zeileSql('v')}
       AND (?1 IS NOT NULL OR v.status <> 'erledigt' OR coalesce(v.geaendert_am, v.erstellt) >= ?2)
     ORDER BY v.status = 'erledigt', coalesce(v.laden, '~'), v.im_wagen, coalesce(a.beginn, '9999'), v.id`,
   projektId ?? null, ortszeit.inTagen(-30));
@@ -77,6 +79,9 @@ module.exports = function projekte({ db, all, get, tx, bh }) {
   const einkaufAbschliessen = ({ ids = [], betrag_ct = null, dokument_id = null, datum = null, preise = {} } = {}) => tx(() => {
     const liste = [...new Set(ids.map(Number))].map((id) => get(`SELECT * FROM vorgaenge WHERE id = ? AND kategorie = 'Einkauf'`, id)).filter(Boolean);
     if (!liste.length) throw new Error('Diese Einkäufe gibt es nicht mehr.');
+    // One receipt belongs to one world: a cart with articles of both is paid in two goes.
+    for (const v of liste) wl.zugriff('vorgang', v.id);
+    wl.gleich(...liste.map((v) => ['vorgang', v.id]), ['dokument', dokument_id]);
     const tag = datum || ortszeit.heute();
     // Paid is only what was typed (the total, else the articles' prices); an estimate alone books nothing.
     let bezahlt = 0;
@@ -141,7 +146,7 @@ module.exports = function projekte({ db, all, get, tx, bh }) {
     einkaufVorschlaege: (projektId = null, anzahl = 10) => all(`SELECT v.titel, v.menge, v.laden, v.preis_ct, h.n, h.zuletzt FROM vorgaenge v
       JOIN (SELECT lower(trim(titel)) AS k, max(id) AS id, count(*) AS n, max(coalesce(geaendert_am, erstellt)) AS zuletzt FROM vorgaenge
         WHERE kategorie = 'Einkauf' AND status = 'erledigt' GROUP BY lower(trim(titel))) h ON h.id = v.id
-      WHERE NOT EXISTS (SELECT 1 FROM vorgaenge o WHERE o.kategorie = 'Einkauf' AND o.status <> 'erledigt' AND lower(trim(o.titel)) = h.k
+      WHERE ${zeileSql('v')} AND NOT EXISTS (SELECT 1 FROM vorgaenge o WHERE o.kategorie = 'Einkauf' AND o.status <> 'erledigt' AND lower(trim(o.titel)) = h.k
         AND (?1 IS NULL OR o.projekt_id = ?1))
       ORDER BY h.n DESC, h.zuletzt DESC LIMIT ?2`, projektId ?? null, anzahl),
     // Quick entry: „3 Sack Fliesenkleber“ – a leading quantity with its unit is split off; without a shop, the one the
@@ -152,6 +157,9 @@ module.exports = function projekte({ db, all, get, tx, bh }) {
       if (!t) throw new Error('Was soll gekauft werden?');
       const z = !m && t.match(/^(\d+(?:[.,]\d+)?\s*(?:x|×|stk\.?|stück|sack|säcke|eimer|rollen?|pakete?|kartons?|dosen?|tuben?|kartuschen?|m²|m2|qm|m|l|liter|kg|g)?)\s+(.+)$/i);
       if (z) { m = z[1].trim(); t = z[2].trim(); }
+      const teile = [['projekt', projektId], ['einheit', einheit_id], ['objekt', objekt_id], ['projektaufgabe', projektaufgabe_id]];
+      for (const [art, id] of teile) wl.zugriff(art, id);
+      wl.gleich(...teile);
       const p = projektId ? get('SELECT objekt_id FROM projekte WHERE id = ?', projektId) : null;
       const e = !projektId && einheit_id ? get('SELECT id, objekt_id FROM einheiten WHERE id = ?', einheit_id) : null;
       return Number(db.prepare(`INSERT INTO vorgaenge (objekt_id, projekt_id, einheit_id, titel, kategorie, status, prioritaet, menge, laden, preis_ct, projektaufgabe_id, faellig)
@@ -161,6 +169,7 @@ module.exports = function projekte({ db, all, get, tx, bh }) {
     },
     // Ticked off in the shop: in the cart (or out again) – paid later for the whole cart with einkaufAbschliessen.
     einkaufWagen: (id, an = true) => {
+      wl.zugriff('vorgang', id);
       const r = db.prepare(`UPDATE vorgaenge SET im_wagen = ? WHERE id = ? AND kategorie = 'Einkauf' AND status <> 'erledigt'`).run(an ? 1 : 0, id);
       return r.changes > 0;
     },
@@ -171,11 +180,12 @@ module.exports = function projekte({ db, all, get, tx, bh }) {
       return { posten: r.posten[0] ?? null };
     },
     // Steps of the schedule that start within `tage` days while material for them is still to buy.
-    materialFehlt: (projektId, tage = 3) => all(`SELECT a.id, a.titel, a.beginn, count(v.id) AS offen FROM projektaufgaben a
+    materialFehlt: (projektId, tage = 3) => wl.zugriff('projekt', projektId) ?? all(`SELECT a.id, a.titel, a.beginn, count(v.id) AS offen FROM projektaufgaben a
       JOIN vorgaenge v ON v.projektaufgabe_id = a.id AND v.kategorie = 'Einkauf' AND v.status <> 'erledigt'
       WHERE a.projekt_id = ? AND a.beginn <= date(?, '+' || ? || ' days') AND a.fortschritt < 100
       GROUP BY a.id ORDER BY a.beginn`, projektId, ortszeit.heute(), String(tage)),
     projekt: (id) => {
+      wl.zugriff('projekt', id);
       const p = projektListe().find((x) => x.id === id);
       if (!p) return null;
       return {
@@ -186,8 +196,21 @@ module.exports = function projekte({ db, all, get, tx, bh }) {
       };
     },
 
+    // Moves a project to the other world (sorted wrongly). One linked to a house follows the house's world (a mixed house:
+    // either). Its documents, cases and appointments go with it.
+    projektWelt: (id, welt) => tx(() => {
+      if (!['privat', 'weg'].includes(welt)) throw new Error('Unbekannte Welt.');
+      wl.zugriff('projekt', id);
+      const p = get('SELECT objekt_id FROM projekte WHERE id = ?', id);
+      if (!p) throw new Error('Dieses Projekt gibt es nicht (mehr).');
+      const w = wl.von('objekt', p.objekt_id);
+      if (w && w !== 'beide' && w !== welt) throw new Error('Das Projekt gehört zu einem Haus; seine Welt folgt aus dem Haus.');
+      db.prepare('UPDATE projekte SET bereich = ? WHERE id = ?').run(welt, id);
+    }),
+
     // Moves a task and every task that follows it (directly or indirectly) by the same number of days.
     aufgabeVerschieben: (id, tage) => tx(() => {
+      wl.zugriff('projektaufgabe', id);
       const verschiebe = (aid, gesehen = new Set()) => {
         if (gesehen.has(aid)) return;
         gesehen.add(aid);
@@ -203,7 +226,11 @@ module.exports = function projekte({ db, all, get, tx, bh }) {
       if (!r.objekt_id) throw new Error('Das Projekt ist keinem Objekt zugeordnet – die Rechnung wird nur im Projekt geführt.');
       if (!r.kosten_konto_id) throw new Error('Im Projekt ist kein Kostenkonto für die Buchung hinterlegt.');
       if (r.buchung_id) throw new Error('Diese Rechnung ist bereits gebucht.');
-      const geld = geldKontoId ?? get(`SELECT id FROM konten WHERE objekt_id = ? AND klasse = 'geld' ORDER BY nr LIMIT 1`, r.objekt_id).id;
+      wl.zugriff('projekt', r.projekt_id);
+      // Both accounts must be the linked house's (that house lies in the project's world).
+      const geld = geldKontoId ?? get(`SELECT id FROM konten WHERE objekt_id = ? AND klasse = 'geld' ORDER BY nr LIMIT 1`, r.objekt_id)?.id;
+      for (const k of [geld, r.kosten_konto_id]) if (!get('SELECT 1 AS x FROM konten WHERE id = ? AND objekt_id = ?', k, r.objekt_id)) throw new Error('Das Konto gehört nicht zum Haus des Projekts.');
+      wl.gleich(['projekt', r.projekt_id], ['objekt', r.objekt_id]);
       const id = bh.buchenIntern({ objekt_id: r.objekt_id, datum: datum ?? r.datum, text: `${r.projekt}: ${r.firma ?? ''} ${r.titel}`.slice(0, 120),
         positionen: [{ soll_id: r.kosten_konto_id, haben_id: geld, betrag_ct: r.betrag_ct }] });
       db.prepare(`UPDATE projektposten SET buchung_id = ?, status = 'bezahlt', bezahlt_am = coalesce(bezahlt_am, ?) WHERE id = ?`).run(id, datum ?? r.datum, postenId);
@@ -215,7 +242,7 @@ module.exports = function projekte({ db, all, get, tx, bh }) {
     jahresplan: (jahr) => {
       const zeilen = [];
       const t = ortszeit.heute();
-      for (const o of all('SELECT * FROM objekte ORDER BY bezeichnung')) {
+      for (const o of all(`SELECT * FROM objekte o WHERE ${objektSql('o.id')} ORDER BY bezeichnung`)) {
         const fertig = (typ, j) => !!get('SELECT 1 FROM abrechnungen WHERE objekt_id = ? AND typ = ? AND substr(von, 1, 4) = ?', o.id, typ, String(j));
         if (o.art !== 'weg') zeilen.push({ gruppe: o.bezeichnung, titel: `Betriebskostenabrechnung ${jahr - 1}`, beginn: `${jahr}-01-01`, ende: `${jahr}-12-31`, erledigt: fertig('nk', jahr - 1), art: 'frist' });
         if (o.art !== 'miete') {
@@ -230,7 +257,7 @@ module.exports = function projekte({ db, all, get, tx, bh }) {
           zeilen.push({ gruppe: o.bezeichnung, titel: `Mietende ${m.bezeichnung}`, beginn: m.ende, ende: m.ende, erledigt: m.ende < t, art: 'termin' });
         }
       }
-      for (const p of all(`SELECT * FROM projekte WHERE status <> 'abgeschlossen'`)) {
+      for (const p of all(`SELECT * FROM projekte WHERE status <> 'abgeschlossen' AND (${KW} IS NULL OR bereich = ${KW})`)) {
         const b = get('SELECT min(beginn) AS b, max(ende) AS e FROM projektaufgaben WHERE projekt_id = ?', p.id);
         if (b.b) zeilen.push({ gruppe: 'Projekte', titel: p.titel, beginn: b.b, ende: b.e, erledigt: false, art: 'projekt', projekt_id: p.id });
       }

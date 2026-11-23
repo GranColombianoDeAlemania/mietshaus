@@ -6,6 +6,7 @@ import { FormDialog } from '../Form';
 import { useLoad } from '../useLoad';
 import { useAktion } from '../aktion';
 import { useNavi } from '../navi';
+import { inBeidenWelten, WELT_NAME } from '../welt';
 import { KalenderAbo } from './KalenderAbo';
 import { terminFelder } from './Kommunikation';
 
@@ -41,6 +42,9 @@ export function Kalender(props: { objekte: Row[] }) {
   const [liste, setListe] = useState(schmal);
   const [arten, setArten] = useState<Set<string>>(() => new Set(KAL_ARTEN.map(([a]) => a)));
   const [nurMeine, setNurMeine] = useState(false);
+  // Both worlds in one calendar (Privat and WEG); an entry of the other world says so and opens there.
+  const [beide, setBeide] = useState(() => { try { return localStorage.getItem('kalender_beide') === '1'; } catch { return false; } });
+  const beideSetzen = (an: boolean) => { setBeide(an); try { localStorage.setItem('kalender_beide', an ? '1' : ''); } catch {} };
   const [edit, setEdit] = useState<Row | null>(null);
   const [abo, setAbo] = useState(false);
   useEffect(() => {
@@ -51,7 +55,8 @@ export function Kalender(props: { objekte: Row[] }) {
   const tage = raster(monat);
   const von = liste ? `${monat}-01` : tage[0];
   const bis = liste ? iso(new Date(Number(monat.slice(0, 4)), Number(monat.slice(5, 7)), 0, 12)) : tage.at(-1)!;
-  const [rows, reload] = useLoad<Row[]>(() => call('kalender', von, bis), [von, bis]);
+  const [rows, reload] = useLoad<Row[]>(() => (beide ? inBeidenWelten(() => call<Row[]>('kalender', von, bis)) : call<Row[]>('kalender', von, bis)), [von, bis, beide]);
+  const anderswo = (r: Row) => (r.welt === 'privat' || r.welt === 'weg') && r.welt !== navi.ort.welt;
   const [personen] = useLoad<Row[]>(() => call('personen'), []);
   const [info] = useLoad(() => window.hv.info(), []);
   useAktion('neuer-termin', () => setEdit({ datum: heuteIso() }));
@@ -59,13 +64,14 @@ export function Kalender(props: { objekte: Row[] }) {
   const sichtbar = (rows ?? []).filter((r) => arten.has(r.art) && (!nurMeine || r.meins || r.art === 'termin'));
   const amTag = (t: string) => sichtbar.filter((r) => r.datum === t);
   const oeffnen = async (r: Row) => {
+    if (anderswo(r) && (r.termin_id || !r.ziel)) return navi.zu({ seite: 'kalender', welt: r.welt });
     if (r.termin_id) setEdit(await call('get', 'termine', r.termin_id));
     else if (r.ziel) navi.zu(r.ziel);
   };
   const eintrag = (r: Row, i: number) => (
     <button key={i} className={`kal-e ${r.art}${r.wichtig ? ' wichtig' : ''}${r.erledigt ? ' erledigt' : ''}`} title={[r.titel, r.objekt, r.ort].filter(Boolean).join(' · ')}
       onClick={(e) => { e.stopPropagation(); oeffnen(r); }}>
-      {r.uhrzeit && <b>{r.uhrzeit} </b>}{r.titel}
+      {anderswo(r) && <span className="weltmarke">{WELT_NAME[r.welt as 'privat' | 'weg']}</span>} {r.uhrzeit && <b>{r.uhrzeit} </b>}{r.titel}
     </button>
   );
   const monatsName = new Date(`${monat}-01T12:00:00`).toLocaleDateString('de-DE', { month: 'long', year: 'numeric' });
@@ -90,6 +96,7 @@ export function Kalender(props: { objekte: Row[] }) {
           </label>
         ))}
         {info?.modus === 'server' && <label className="check"><input type="checkbox" checked={nurMeine} onChange={(e) => setNurMeine(e.target.checked)} /> nur meine Vorgänge</label>}
+        <label className="check" title="Termine und Fristen von Privat und WEG zusammen"><input type="checkbox" checked={beide} onChange={(e) => beideSetzen(e.target.checked)} /> beide Welten</label>
       </div>
 
       {!liste ? (

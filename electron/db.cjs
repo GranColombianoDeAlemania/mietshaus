@@ -22,9 +22,11 @@ const finanzenModul = require('./finanzen.cjs');
 const ablaeufeModul = require('./ablaeufe.cjs');
 const begehungModul = require('./begehung.cjs');
 const diktatModul = require('./diktat.cjs');
+const jagoModul = require('./jago.cjs');
 const pruefung = require('./pruefung.cjs');
 const { AKTIONEN } = require('./claudeAktionen.cjs');
 const kennzahlen = require('./kennzahlen.cjs');
+const weltModul = require('./welt.cjs');
 
 const MIGRATIONS = [
   `
@@ -1110,10 +1112,34 @@ const MIGRATIONS = [
       if (m) st.run(m, a.id);
     }
   },
+  // Jago: ideas and faults the users note in the app (with what was going on), to be worked on later.
+  `CREATE TABLE rueckmeldungen (
+    id INTEGER PRIMARY KEY,
+    art TEXT NOT NULL CHECK (art IN ('fehler', 'idee')),
+    text TEXT NOT NULL,
+    seite TEXT,
+    version TEXT,
+    benutzer INTEGER,
+    diagnose TEXT,
+    status TEXT NOT NULL DEFAULT 'offen',
+    notiz TEXT,
+    erstellt TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    erledigt_am TEXT
+  );`,
+  // Two worlds (electron/welt.cjs): private and WEG. Projects and the finances carry theirs; everything there so far is
+  // private, except projects of a WEG house.
+  (db) => {
+    for (const t of ['projekte', 'fin_konten', 'fin_kategorien', 'fin_dauer', 'fin_buchungen', 'fin_budgets', 'fin_regeln', 'fin_wertpapiere'])
+      db.exec(`ALTER TABLE ${t} ADD COLUMN bereich TEXT NOT NULL DEFAULT 'privat' CHECK (bereich IN ('privat', 'weg'))`);
+    db.exec(`UPDATE projekte SET bereich = 'weg' WHERE objekt_id IN (SELECT id FROM objekte WHERE art = 'weg')`);
+    // A document without house and project (inbox) can be sorted to a world before it is filed.
+    db.exec(`ALTER TABLE dokumente ADD COLUMN welt TEXT CHECK (welt IN ('privat', 'weg'))`);
+    for (const t of ['fin_konten', 'fin_kategorien', 'fin_buchungen', 'fin_dauer', 'fin_regeln']) db.exec(`CREATE INDEX ${t}_w ON ${t} (benutzer, bereich)`);
+  },
 ];
 
 // Tables without change time: the log itself, settings of this installation and page state.
-const AENDERUNG_AUSGENOMMEN = new Set(['protokoll', 'einstellungen', 'hinweis_status', 'checkliste', 'geraete', 'benutzer', 'sitzungen', 'push_abos', 'passkeys', 'mitteilungen', 'vorgangsschluessel']);
+const AENDERUNG_AUSGENOMMEN = new Set(['protokoll', 'einstellungen', 'hinweis_status', 'checkliste', 'geraete', 'benutzer', 'sitzungen', 'push_abos', 'passkeys', 'mitteilungen', 'vorgangsschluessel', 'rueckmeldungen']);
 const UTC_JETZT = `strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`;
 
 // Ordinary tables holding user data; with vorMigration the columns need not exist yet.
@@ -1269,7 +1295,7 @@ function open(file, quelle = 'app', geraet = null, { ohneUpdateSicherung = false
       ON CONFLICT (id) DO UPDATE SET name = excluded.name, zuletzt = excluded.zuletzt`).run(geraet.id, geraet.name ?? geraet.id);
   }
   db.exec('CREATE TEMP TABLE IF NOT EXISTS kontext (schluessel TEXT PRIMARY KEY, wert TEXT)');
-  kontextSetzen(db, { quelle, geraet: geraet?.id ?? null, benutzer: null });
+  kontextSetzen(db, { quelle, geraet: geraet?.id ?? null, benutzer: null, welt: null });
   protokollAktivieren(db);
   aenderungenAktivieren(db);
   return db;
@@ -1457,19 +1483,51 @@ function api(db) {
   // Object types visible in each mode: mixed houses appear in both.
   const artenFuer = (modus) => (modus === 'weg' ? ['weg', 'gemischt'] : ['miete', 'gemischt']);
 
+  const wl = weltModul({ get });
+  // World checks for the generic save/remove/get/liste (electron/welt.cjs): the record's own world for access, and its
+  // links (house, unit, project, case …), which must all lie in one world.
+  const WELT_VERWEISE = {
+    projekte: [['objekt', 'objekt_id'], ['einheit', 'einheit_id'], ['konto', 'kosten_konto_id']],
+    projektaufgaben: [['projekt', 'projekt_id']],
+    projektposten: [['projekt', 'projekt_id'], ['dokument', 'dokument_id']],
+    vorgaenge: [['objekt', 'objekt_id'], ['einheit', 'einheit_id'], ['projekt', 'projekt_id'], ['vorgang', 'eltern_id'], ['projektaufgabe', 'projektaufgabe_id']],
+    vorgangseintraege: [['vorgang', 'vorgang_id']],
+    termine: [['objekt', 'objekt_id'], ['projekt', 'projekt_id'], ['vorgang', 'vorgang_id']],
+    dokumente: [['objekt', 'objekt_id'], ['einheit', 'einheit_id'], ['projekt', 'projekt_id'], ['vorgang', 'vorgang_id'], ['buchung', 'buchung_id']],
+  };
+  const EIGENE_ART = { projekte: 'projekt', projektaufgaben: 'projektaufgabe', projektposten: 'projektposten', vorgaenge: 'vorgang', termine: 'termin', dokumente: 'dokument' };
+  function weltPruefen(table, row) {
+    const verweise = WELT_VERWEISE[table];
+    if (!verweise || !row) return;
+    if (row.id && EIGENE_ART[table]) wl.zugriff(EIGENE_ART[table], row.id);
+    const alt = row.id ? get(`SELECT * FROM ${table} WHERE id = ?`, row.id) ?? {} : {};
+    const teile = verweise.map(([art, spalte]) => [art, spalte in row ? row[spalte] : alt[spalte]]);
+    // A new or changed link must point into the world being worked in.
+    verweise.forEach(([art, spalte], i) => { if (teile[i][1] != null && teile[i][1] !== alt[spalte]) wl.zugriff(art, teile[i][1]); });
+    if (table === 'projekte' && row.id) teile.push(['projekt', row.id]);
+    wl.gleich(...teile);
+  }
+  // A world condition for liste() on these tables.
+  const weltListe = (table) => ({
+    projekte: `(${weltModul.KW} IS NULL OR bereich = ${weltModul.KW})`,
+    projektaufgaben: weltModul.projektSql('projekt_id', '0'), projektposten: weltModul.projektSql('projekt_id', '0'),
+    vorgaenge: weltModul.zeileSql(table), termine: weltModul.zeileSql(table), dokumente: weltModul.zeileSql(table, weltModul.dokumentOhne(table)),
+  })[table];
+
   const bh = buchhaltung({ db, all, get, tx, save, aktuell, PERSON_NAME });
   bh.syncKonten();
   bh.umstellungMonatlich();
   const ab = abrechnung({ db, all, get, tx, PERSON_NAME, bh });
   const vw = verwaltung({ db, all, get, tx, PERSON_NAME, bh });
-  const ar = archiv({ db, all, get, tx, PERSON_NAME });
+  const ar = archiv({ db, all, get, tx, PERSON_NAME, wl });
   const mt = mitteilungenModul({ db, all, get, tx });
-  const af = aufgabenModul({ db, all, get, tx, PERSON_NAME });
+  const af = aufgabenModul({ db, all, get, tx, PERSON_NAME, wl });
   const pf = pflichtenModul({ db, all, get, tx, PERSON_NAME });
   const iv = inventarModul({ db, all, get, tx });
   const al = ablaeufeModul({ db, all, get, tx });
   const bg = begehungModul({ db, all, get, tx, ablaufStarten: al.ablaufStarten });
   const dk = diktatModul({ all });
+  const jg = jagoModul({ db, all, get });
 
   // Master data changes can create or rename accounts.
   const SYNC = new Set(['objekte', 'einheiten', 'personen', 'mietverhaeltnisse', 'eigentum']);
@@ -1488,15 +1546,19 @@ function api(db) {
     }),
     // A contract and its charges are saved together or not at all.
     save: (table, row) => tx(() => {
+      weltPruefen(table, row);
       konfliktPruefen(table, row);
       if (table === 'personen') ibanPruefen(row);
       if (table === 'zaehlerstaende' && row?.zaehler_id) zaehlerPruefen(row.zaehler_id, row.datum, row.stand);
       const id = save(table, row);
+      // A new project lies in the world of its house, else in the one being worked in.
+      if (table === 'projekte' && !row.id) db.prepare('UPDATE projekte SET bereich = ? WHERE id = ?').run(wl.fuerNeu(row.objekt_id), id);
       if (SYNC.has(table)) bh.syncKonten();
       sollNachziehen(vertragVon(table, id));
       return id;
     }),
     remove: (table, id) => {
+      if (EIGENE_ART[table]) wl.zugriff(EIGENE_ART[table], id);
       if (table === 'anpassungen') {
         const v = vertragVon(table, id);
         remove(table, id);
@@ -1534,11 +1596,13 @@ function api(db) {
       if (!cols) throw new Error(`Unbekannte Tabelle: ${table}`);
       const keys = Object.keys(filter).filter((k) => cols.includes(k) || k === 'id');
       if (!/^[a-z_]+( DESC)?(, [a-z_]+( DESC)?)*$/.test(order)) throw new Error('Ungültige Sortierung');
-      return all(`SELECT * FROM ${table} ${keys.length ? 'WHERE ' + keys.map((k) => `${k} = ?`).join(' AND ') : ''} ORDER BY ${order}`,
+      const bedingungen = [...keys.map((k) => `${k} = ?`), weltListe(table)].filter(Boolean);
+      return all(`SELECT * FROM ${table} ${bedingungen.length ? 'WHERE ' + bedingungen.join(' AND ') : ''} ORDER BY ${order}`,
         ...keys.map((k) => filter[k]));
     },
     get: (table, id) => {
       if (!TABLES[table]) throw new Error(`Unbekannte Tabelle: ${table}`);
+      if (EIGENE_ART[table]) wl.zugriff(EIGENE_ART[table], id);
       return get(`SELECT * FROM ${table} WHERE id = ?`, id);
     },
 
@@ -1665,8 +1729,8 @@ function api(db) {
       return r;
     },
   };
-  const pj = projekte({ db, all, get, tx, bh });
-  const fi = finanzenModul({ db, all, get, tx, bh });
+  const pj = projekte({ db, all, get, tx, bh, wl });
+  const fi = finanzenModul({ db, all, get, tx, bh, wl });
   const aw = auswertung({ db, all, get, tx, bh, ab });
   const ak = akten({ db, all, get, PERSON_NAME, bh });
   const dl = darlehen({ db, all, get, tx, bh });
@@ -1720,7 +1784,15 @@ function api(db) {
 
   // Claude's proposals: run with the whole API (alles), so they do exactly what the MCP tool would have done.
   const vorschlaege = {
-    vorschlaege: (status = 'offen') => all(`SELECT * FROM vorschlaege WHERE ?1 IS NULL OR status = ?1 ORDER BY id DESC LIMIT 200`, status),
+    // Only the proposals of the world being worked in: by the house, project or document they are about (none: both).
+    vorschlaege: (status = 'offen') => all(`SELECT * FROM vorschlaege WHERE ?1 IS NULL OR status = ?1 ORDER BY id DESC LIMIT 200`, status).filter((v) => {
+      const jetzt = wl.aktuelle();
+      if (!jetzt) return true;
+      let a = {};
+      try { a = JSON.parse(v.argumente ?? '{}') ?? {}; } catch {}
+      const w = a.projekt_id != null ? wl.von('projekt', a.projekt_id) : a.objekt_id != null ? wl.von('objekt', a.objekt_id) : a.dokument_id != null ? wl.von('dokument', a.dokument_id) : null;
+      return !w || w === 'beide' || w === jetzt;
+    }),
     vorschlagAnlegen: (werkzeug, argumente, beschreibung) => {
       if (!AKTIONEN[werkzeug]) throw new Error(`Unbekannte Aktion: ${werkzeug}`);
       return Number(db.prepare('INSERT INTO vorschlaege (werkzeug, argumente, beschreibung) VALUES (?, ?, ?)')
@@ -1737,9 +1809,9 @@ function api(db) {
   };
 
   const alles = {
-    ...bh, ...ab, ...vw, ...ar, ...mt, ...af, ...pf, ...iv, ...fi, ...al, ...bg, ...dk, ...au, ...pj, ...aw, ...ak, ...dl, ...mw, ...pr, ...kz, ...basis, ...vorschlaege,
+    ...bh, ...ab, ...vw, ...ar, ...mt, ...af, ...pf, ...iv, ...fi, ...al, ...bg, ...dk, ...jg, ...au, ...pj, ...aw, ...ak, ...dl, ...mw, ...pr, ...kz, ...basis, ...vorschlaege,
     protokollRueckgaengig: rueckgaengig,
-    buchen: (b, ohneTx) => { buchungPruefen(b); return bh.buchen(b, ohneTx); },
+    buchen: (b, ohneTx) => { wl.zugriff('objekt', b?.objekt_id); buchungPruefen(b); return bh.buchen(b, ohneTx); },
     ablesung: (datum, werte, fotos) => { for (const [id, stand] of Object.entries(werte ?? {})) zaehlerPruefen(Number(id), datum, stand); return bh.ablesung(datum, werte, fotos); },
     // Names behind the change columns of the records (geaendert_benutzer, geaendert_von), for "Zuletzt geändert von …".
     aenderungsNamen: () => ({
@@ -1754,7 +1826,14 @@ function api(db) {
       const fehler = pr.pruefbericht().punkte.filter((p) => p.stufe === 'fehler');
       if (fehler.length) h.unshift({ schluessel: 'pruefbericht', stufe: 'orange', kategorie: 'Prüfbericht', dauerhaft: true, ziel: 'pruefung',
         text: `Der Prüfbericht hat ${fehler.length} Fehler in den Daten gefunden, z. B.: ${fehler[0].text}` });
-      return h;
+      // Only the world being worked in: a hint about a house or for one kind of management goes to that world, the
+      // others (backup, inbox, server) to both.
+      const welt = wl.aktuelle();
+      if (!welt) return h;
+      return h.filter((x) => {
+        const w = x.modus === 'weg' ? 'weg' : x.modus === 'miete' ? 'privat' : x.objekt_id != null ? wl.von('objekt', x.objekt_id) : null;
+        return !w || w === 'beide' || w === welt;
+      });
     },
     zusage: (interessentId, beginn) => {
       const r = mw.zusage(interessentId, beginn);
@@ -1807,6 +1886,8 @@ function api(db) {
       const d = ar.dokument(dokId);
       if (!d) throw new Error('Dokument nicht gefunden');
       if (!d.objekt_id) throw new Error('Bitte zuerst ein Objekt zuordnen.');
+      // The invoice is booked in its own house (its world); a project's invoice must be the project's house.
+      wl.gleich(['dokument', dokId], ['objekt', d.objekt_id], ['konto', kosten_konto_id], ['konto', geld_konto_id]);
       if (d.buchung_id) throw new Error('Dieses Dokument ist bereits gebucht.');
       if (!kosten_konto_id || !geld_konto_id) throw new Error('Bitte Kostenart und Geldkonto wählen.');
       // A copy of an invoice that is filed or booked already is never booked a second time.

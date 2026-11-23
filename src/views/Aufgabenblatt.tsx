@@ -4,7 +4,9 @@
 // by when, urgency –; the rest comes on a tap („+ Betrifft“). A purchase shows quantity, shop and price instead.
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import * as I from 'lucide-react';
-import { call, datum, euro, fehler, heute, inTagen, parseZahl, personName, zustaendige, zustaendigFelder, type Row } from '../api';
+import { fuerZeile } from '../welt';
+import type { DbFn } from '../dbtypen';
+import { call, datum, euro, fehler, heute, inTagen, parseZahl, personName, zustaendige, zustaendigFelder, type Row, objekteDerWelt } from '../api';
 import { useLoad } from '../useLoad';
 import { Auswahl, Fenster, FensterTitel } from '../ui';
 import { Galerie } from '../Galerie';
@@ -48,17 +50,19 @@ export function useErledigen(fertig: () => void) {
   const [geschafft, setGeschafft] = useState(0);
   const feiern = () => { const t = Date.now(); setGeschafft(t); setTimeout(() => setGeschafft((x) => (x === t ? 0 : x)), 1200); };
   async function setzen(v: Row, status: string): Promise<boolean> {
+    // A task of the other world (view of both worlds) is changed without a world – see fuerZeile.
+    const rufen = <T = any,>(fn: DbFn, ...a: unknown[]) => fuerZeile(v, () => call<T>(fn, ...a));
     try {
       if (status === 'erledigt' && v.kategorie === 'Einkauf') { setBon([v]); return false; }
       if (status === 'erledigt' && v.pflicht_id) {
-        const p = await call<Row>('get', 'pflichten', v.pflicht_id);
+        const p = await rufen<Row>('get', 'pflichten', v.pflicht_id);
         if (p) { setPflicht(p); return false; }
       }
-      await call('vorgangStatus', v.id, status);
+      await rufen('vorgangStatus', v.id, status);
       if (status === 'erledigt' && v.eltern_id) {
-        const offen = (await call<Row[]>('ablaufSchritte', v.eltern_id)).filter((x) => x.status !== 'erledigt' && x.id !== v.id);
+        const offen = (await rufen<Row[]>('ablaufSchritte', v.eltern_id)).filter((x) => x.status !== 'erledigt' && x.id !== v.id);
         if (!offen.length && await bestaetigen(`Alle Schritte von „${v.eltern_titel ?? 'diesem Ablauf'}“ sind erledigt. Den Ablauf abschließen?`, { titel: 'Ablauf fertig', ja: 'Abschließen' }))
-          await call('vorgangStatus', v.eltern_id, 'erledigt');
+          await rufen('vorgangStatus', v.eltern_id, 'erledigt');
       }
       if (status === 'erledigt') feiern();
       fertig();
@@ -159,7 +163,7 @@ export function Aufgabenblatt(props: {
   const setzeStatus = props.setzeStatus ?? eigen.setzen;
   const einkauf = d.kategorie === 'Einkauf';
 
-  const [objekte] = useLoad<Row[]>(async () => [...new Map([...await call('objekte', 'miete'), ...await call('objekte', 'weg')].map((o: Row) => [o.id, o])).values()], []);
+  const [objekte] = useLoad<Row[]>(objekteDerWelt, []);
   const [einheiten] = useLoad<Row[]>(() => (d.objekt_id ? call('einheiten', Number(d.objekt_id)) : Promise.resolve([])), [d.objekt_id]);
   const [personen] = useLoad<Row[]>(() => call('personen'), []);
   const [benutzer] = useLoad<Row[]>(() => call<Row[]>('benutzerListe').catch(() => []), []);

@@ -226,7 +226,7 @@ From the pick of 28.10.2026 („Paket 1 – ich will nichts bezahlen; Paket 2 so
 | Area | Contents | Status |
 |------|----------|--------|
 | Symbole | 50 illustrated symbols in a cel-shading style (two tones per colour, ink outline, hatching in deep shadow, a hand-drawn wobble), drawn by `scripts/symbole/` into `public/symbole/`; `Bild` (`Symbol.tsx`) in the sidebar, mode buttons, phone bar, bell, cockpit tiles and empty lists; buttons, tables and toolbars keep the Lucide lines | done |
-| Logo | The house with the capybara in the door redrawn in the same style (`scripts/symbole/logo.py` → `resources/logo.svg`; Mac, browser and home-screen icons from `scripts/icons.cjs`) | done |
+| Logo | Jago, the mascot: his photo (`resources/jago.jpg`) in a round frame under a small roof; `scripts/icons.cjs` writes `resources/logo.svg`, `public/jago.jpg` and the Mac, browser and home-screen icons | done |
 | Glas | Floating parts as glass (sidebar, top bar, phone bar, bell, menus, dialogs, cockpit tiles, board columns) over soft fields in the mode colour; tables, forms and fields stay almost solid; blur only on a few large surfaces | done |
 | Darstellung | Settings per device: glass automatic/on/off (automatic follows „Transparenz reduzieren“), symbols illustrated/plain (Lucide); browsers without blur get solid surfaces | done |
 | Extras | „Alles erledigt“ with a large symbol for an empty inbox or task list; a short check when a task is done (off with „Bewegung reduzieren“); the bell in the phone bar with its label | done |
@@ -391,6 +391,16 @@ How the depth was found: the installer of a personal finance program the user ow
 - Anlage V: hint when the building has an AfA rate but no purchase date.
 - Private finances: „Differenz ausbuchen“ (reconciliation), payment history of a contract, price history of a security.
 - Inbox on the phone: 44 px tap areas for boxes and bin, own hint text. Tasks: delete in the embedded task sheet.
+
+### 0.28.0 – two worlds (Privat and WEG), Jago
+
+- A slider „Privat | WEG“ at the top of the sidebar (where the name stood; ⌘⇧E switches, ⌘⇧W would close the browser window). Privat: Miete, Projekte, Finanzen. WEG: WEG, Projekte, Finanzen (the management business: fees, office, insurance – never the owners' accounts, which stay per house in the WEG ledger). Each world keeps its own last tab, page and house; back/forward goes across worlds. Colour of the world on the slider, a stripe along the sidebar and under the header (phone: a ring around the logo).
+- Server (electron/welt.cjs): the world comes with every request (header X-Welt, in the request context like user and device; none for Claude, the calendar subscription and background work = both). Projects and the finances carry `bereich` (migration: all private, projects of a WEG house WEG); documents, cases, appointments and project tasks take the world of their project or house; a document without either can be sorted to a world (`dokumente.welt`). Mixed houses belong to both.
+- Lists, counts and the calendar show the current world; opening a record of the other world by its number is refused. Linking records of both worlds is refused always (cases, documents, project items, shopping receipts, merging documents, handing private money to a house or project, uploads). Every booking only touches accounts of its own house.
+- Inbox: unassigned documents in both worlds with „Gehört zu: Privat | WEG“; a hint how many wait in the other world. Archive, invoices, tasks, calendar per world; tasks and calendar can show both („beide Welten“, the other world's entries marked). Search (⌘K) finds everything and marks hits of the other world; opening one switches.
+- Moving: a project without a house (or of a mixed one) and a finance account (with its movements, standing orders, securities) can go to the other world. The business finances start with their own categories (Verwaltervergütung, Büro, Software, Vermögensschadenhaftpflicht …).
+- Claude (MCP) sees both worlds, each house and project with its world.
+- Jago, the assistant (no AI): help on about 260 topics, commands and tasks from a sentence, faults and ideas noted with what was going on (page, device, last errors) under „Ideen & Fehler“; mascot and logo from a photo of Jago.
 
 ## Development
 

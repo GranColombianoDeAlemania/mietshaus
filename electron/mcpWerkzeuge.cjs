@@ -77,9 +77,12 @@ function mcpServer(db, { dokumente }) {
   }, (a) => text(db.dokumentListe({ q: a.begriff ?? '', objekt_id: a.objekt_id, typ: a.typ, jahr: a.jahr, limit: 50 })
     .map((d) => ({ id: d.id, titel: d.titel, typ: d.typ, datum: d.datum, betrag_eur: eur(d.betrag_ct), objekt: d.objekt, absender: d.absender, treffer: d.treffer }))), true);
 
-  werkzeug('objekte_liste', 'Alle Objekte (Häuser) mit Art (miete, weg, gemischt) und Anschrift.', {}, () =>
+  // Two worlds that never mix: privat (rented houses, own projects) and weg (managed owners' associations). Claude sees both;
+  // the server refuses to link records of different worlds.
+  const WELT = { miete: 'privat', weg: 'weg', gemischt: 'beide' };
+  werkzeug('objekte_liste', 'Alle Objekte (Häuser) mit Art (miete, weg, gemischt), Welt (privat = Mietverwaltung, weg = WEG-Verwaltung; beide getrennt) und Anschrift.', {}, () =>
     text([...new Map([...db.objekte('miete'), ...db.objekte('weg')].map((o) => [o.id, o])).values()]
-      .map((o) => ({ id: o.id, bezeichnung: o.bezeichnung, art: o.art, anschrift: [o.strasse, o.plz, o.ort].filter(Boolean).join(' '), einheiten: o.anzahl_einheiten }))), true);
+      .map((o) => ({ id: o.id, bezeichnung: o.bezeichnung, art: o.art, welt: WELT[o.art] ?? null, anschrift: [o.strasse, o.plz, o.ort].filter(Boolean).join(' '), einheiten: o.anzahl_einheiten }))), true);
 
   werkzeug('objekt_details', 'Einheiten, Mieter, Eigentümer und Umlageschlüssel eines Objekts.', { objekt_id: z.number().int() }, ({ objekt_id }) => text({
     einheiten: db.einheiten(objekt_id).map((e) => ({ id: e.id, nr: e.nr, bezeichnung: e.bezeichnung, art: e.art, lage: e.lage, flaeche: e.wohnflaeche, mea: e.mea, mieter: e.mieter, eigentuemer: e.eigentuemer,
@@ -109,8 +112,8 @@ function mcpServer(db, { dokumente }) {
   werkzeug('faelligkeiten', 'Was in den nächsten Tagen ansteht: Vorgänge, Termine, Vertragsenden, Versicherungsfristen.', { tage: z.number().int().optional() },
     ({ tage }) => text(db.faelligkeiten(tage ?? 30)), true);
 
-  werkzeug('projekte_liste', 'Alle Projekte (z. B. Sanierungen) mit Status, Objekt, Budget, berechneten Kosten und Prognose.', {}, () =>
-    text(db.projektListe().map((p) => ({ id: p.id, titel: p.titel, status: p.status, objekt: p.objekt, budget_eur: eur(p.budget_ct),
+  werkzeug('projekte_liste', 'Alle Projekte (z. B. Sanierungen) mit Welt (privat oder weg), Status, Objekt, Budget, berechneten Kosten und Prognose.', {}, () =>
+    text(db.projektListe().map((p) => ({ id: p.id, titel: p.titel, welt: p.bereich, status: p.status, objekt: p.objekt, budget_eur: eur(p.budget_ct),
       berechnet_eur: eur(p.rechnungen_ct), prognose_eur: eur(p.prognose_ct), fortschritt: p.fortschritt }))), true);
 
   werkzeug('projekt_details', 'Aufgaben (Zeitplan) und Kostenposten eines Projekts.', { projekt_id: z.number().int() }, ({ projekt_id }) => {

@@ -1,5 +1,7 @@
 import { hinweis } from './frage';
+import { fehlerMerken } from './diagnose';
 import type { DbFn } from './dbtypen';
+import { aktuelleWelt } from './welt';
 export type Modus = 'miete' | 'weg' | 'projekt' | 'finanz';
 export type Row = Record<string, any>;
 
@@ -51,6 +53,8 @@ declare global {
 }
 
 export const call = <T = any>(fn: DbFn, ...args: unknown[]): Promise<T> => window.hv.call(fn, ...args);
+// The houses of the world being worked in (mixed ones in both), for choosing a house.
+export const objekteDerWelt = (): Promise<Row[]> => call('objekte', aktuelleWelt() === 'weg' ? 'weg' : 'miete');
 
 const eur = new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' });
 const num = new Intl.NumberFormat('de-DE', { maximumFractionDigits: 4 });
@@ -147,4 +151,5 @@ export const kontoLabel = (k: Row) => `${k.nr} ${k.bezeichnung}`;
 
 export const fehlerText = (e: any) => String(e?.message ?? e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
 
-export const fehler = (e: any) => (e?.still ? undefined : hinweis(fehlerText(e), 'Fehler'));
+// Every message shown is kept for Jago's notes (src/diagnose.ts).
+export const fehler = (e: any) => { fehlerMerken(fehlerText(e)); return e?.still ? undefined : hinweis(fehlerText(e), 'Fehler'); };

@@ -242,6 +242,10 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
       // A negative amount is booked the other way round.
       if (p.betrag_ct < 0) [p.soll_id, p.haben_id, p.betrag_ct] = [p.haben_id, p.soll_id, -p.betrag_ct];
     }
+    // Every account of a booking is one of this house's – so nothing is booked across houses, nor across the worlds
+    // (private and WEG, electron/welt.cjs).
+    for (const k of new Set(pos.flatMap((p) => [p.soll_id, p.haben_id])))
+      if (Number(get('SELECT objekt_id FROM konten WHERE id = ?', k)?.objekt_id) !== Number(objekt_id)) throw new Error('Ein Konto dieser Buchung gehört nicht zu diesem Haus.');
     return (ohneTx ? (f) => f() : tx)(() => {
       const st = db.prepare(`INSERT INTO buchungen (objekt_id, datum, beleg, text, betrag_ct, soll_id, haben_id, art, monat, gruppe, import_ref, einheit_id, p35a_ct)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`);

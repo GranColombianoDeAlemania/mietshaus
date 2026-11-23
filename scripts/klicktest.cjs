@@ -74,12 +74,17 @@ app.whenReady().then(async () => {
     }
   };
 
+  const ohneHaus = (m) => m === 'projekt' || m === 'finanz';
   // ---------- 1. Every page, every button ----------
   // Buttons that would remove the sample data needed later are left out.
-  const NICHT = /löschen|entfernen|storn|zurücksetzen|wiederherstellen|sicherung|festschreib|ausblenden|verbinden|abrufen|eingangsordner|beenden|kündigung|abschließen/i;
+  // Also moving records to the other world (Privat / WEG) and sorting inbox documents to one.
+  const NICHT = /löschen|entfernen|storn|zurücksetzen|wiederherstellen|sicherung|festschreib|ausblenden|verbinden|abrufen|eingangsordner|beenden|kündigung|abschließen|^nach (privat|weg)$|^(privat|weg)$/i;
   let seitenZahl = 0, knopfZahl = 0, dialogZahl = 0;
-  for (const [modus, objektId] of process.env.KLICK === '0' ? [] : [['miete', o], ['weg', w], ['projekt', null], ['finanz', null]]) {
-    await zu({ seite: modus === 'projekt' ? 'pcockpit' : modus === 'finanz' ? 'fcockpit' : 'uebersicht', modus, ...(objektId ? { objektId } : {}) });
+  // Both worlds: Privat (rental houses, projects, finances) and WEG (owners' associations, their projects, business finances).
+  for (const [ort, objektId, welt] of process.env.KLICK === '0' ? [] : [['miete', o, 'privat'], ['projekt', null, 'privat'], ['finanz', null, 'privat'], ['weg', w, 'weg'], ['projekt', null, 'weg'], ['finanz', null, 'weg']]) {
+    const modus = ohneHaus(ort) && welt === 'weg' ? `weg-${ort}` : ort;
+    await zu({ seite: ort === 'projekt' ? 'pcockpit' : ort === 'finanz' ? 'fcockpit' : 'uebersicht', modus: ort, welt, ...(objektId ? { objektId } : {}) });
+    if (await js(`document.documentElement.dataset.welt`) !== welt) meldeFehler(`Welt nicht gewechselt: ${modus}`);
     // The click round may have chosen "Schlicht" or glass "Aus" in the settings: back to the defaults for each mode.
     await js(`localStorage.removeItem('symbole'); localStorage.removeItem('glas'); Object.assign(document.documentElement.dataset, { symbole: 'illustriert', glas: 'an' }); window.dispatchEvent(new Event('hv-anzeige'))`);
     // Every illustrated symbol (sidebar, modes, cockpit tiles) loads.

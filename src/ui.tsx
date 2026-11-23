@@ -3,6 +3,7 @@ import { Component, useEffect, useRef, useState, type ReactElement, type ReactNo
 import * as RD from '@radix-ui/react-dialog';
 import { KLASSEN, kontoLabel, type Row } from './api';
 import { Bild, type SymbolName } from './Symbol';
+import { fehlerMerken } from './diagnose';
 
 // Folds case and umlauts, so "uberw" finds "Überweisung".
 const falten = (t: string) => t.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/ß/g, 'ss');
@@ -292,7 +293,7 @@ export function SortTh(props: { k: string; s: Sortierung; set: (s: Sortierung) =
 export class Fehlergrenze extends Component<{ children: ReactNode }, { fehler: Error | null }> {
   state = { fehler: null as Error | null };
   static getDerivedStateFromError(fehler: Error) { return { fehler }; }
-  componentDidCatch(fehler: Error) { console.error('Seite abgestürzt', fehler); }
+  componentDidCatch(fehler: Error) { console.error('Seite abgestürzt', fehler); fehlerMerken(`Seite abgestürzt: ${fehler?.message ?? fehler}`); }
   render() {
     if (!this.state.fehler) return this.props.children;
     return (
@@ -302,6 +303,8 @@ export class Fehlergrenze extends Component<{ children: ReactNode }, { fehler: E
         <div className="buttons" style={{ justifyContent: 'center' }}>
           <button onClick={() => this.setState({ fehler: null })}>Erneut versuchen</button>
           <button onClick={() => location.reload()}>Programm neu laden</button>
+          {/* Jago (src/Jago.tsx) listens for this; no import, so ui.tsx stays free of it. */}
+          <button className="primary" onClick={() => window.dispatchEvent(new CustomEvent('jago-oeffnen', { detail: { art: 'fehler', text: '' } }))}>An Jago melden</button>
         </div>
       </div>
     );

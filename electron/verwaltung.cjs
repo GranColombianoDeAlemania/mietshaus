@@ -3,6 +3,7 @@
 const { tageZwischen } = require('./buchhaltung.cjs');
 const ortszeit = require('./zeit.cjs');
 const { istZustaendigSql, namenSql } = require('./zustaendig.cjs');
+const { objektSql, zeileSql, dokumentOhne } = require('./welt.cjs');
 
 // First of the month n months after the month of iso.
 const plusMonate = (iso, n) => {
@@ -221,38 +222,38 @@ module.exports = function verwaltung({ db, all, get, tx, PERSON_NAME, bh }) {
     // ---------- documents, cases, appointments ----------
     dokumenteListe: (objektId) => all(`SELECT d.*, ${PERSON_NAME} AS person, e.bezeichnung AS einheit FROM dokumente d
       LEFT JOIN personen p ON p.id = d.person_id LEFT JOIN einheiten e ON e.id = d.einheit_id
-      WHERE (?1 IS NULL OR d.objekt_id = ?1) AND d.status <> 'papierkorb' ORDER BY coalesce(d.datum, '') DESC, d.id DESC`, objektId ?? null),
+      WHERE (?1 IS NULL OR d.objekt_id = ?1) AND d.status <> 'papierkorb' AND ${zeileSql('d', dokumentOhne('d'))} ORDER BY coalesce(d.datum, '') DESC, d.id DESC`, objektId ?? null),
 
     vorgaengeListe: (objektId, nurOffen) => all(`SELECT v.*, ${PERSON_NAME} AS person, e.bezeichnung AS einheit, o.bezeichnung AS objekt,
         (SELECT count(*) FROM vorgangseintraege x WHERE x.vorgang_id = v.id) AS eintraege,
         ${namenSql('v')} AS zustaendig_name
       FROM vorgaenge v LEFT JOIN personen p ON p.id = v.person_id LEFT JOIN einheiten e ON e.id = v.einheit_id
       LEFT JOIN objekte o ON o.id = v.objekt_id
-      WHERE (?1 IS NULL OR v.objekt_id = ?1) AND (?2 = 0 OR v.status <> 'erledigt')
+      WHERE (?1 IS NULL OR v.objekt_id = ?1) AND (?2 = 0 OR v.status <> 'erledigt') AND ${zeileSql('v')}
       ORDER BY v.status = 'erledigt', coalesce(v.faellig, '9999'), v.prioritaet, v.id DESC`, objektId ?? null, nurOffen ? 1 : 0),
 
     // Open cases assigned to a user, for "Meine Aufgaben" in the cockpit.
     meineAufgaben: (benutzerId) => all(`SELECT v.*, o.bezeichnung AS objekt FROM vorgaenge v LEFT JOIN objekte o ON o.id = v.objekt_id
-      WHERE ${istZustaendigSql('v', '?1')} AND v.status <> 'erledigt' ORDER BY coalesce(v.faellig, '9999'), v.prioritaet, v.id`, benutzerId),
+      WHERE ${istZustaendigSql('v', '?1')} AND v.status <> 'erledigt' AND ${zeileSql('v')} ORDER BY coalesce(v.faellig, '9999'), v.prioritaet, v.id`, benutzerId),
 
     termineListe: (von, bis) => all(`SELECT t.*, o.bezeichnung AS objekt, ${PERSON_NAME} AS person, v.titel AS vorgang FROM termine t
       LEFT JOIN objekte o ON o.id = t.objekt_id LEFT JOIN personen p ON p.id = t.person_id LEFT JOIN vorgaenge v ON v.id = t.vorgang_id
-      WHERE t.datum BETWEEN ? AND ? ORDER BY t.datum, coalesce(t.uhrzeit, '')`, von, bis),
+      WHERE t.datum BETWEEN ? AND ? AND ${zeileSql('t')} ORDER BY t.datum, coalesce(t.uhrzeit, '')`, von, bis),
 
     // Things that need attention soon, for the overview page.
     faelligkeiten: (tage = 30) => {
       const bis = ortszeit.inTagen(tage);
       return {
         vorgaenge: all(`SELECT v.id, v.titel, v.faellig, o.bezeichnung AS objekt FROM vorgaenge v LEFT JOIN objekte o ON o.id = v.objekt_id
-          WHERE v.status <> 'erledigt' AND v.faellig IS NOT NULL AND v.faellig <= ? ORDER BY v.faellig`, bis),
+          WHERE v.status <> 'erledigt' AND v.faellig IS NOT NULL AND v.faellig <= ? AND ${zeileSql('v')} ORDER BY v.faellig`, bis),
         termine: all(`SELECT t.id, t.titel, t.datum, t.uhrzeit, o.bezeichnung AS objekt FROM termine t LEFT JOIN objekte o ON o.id = t.objekt_id
-          WHERE t.erledigt = 0 AND t.datum BETWEEN date('now', 'localtime') AND ? ORDER BY t.datum`, bis),
+          WHERE t.erledigt = 0 AND t.datum BETWEEN date('now', 'localtime') AND ? AND ${zeileSql('t')} ORDER BY t.datum`, bis),
         vertraege: all(`SELECT 'miete' AS typ, m.ende AS datum, e.bezeichnung AS einheit, o.bezeichnung AS objekt FROM mietverhaeltnisse m
-          JOIN einheiten e ON e.id = m.einheit_id JOIN objekte o ON o.id = e.objekt_id WHERE m.ende BETWEEN date('now', 'localtime') AND ?`, bis),
+          JOIN einheiten e ON e.id = m.einheit_id JOIN objekte o ON o.id = e.objekt_id WHERE m.ende BETWEEN date('now', 'localtime') AND ? AND ${objektSql('o.id')}`, bis),
         eichungen: all(`SELECT z.nummer, z.art, z.eichung_bis AS datum, o.bezeichnung AS objekt FROM zaehler z JOIN objekte o ON o.id = z.objekt_id
-          WHERE (z.ausbau IS NULL OR z.ausbau = '') AND z.eichung_bis IS NOT NULL AND z.eichung_bis <= ?`, bis),
+          WHERE (z.ausbau IS NULL OR z.ausbau = '') AND z.eichung_bis IS NOT NULL AND z.eichung_bis <= ? AND ${objektSql('o.id')}`, bis),
         versicherungen: all(`SELECT v.art, v.gesellschaft, v.kuendbar_bis AS datum, o.bezeichnung AS objekt FROM versicherungen v
-          JOIN objekte o ON o.id = v.objekt_id WHERE v.kuendbar_bis BETWEEN date('now', 'localtime') AND ?`, bis),
+          JOIN objekte o ON o.id = v.objekt_id WHERE v.kuendbar_bis BETWEEN date('now', 'localtime') AND ? AND ${objektSql('o.id')}`, bis),
       };
     },
 

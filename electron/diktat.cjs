@@ -8,6 +8,7 @@ const plusTage = (iso, n) => new Date(Date.parse(`${iso}T12:00:00Z`) + n * 864e5
 const ZAHLWORT = { eins: 1, ein: 1, eine: 1, zwei: 2, drei: 3, vier: 4, fuenf: 5, funf: 5, sechs: 6, sieben: 7, acht: 8, neun: 9, zehn: 10, elf: 11, zwoelf: 12, zwolf: 12 };
 const WOCHENTAG = { montag: 1, dienstag: 2, mittwoch: 3, donnerstag: 4, freitag: 5, samstag: 6, sonntag: 0 };
 
+const { objektSql } = require('./welt.cjs');
 module.exports = function diktat({ all }) {
   return {
     diktatDeuten: (text, objektId = null) => {
@@ -20,7 +21,8 @@ module.exports = function diktat({ all }) {
       const entferne = (muster) => { rest = rest.replace(muster, ' '); };
 
       // House: by its name or street, otherwise the one chosen.
-      const objekte = all('SELECT id, bezeichnung, strasse FROM objekte ORDER BY length(bezeichnung) DESC');
+      // Only houses of the world being worked in (electron/welt.cjs).
+      const objekte = all(`SELECT id, bezeichnung, strasse FROM objekte WHERE ${objektSql('id')} ORDER BY length(bezeichnung) DESC`);
       let objekt = objekte.find((o) => [o.bezeichnung, o.strasse].some((n) => n && n.length > 3 && f.includes(falten(n)))) ?? null;
       if (objekt) { erkannt.push(`Objekt ${objekt.bezeichnung}`); entferne(new RegExp(objekt.bezeichnung.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i')); }
       const oid = objekt?.id ?? (objektId ? Number(objektId) : null);

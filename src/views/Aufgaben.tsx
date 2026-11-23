@@ -15,6 +15,8 @@ import { DiktatKnopf, diktatMoeglich } from '../Diktat';
 import { aktuellerBenutzer } from '../offline';
 import { Aufgabenblatt, STATUS_KURZ, useErledigen, wannText } from './Aufgabenblatt';
 import { EinkaufListe } from './Einkauf';
+import { useNavi } from '../navi';
+import { aktuelleWelt, fuerZeile, inBeidenWelten, WELT_NAME } from '../welt';
 
 type Sicht = 'meine' | 'alle' | 'wartet' | 'einkauf' | 'erledigt';
 const GRUPPEN: [string, string][] = [['ueber', 'Überfällig'], ['heute', 'Heute'], ['bald', 'Nächste 7 Tage'], ['spaeter', 'Später'], ['ohne', 'Ohne Datum']];
@@ -30,6 +32,8 @@ const kuerzel = (name: string) => name.split(/\s+/).map((t) => t[0]).join('').sl
 function Meta(props: { v: Row; mitEltern?: boolean; ohneOrt?: boolean }) {
   const v = props.v;
   const teile: React.ReactNode[] = [
+    // In the view of both worlds: a task of the other world says so.
+    (v.welt === 'privat' || v.welt === 'weg') && v.welt !== aktuelleWelt() && <span className="weltmarke">{WELT_NAME[v.welt as 'privat' | 'weg']}</span>,
     props.mitEltern && v.eltern_titel && `↳ ${v.eltern_titel}`,
     !props.ohneOrt && v.projekt && <span className="zuord projekt" title="Projekt">{v.projekt}</span>,
     !props.ohneOrt && !v.projekt && v.einheit && <span className="zuord einheit" title="Einheit">{v.einheit}</span>,
@@ -76,7 +80,14 @@ export function Aufgaben(props: { objekte: Row[] }) {
   const [filterOffen, setFilterOffen] = useState(false);
   // Filter by unit or project („e12“, „p3“), for this visit.
   const [zuordnungFilter, setZuordnungFilter] = useState('');
-  const [rows, reload] = useLoad<Row[]>(() => call('aufgabenListe', { objekt_id: objektId || null, zustaendig: zustaendig || null }), [objektId, zustaendig]);
+  // The tasks of both worlds (Privat and WEG) at once – one to-do list for the day; opening one of the other world switches there.
+  const navi = useNavi();
+  const [beide, setBeide] = useState(() => lesen('aufgaben_beide') === '1');
+  const beideSetzen = (an: boolean) => { setBeide(an); schreiben('aufgaben_beide', an ? '1' : ''); };
+  const [rows, reload] = useLoad<Row[]>(() => {
+    const laden = () => call<Row[]>('aufgabenListe', { objekt_id: objektId || null, zustaendig: zustaendig || null });
+    return beide ? inBeidenWelten(laden) : laden();
+  }, [objektId, zustaendig, beide]);
   const [alleObjekte] = useLoad<Row[]>(async () => [...new Map([...await call('objekte', 'miete'), ...await call('objekte', 'weg')].map((o: Row) => [o.id, o])).values()], []);
   const [gewaehlt, setGewaehlt] = useState<number | null>(null);
   const [neu, setNeu] = useState<Row | null>(null);
@@ -95,7 +106,7 @@ export function Aufgaben(props: { objekte: Row[] }) {
     return ok;
   }
   async function spaeter(v: Row, faellig: string) {
-    try { await call('save', 'vorgaenge', { id: v.id, faellig, geaendert_am: v.geaendert_am }); reload(); } catch (e) { fehler(e); }
+    try { await fuerZeile(v, () => call('save', 'vorgaenge', { id: v.id, faellig, geaendert_am: v.geaendert_am })); reload(); } catch (e) { fehler(e); }
   }
 
   const vorgabe = (): Row => ({ status: 'offen', prioritaet: 2, objekt_id: objektId || (props.objekte.length === 1 ? props.objekte[0].id : null),
@@ -118,7 +129,11 @@ export function Aufgaben(props: { objekte: Row[] }) {
     .sort((a, b) => a[0][0].localeCompare(b[0][0]) || a[1].localeCompare(b[1], 'de', { numeric: true }));
   const zuordnungName = zuordnungen.find(([k]) => k === zuordnungFilter)?.[1];
   const offenesBlatt = (rows ?? []).find((v) => v.id === gewaehlt) ?? null;
-  const oeffnen = (v: Row) => setGewaehlt(gewaehlt === v.id && breit ? null : v.id);
+  const oeffnen = (v: Row) => {
+    if ((v.welt === 'privat' || v.welt === 'weg') && v.welt !== navi.ort.welt)
+      return navi.zu(v.objekt_id ? { vorgang: v.id, objektId: v.objekt_id } : v.projekt_id ? { projekt: v.projekt_id, welt: v.welt } : { seite: 'aufgaben', welt: v.welt });
+    setGewaehlt(gewaehlt === v.id && breit ? null : v.id);
+  };
 
   const objektName = alleObjekte?.find((o) => o.id === objektId)?.bezeichnung;
   const personName = benutzer?.find((b) => b.id === zustaendig)?.name;
@@ -152,10 +167,11 @@ export function Aufgaben(props: { objekte: Row[] }) {
           <button key={s} role="tab" aria-selected={sicht === s} className={`chip-knopf${sicht === s ? ' an' : ''}`} onClick={() => sichtWaehlen(s)}>
             {l}{s !== 'erledigt' && <span className="zahl">{zahl[s]}</span>}</button>
         ))}
-        <button type="button" className={`chip-knopf${objektId || zustaendig ? ' gefiltert' : ''}`} aria-expanded={filterOffen} onClick={() => setFilterOffen(!filterOffen)}>
+        <button type="button" className={`chip-knopf${objektId || zustaendig || beide ? ' gefiltert' : ''}`} aria-expanded={filterOffen} onClick={() => setFilterOffen(!filterOffen)}>
           <I.SlidersHorizontal size={14} aria-hidden="true" /> Filter</button>
         {objektName && <span className="chip">{objektName}<button type="button" className="chip-weg" aria-label={`Filter ${objektName} entfernen`}
           onClick={() => { setObjektId(''); schreiben('aufgaben_objekt', ''); }}><I.X size={12} /></button></span>}
+        {beide && <span className="chip">Beide Welten<button type="button" className="chip-weg" aria-label="Nur diese Welt zeigen" onClick={() => beideSetzen(false)}><I.X size={12} /></button></span>}
         {personName && <span className="chip">{personName}<button type="button" className="chip-weg" aria-label={`Filter ${personName} entfernen`}
           onClick={() => { setZustaendig(''); schreiben('aufgaben_person', ''); }}><I.X size={12} /></button></span>}
         {zuordnungName && <span className="chip"><span className={`zuord-marke ${zuordnungFilter[0] === 'p' ? 'projekt' : 'einheit'}`}>{zuordnungFilter[0] === 'p' ? 'Projekt' : 'Einheit'}</span>{zuordnungName}
@@ -183,6 +199,7 @@ export function Aufgaben(props: { objekte: Row[] }) {
                 marke={(k) => (String(k)[0] === 'p' ? { text: 'Projekt', art: 'projekt' } : { text: 'Einheit', art: 'einheit' })} onChange={setZuordnungFilter} />
             </label>
           )}
+          <label className="check"><input type="checkbox" checked={beide} onChange={(e) => beideSetzen(e.target.checked)} /> Aufgaben beider Welten (Privat und WEG)</label>
           {mehrere && (
             <label>Kümmert sich
               <select value={zustaendig} onChange={(e) => { const n = Number(e.target.value) || ''; setZustaendig(n); schreiben('aufgaben_person', String(n)); }}>
@@ -425,7 +442,7 @@ function Zeile(props: { v: Row; aktiv: boolean; mehrere: boolean; sicht: Sicht; 
     setTimeout(() => { geschoben.current = false; }, 50);
   };
   const meta = <Meta v={v} mitEltern ohneOrt={props.ohneOrt} />;
-  const hatMeta = !!(v.eltern_titel || (!props.ohneOrt && (v.projekt || v.objekt || v.einheit)) || v.person || (v.kategorie === 'Einkauf' && v.laden));
+  const hatMeta = !!(v.eltern_titel || ((v.welt === 'privat' || v.welt === 'weg') && v.welt !== aktuelleWelt()) || (!props.ohneOrt && (v.projekt || v.objekt || v.einheit)) || v.person || (v.kategorie === 'Einkauf' && v.laden));
   return (
     <li className={`az${props.aktiv ? ' aktiv' : ''}${fertig ? ' fertig' : ''}`}>
       {dx !== 0 && <div className={`az-unter ${dx > 0 ? 'rechts' : 'links'}`} aria-hidden="true">

@@ -2,7 +2,7 @@
 // notifications from the server, opens Mietshaus on a tap and keeps the page itself (no data) so that it also starts
 // without a connection – the data then come from the answers kept for reading (src/offline.ts).
 const OBERFLAECHE = 'mietshaus-oberflaeche-1';
-const BILDER = ['/logo.svg', '/favicon.png', '/icon-192.png', '/manifest.webmanifest'];
+const BILDER = ['/logo.svg', '/jago.jpg', '/favicon.png', '/icon-192.png', '/manifest.webmanifest'];
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (e) => e.waitUntil((async () => {
   for (const k of await caches.keys()) if (k !== OBERFLAECHE) await caches.delete(k);

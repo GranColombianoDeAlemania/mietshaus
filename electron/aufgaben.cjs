@@ -2,10 +2,11 @@
 // case's history, and the daily reminder of tasks due tomorrow or overdue.
 const ortszeit = require('./zeit.cjs');
 const { istZustaendigSql, namenSql, alle } = require('./zustaendig.cjs');
+const { zeileSql } = require('./welt.cjs');
 
 const STATUS = { offen: 'Offen', in_arbeit: 'In Arbeit', wartet: 'Wartet', erledigt: 'Erledigt' };
 
-module.exports = function aufgaben({ db, all, get, tx, PERSON_NAME }) {
+module.exports = function aufgaben({ db, all, get, tx, PERSON_NAME, wl }) {
   const name = (benutzerId) => (benutzerId ? get('SELECT name FROM benutzer WHERE id = ?', benutzerId)?.name : null) ?? null;
   const eintrag = (vorgangId, art, text, von) => db.prepare('INSERT INTO vorgangseintraege (vorgang_id, datum, art, text, von) VALUES (?, ?, ?, ?, ?)')
     .run(vorgangId, ortszeit.heute(), art, text, von);
@@ -14,6 +15,7 @@ module.exports = function aufgaben({ db, all, get, tx, PERSON_NAME }) {
     // The board: open tasks and those done in the last 14 days, with counts of comments and photos.
     aufgabenListe: (benutzerId, { nur_meine = false, objekt_id = null, zustaendig = null } = {}) => all(`SELECT v.*, ${PERSON_NAME} AS person,
         e.bezeichnung AS einheit, o.bezeichnung AS objekt, o.art AS objekt_art, ${namenSql('v')} AS zustaendig_name, pr.titel AS projekt,
+        coalesce(pr.bereich, CASE o.art WHEN 'weg' THEN 'weg' WHEN 'miete' THEN 'privat' END) AS welt,
         (SELECT count(*) FROM vorgangseintraege x WHERE x.vorgang_id = v.id AND x.art NOT IN ('status')) AS eintraege,
         (SELECT count(*) FROM dokumente d WHERE d.vorgang_id = v.id AND d.status <> 'papierkorb') AS fotos,
         (SELECT count(*) FROM vorgaenge c WHERE c.eltern_id = v.id) AS schritte,
@@ -22,13 +24,14 @@ module.exports = function aufgaben({ db, all, get, tx, PERSON_NAME }) {
       FROM vorgaenge v LEFT JOIN personen p ON p.id = v.person_id LEFT JOIN einheiten e ON e.id = v.einheit_id
       LEFT JOIN objekte o ON o.id = v.objekt_id LEFT JOIN projekte pr ON pr.id = v.projekt_id
       WHERE (v.status <> 'erledigt' OR coalesce(v.geaendert_am, v.erstellt) >= ?1)
-        AND (?2 = 0 OR ${istZustaendigSql('v', '?3')}) AND (?4 IS NULL OR v.objekt_id = ?4) AND (?5 IS NULL OR ${istZustaendigSql('v', '?5')})
+        AND (?2 = 0 OR ${istZustaendigSql('v', '?3')}) AND (?4 IS NULL OR v.objekt_id = ?4) AND (?5 IS NULL OR ${istZustaendigSql('v', '?5')}) AND ${zeileSql('v')}
       ORDER BY v.prioritaet, coalesce(v.faellig, '9999'), v.id DESC`,
     new Date(Date.now() - 14 * 864e5).toISOString().slice(0, 10), nur_meine && benutzerId ? 1 : 0, benutzerId ?? null, objekt_id ?? null, zustaendig ?? null),
 
     // Moves a task to another column; the history says who and when.
     vorgangStatus: (benutzerId, id, status) => tx(() => {
       if (!STATUS[status]) throw new Error('Unbekannter Status.');
+      wl.zugriff('vorgang', id);
       const v = get('SELECT status FROM vorgaenge WHERE id = ?', id);
       if (!v) throw new Error('Vorgang nicht gefunden');
       if (v.status === status) return false;
@@ -41,6 +44,7 @@ module.exports = function aufgaben({ db, all, get, tx, PERSON_NAME }) {
     vorgangKommentieren: (benutzerId, id, text) => tx(() => {
       const t = String(text ?? '').trim();
       if (!t) throw new Error('Bitte einen Text eingeben.');
+      wl.zugriff('vorgang', id);
       const v = get('SELECT id, titel, objekt_id, zustaendig, mit_zustaendig FROM vorgaenge WHERE id = ?', id);
       if (!v) throw new Error('Vorgang nicht gefunden');
       const von = name(benutzerId);

@@ -1,14 +1,23 @@
 const ortszeit = require('./zeit.cjs');
+// The world being worked in (electron/welt.cjs): private finances and those of the management business never mix.
+const W = require('./welt.cjs').NEU;
 // Private finances of one user: accounts with their movements (also split into parts, expected ones, transfers),
 // categories in two levels, budgets per month, quarter or year, contracts and standing orders with notice periods,
 // rules that categorise, reconciliation with the bank's balance, loans with their repayment plan, a depot with prices,
 // evaluations, comparisons and forecasts – and the way between the private money and the houses and projects.
 // Every function takes the user first (b; the server puts the signed-in user there, 0 in the local mode) and reads or
 // changes only that user's rows.
-module.exports = function finanzen({ db, all, get, tx, bh }) {
+module.exports = function finanzen({ db, all, get, tx, bh, wl }) {
   const B = (b) => Number(b) || 0;
+  // The world of these finances (the request's, else private), and the check that a house or project handed money to
+  // or taken from lies in it too (a mixed house fits both).
+  const bereich = () => wl.aktuelle() ?? 'privat';
+  const imBereich = (welt, art, id) => {
+    const w = wl.von(art, id);
+    if (w && w !== 'beide' && w !== welt) throw new Error(`Das gehört zur Welt ${w === 'weg' ? 'WEG' : 'Privat'}, diese Finanzen zur Welt ${welt === 'weg' ? 'WEG' : 'Privat'}. Geld wandert nicht zwischen den Welten.`);
+  };
   const mein = (tabelle, id, b) => {
-    const r = get(`SELECT * FROM ${tabelle} WHERE id = ? AND benutzer = ?`, id, B(b));
+    const r = get(`SELECT * FROM ${tabelle} WHERE id = ? AND benutzer = ? AND bereich = ${W}`, id, B(b));
     if (!r) throw new Error('Diesen Eintrag gibt es nicht (mehr).');
     return r;
   };
@@ -37,16 +46,24 @@ module.exports = function finanzen({ db, all, get, tx, bh }) {
     ['Abos und Mitgliedschaften', 'ausgabe', 1], ['Handwerker und Haushaltshilfe', 'ausgabe', 0, 'haushaltsnah'], ['Spenden', 'ausgabe', 0, 'spenden'],
     ['Beruf und Fortbildung', 'ausgabe', 0, 'werbungskosten'], ['Steuern', 'ausgabe'], ['Immobilien', 'ausgabe'], ['Kreditzinsen', 'ausgabe', 1], ['Sonstige Ausgaben', 'ausgabe'],
   ];
+  // The management business (world WEG): fees in, office costs out.
+  const START_WEG = [
+    ['Verwaltervergütung', 'einnahme'], ['Sondervergütungen', 'einnahme'], ['Auslagenersatz', 'einnahme'], ['Sonstige Einnahmen', 'einnahme'],
+    ['Büro und Miete', 'ausgabe', 1], ['Personal', 'ausgabe', 1], ['Software und IT', 'ausgabe', 1], ['Telefon und Internet', 'ausgabe', 1],
+    ['Versicherungen (Vermögensschaden, Haftpflicht)', 'ausgabe', 1], ['Fahrtkosten', 'ausgabe'], ['Porto und Büromaterial', 'ausgabe'],
+    ['Fortbildung und Zertifizierung', 'ausgabe'], ['Steuerberatung und Buchhaltung', 'ausgabe'], ['Bankgebühren', 'ausgabe', 1],
+    ['Steuern', 'ausgabe'], ['Sonstige Ausgaben', 'ausgabe'],
+  ];
   function kategorien(b) {
-    if (!get('SELECT 1 AS x FROM fin_kategorien WHERE benutzer = ? LIMIT 1', B(b))) {
-      const ins = db.prepare('INSERT INTO fin_kategorien (benutzer, name, art, fix, steuer) VALUES (?, ?, ?, ?, ?)');
-      tx(() => { for (const [name, art, fix = 0, steuer = null] of START) ins.run(B(b), name, art, fix, steuer); });
+    if (!get(`SELECT 1 AS x FROM fin_kategorien WHERE benutzer = ? AND bereich = ${W} LIMIT 1`, B(b))) {
+      const ins = db.prepare(`INSERT INTO fin_kategorien (bereich, benutzer, name, art, fix, steuer) VALUES (${W}, ?, ?, ?, ?, ?)`);
+      tx(() => { for (const [name, art, fix = 0, steuer = null] of bereich() === 'weg' ? START_WEG : START) ins.run(B(b), name, art, fix, steuer); });
     }
     return all(`SELECT c.*, e.name AS eltern, CASE WHEN e.name IS NULL THEN c.name ELSE e.name || ' › ' || c.name END AS pfad
-      FROM fin_kategorien c LEFT JOIN fin_kategorien e ON e.id = c.eltern_id WHERE c.benutzer = ? ORDER BY c.art DESC, c.archiviert, pfad COLLATE NOCASE`, B(b));
+      FROM fin_kategorien c LEFT JOIN fin_kategorien e ON e.id = c.eltern_id WHERE c.benutzer = ? AND c.bereich = ${W} ORDER BY c.art DESC, c.archiviert, pfad COLLATE NOCASE`, B(b));
   }
   // A category with its sub-categories.
-  const mitUnter = (b, id) => [id, ...all('SELECT id FROM fin_kategorien WHERE benutzer = ? AND eltern_id = ?', B(b), id).map((c) => c.id)];
+  const mitUnter = (b, id) => [id, ...all(`SELECT id FROM fin_kategorien WHERE benutzer = ? AND bereich = ${W} AND eltern_id = ?`, B(b), id).map((c) => c.id)];
 
   const SALDO = `k.anfang_ct + coalesce((SELECT sum(x.betrag_ct) FROM fin_buchungen x WHERE x.konto_id = k.id AND ${GANZ('x')}), 0)`;
   const DEPOT = `coalesce((SELECT sum(cast(round(w.stueck * coalesce(w.kurs_ct, 0)) AS INTEGER)) FROM fin_wertpapiere w WHERE w.konto_id = k.id), 0)`;
@@ -54,7 +71,7 @@ module.exports = function finanzen({ db, all, get, tx, bh }) {
     return all(`SELECT k.*, ${SALDO} AS saldo_ct, ${DEPOT} AS depot_ct, (SELECT count(*) FROM fin_buchungen x WHERE x.konto_id = k.id AND ${GANZ('x')}) AS buchungen,
         (SELECT max(x.datum) FROM fin_buchungen x WHERE x.konto_id = k.id) AS letzte,
         (SELECT count(*) FROM fin_buchungen x WHERE x.konto_id = k.id AND x.neu = 1 AND ${GANZ('x')}) AS neue
-      FROM fin_konten k WHERE k.benutzer = ? ORDER BY k.archiviert, coalesce(k.gruppe, ''), k.sort, k.id`, B(b)).map((k) => {
+      FROM fin_konten k WHERE k.benutzer = ? AND k.bereich = ${W} ORDER BY k.archiviert, coalesce(k.gruppe, ''), k.sort, k.id`, B(b)).map((k) => {
       // What the account is worth (cash plus securities), and where it stands against its limits and the bank's balance.
       const wert = k.saldo_ct + k.depot_ct;
       const zumStichtag = k.bank_saldo_datum == null ? null : k.anfang_ct + get(`SELECT coalesce(sum(x.betrag_ct), 0) AS s FROM fin_buchungen x
@@ -65,7 +82,7 @@ module.exports = function finanzen({ db, all, get, tx, bh }) {
   }
 
   // The first rule that fits a movement: its text in payee and/or purpose, and – when given – account and amount range.
-  const regelnVon = (b) => all('SELECT * FROM fin_regeln WHERE benutzer = ? ORDER BY rang DESC, length(muster) DESC, id', B(b));
+  const regelnVon = (b) => all(`SELECT * FROM fin_regeln WHERE benutzer = ? AND bereich = ${W} ORDER BY rang DESC, length(muster) DESC, id`, B(b));
   function regelFuer(regeln, x) {
     const e = falten(x.empfaenger), z = falten(x.zweck), betrag = Math.abs(x.betrag_ct ?? 0);
     return regeln.find((r) => {
@@ -78,9 +95,9 @@ module.exports = function finanzen({ db, all, get, tx, bh }) {
   // Sums per category between two days.
   const jeKategorie = (b, von, bis) => all(`SELECT x.kategorie_id, c.name, c.art, c.fix, c.steuer, c.eltern_id, e.name AS eltern, sum(x.betrag_ct) AS summe_ct, count(*) AS anzahl
     FROM fin_buchungen x LEFT JOIN fin_kategorien c ON c.id = x.kategorie_id LEFT JOIN fin_kategorien e ON e.id = c.eltern_id
-    WHERE x.benutzer = ? AND ${WERT('x')} AND x.datum BETWEEN ? AND ? GROUP BY x.kategorie_id ORDER BY summe_ct`, B(b), von, bis);
+    WHERE x.benutzer = ? AND x.bereich = ${W} AND ${WERT('x')} AND x.datum BETWEEN ? AND ? GROUP BY x.kategorie_id ORDER BY summe_ct`, B(b), von, bis);
   const einAus = (b, von, bis) => get(`SELECT coalesce(sum(CASE WHEN x.betrag_ct > 0 THEN x.betrag_ct END), 0) AS ein_ct, coalesce(-sum(CASE WHEN x.betrag_ct < 0 THEN x.betrag_ct END), 0) AS aus_ct
-    FROM fin_buchungen x WHERE x.benutzer = ? AND ${WERT('x')} AND x.datum BETWEEN ? AND ?`, B(b), von, bis);
+    FROM fin_buchungen x WHERE x.benutzer = ? AND x.bereich = ${W} AND ${WERT('x')} AND x.datum BETWEEN ? AND ?`, B(b), von, bis);
   // Sub-categories gathered under their main category: [{ name, summe_ct, unter: [...] }], the largest first.
   function gruppiert(zeilen, vorzeichen) {
     const g = new Map();
@@ -96,7 +113,7 @@ module.exports = function finanzen({ db, all, get, tx, bh }) {
 
   const dauerRoh = (b) => all(`SELECT d.*, k.name AS konto, g.name AS gegenkonto, c.name AS kategorie FROM fin_dauer d JOIN fin_konten k ON k.id = d.konto_id
       LEFT JOIN fin_konten g ON g.id = d.gegenkonto_id LEFT JOIN fin_kategorien c ON c.id = d.kategorie_id
-    WHERE d.benutzer = ? ORDER BY d.aktiv DESC, d.naechste`, B(b));
+    WHERE d.benutzer = ? AND d.bereich = ${W} ORDER BY d.aktiv DESC, d.naechste`, B(b));
   // A contract's term: it renews by itself unless notice was given; notice has to arrive the notice period before the
   // term ends. laufzeit_ende is the end of the term running today, kuendigen_bis the last day for the notice.
   function vertragsstand(d, heute = ortszeit.heute()) {
@@ -121,12 +138,12 @@ module.exports = function finanzen({ db, all, get, tx, bh }) {
     const auftraege = dauerRoh(b).filter((d) => d.aktiv && !d.gegenkonto_id && d.betrag_ct < 0);
     const heute = ortszeit.heute();
     return all(`SELECT g.*, c.name, e.name AS eltern FROM fin_budgets g JOIN fin_kategorien c ON c.id = g.kategorie_id LEFT JOIN fin_kategorien e ON e.id = c.eltern_id
-      WHERE g.benutzer = ? ORDER BY c.name COLLATE NOCASE`, B(b)).map((g) => {
+      WHERE g.benutzer = ? AND g.bereich = ${W} ORDER BY c.name COLLATE NOCASE`, B(b)).map((g) => {
       const [j, m] = monat.split('-').map(Number);
       const start = g.intervall_monate === 12 ? `${j}-01` : g.intervall_monate === 3 ? `${j}-${String(Math.floor((m - 1) / 3) * 3 + 1).padStart(2, '0')}` : monat;
       const von = `${start}-01`, bis = monatsende(monatVon(plusMonate(von, g.intervall_monate - 1)));
       const ids = g.mit_unter ? mitUnter(b, g.kategorie_id) : [g.kategorie_id];
-      const ist = Math.max(0, -get(`SELECT coalesce(sum(x.betrag_ct), 0) AS s FROM fin_buchungen x WHERE x.benutzer = ? AND ${WERT('x')} AND x.datum BETWEEN ? AND ?
+      const ist = Math.max(0, -get(`SELECT coalesce(sum(x.betrag_ct), 0) AS s FROM fin_buchungen x WHERE x.benutzer = ? AND x.bereich = ${W} AND ${WERT('x')} AND x.datum BETWEEN ? AND ?
         AND x.kategorie_id IN (${ids.map(() => '?').join(',')})`, B(b), von, bis, ...ids).s);
       let erwartet = 0;
       if (g.prognose) for (const d of auftraege) if (ids.includes(d.kategorie_id)) for (const t of laeufe(d, heute > von ? heute : von, bis)) { void t; erwartet -= d.betrag_ct; }
@@ -171,11 +188,11 @@ module.exports = function finanzen({ db, all, get, tx, bh }) {
             row.kennzeichen || null, row.vorgemerkt ? 1 : 0, row.id);
         db.prepare('UPDATE fin_buchungen SET konto_id = ?, datum = ? WHERE split_von = ?').run(konto.id, row.datum, row.id);
         // The other side of a transfer follows date and amount.
-        if (alt.umbuchung_id) db.prepare('UPDATE fin_buchungen SET datum = ?, betrag_ct = ? WHERE id = ? AND benutzer = ?').run(row.datum, -betrag, alt.umbuchung_id, B(b));
+        if (alt.umbuchung_id) db.prepare(`UPDATE fin_buchungen SET datum = ?, betrag_ct = ? WHERE id = ? AND benutzer = ? AND bereich = ${W}`).run(row.datum, -betrag, alt.umbuchung_id, B(b));
         return row.id;
       }
-      const ins = db.prepare(`INSERT INTO fin_buchungen (benutzer, konto_id, datum, valuta, betrag_ct, empfaenger, zweck, kategorie_id, notiz, dauer_id, kennzeichen, vorgemerkt)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      const ins = db.prepare(`INSERT INTO fin_buchungen (bereich, benutzer, konto_id, datum, valuta, betrag_ct, empfaenger, zweck, kategorie_id, notiz, dauer_id, kennzeichen, vorgemerkt)
+        VALUES (${W}, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
       const rest = [row.notiz || null, row.dauer_id ?? null, row.kennzeichen || null, row.vorgemerkt ? 1 : 0];
       if (row.gegenkonto_id) {
         const gegen = mein('fin_konten', row.gegenkonto_id, b);
@@ -244,7 +261,7 @@ module.exports = function finanzen({ db, all, get, tx, bh }) {
   }
 
   const wertpapiere = (b, kontoId = null) => all(`SELECT w.*, k.name AS konto FROM fin_wertpapiere w JOIN fin_konten k ON k.id = w.konto_id
-    WHERE w.benutzer = ?1 AND (?2 IS NULL OR w.konto_id = ?2) ORDER BY w.name COLLATE NOCASE`, B(b), kontoId || null).map((w) => {
+    WHERE w.benutzer = ?1 AND w.bereich = ${W} AND (?2 IS NULL OR w.konto_id = ?2) ORDER BY w.name COLLATE NOCASE`, B(b), kontoId || null).map((w) => {
     const wert = Math.round(w.stueck * (w.kurs_ct ?? 0));
     return { ...w, wert_ct: wert, gewinn_ct: w.kurs_ct == null ? null : wert - w.einstand_ct, gewinn_prozent: w.kurs_ct == null || !w.einstand_ct ? null : Math.round((wert - w.einstand_ct) / w.einstand_ct * 1000) / 10 };
   });
@@ -263,10 +280,25 @@ module.exports = function finanzen({ db, all, get, tx, bh }) {
           zins_prozent = ?, rate_ct = ?, zinsbindung_bis = ? WHERE id = ?`).run(...w, row.id);
         return row.id;
       }
-      return Number(db.prepare(`INSERT INTO fin_konten (benutzer, name, art, bank, iban, anfang_ct, anfang_datum, archiviert, gruppe, dispo_ct, min_ct, bank_saldo_ct, bank_saldo_datum, zins_prozent, rate_ct, zinsbindung_bis)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(B(b), ...w).lastInsertRowid);
+      return Number(db.prepare(`INSERT INTO fin_konten (bereich, benutzer, name, art, bank, iban, anfang_ct, anfang_datum, archiviert, gruppe, dispo_ct, min_ct, bank_saldo_ct, bank_saldo_datum, zins_prozent, rate_ct, zinsbindung_bis)
+        VALUES (${W}, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(B(b), ...w).lastInsertRowid);
     },
     // An account with movements is archived instead of deleted, so no history is lost by a slip.
+    // Moves an account with its movements, standing orders and securities to the other world (it was sorted wrongly).
+    // Categories, transfers and rules pointing across are let go: they belong to one world.
+    finKontoWelt: (b, id, welt) => tx(() => {
+      if (!['privat', 'weg'].includes(welt)) throw new Error('Unbekannte Welt.');
+      const k = mein('fin_konten', id, b);
+      if (k.bereich === welt) return false;
+      db.prepare('UPDATE fin_buchungen SET umbuchung_id = NULL WHERE umbuchung_id IN (SELECT id FROM fin_buchungen WHERE konto_id = ?)').run(id);
+      db.prepare('UPDATE fin_buchungen SET bereich = ?, kategorie_id = NULL, umbuchung_id = NULL WHERE konto_id = ?').run(welt, id);
+      db.prepare('UPDATE fin_dauer SET gegenkonto_id = NULL WHERE gegenkonto_id = ?').run(id);
+      db.prepare('UPDATE fin_dauer SET bereich = ?, kategorie_id = NULL, gegenkonto_id = NULL WHERE konto_id = ?').run(welt, id);
+      db.prepare('UPDATE fin_wertpapiere SET bereich = ? WHERE konto_id = ?').run(welt, id);
+      db.prepare('UPDATE fin_regeln SET konto_id = NULL WHERE konto_id = ?').run(id);
+      db.prepare('UPDATE fin_konten SET bereich = ? WHERE id = ?').run(welt, id);
+      return true;
+    }),
     finKontoLoeschen: (b, id) => {
       mein('fin_konten', id, b);
       // Contracts and securities hang on the account too: deleting it would take them along without a word.
@@ -307,7 +339,7 @@ module.exports = function finanzen({ db, all, get, tx, bh }) {
       }
       const w = [name, row.art, row.fix ? 1 : 0, row.steuer || null, row.archiviert ? 1 : 0, eltern];
       if (row.id) { mein('fin_kategorien', row.id, b); db.prepare('UPDATE fin_kategorien SET name = ?, art = ?, fix = ?, steuer = ?, archiviert = ?, eltern_id = ? WHERE id = ?').run(...w, row.id); return row.id; }
-      return Number(db.prepare('INSERT INTO fin_kategorien (benutzer, name, art, fix, steuer, archiviert, eltern_id) VALUES (?, ?, ?, ?, ?, ?, ?)').run(B(b), ...w).lastInsertRowid);
+      return Number(db.prepare(`INSERT INTO fin_kategorien (bereich, benutzer, name, art, fix, steuer, archiviert, eltern_id) VALUES (${W}, ?, ?, ?, ?, ?, ?, ?)`).run(B(b), ...w).lastInsertRowid);
     },
     finKategorieLoeschen: (b, id) => {
       mein('fin_kategorien', id, b);
@@ -327,7 +359,7 @@ module.exports = function finanzen({ db, all, get, tx, bh }) {
           (SELECT count(*) FROM fin_buchungen t WHERE t.split_von = x.id) AS teile,
           (SELECT group_concat(coalesce(tc.name, 'offen'), ', ') FROM fin_buchungen t LEFT JOIN fin_kategorien tc ON tc.id = t.kategorie_id WHERE t.split_von = x.id) AS teil_kategorien
         FROM fin_buchungen x JOIN fin_konten k ON k.id = x.konto_id LEFT JOIN fin_kategorien c ON c.id = x.kategorie_id LEFT JOIN fin_buchungen u ON u.id = x.umbuchung_id
-        WHERE x.benutzer = ?1 AND ${GANZ('x')} AND (?2 IS NULL OR x.konto_id = ?2) AND (?3 IS NULL OR x.datum >= ?3) AND (?4 IS NULL OR x.datum <= ?4)
+        WHERE x.benutzer = ?1 AND x.bereich = ${W} AND ${GANZ('x')} AND (?2 IS NULL OR x.konto_id = ?2) AND (?3 IS NULL OR x.datum >= ?3) AND (?4 IS NULL OR x.datum <= ?4)
           AND (?5 = 0 OR (x.kategorie_id IS NULL AND ${WERT('x')}) OR EXISTS (SELECT 1 FROM fin_buchungen t WHERE t.split_von = x.id AND t.kategorie_id IS NULL))
           AND (?6 = '%%' OR x.empfaenger LIKE ?6 OR x.zweck LIKE ?6 OR x.notiz LIKE ?6 OR x.kennzeichen LIKE ?6)
           AND (?7 = 0 OR x.neu = 1) AND (?8 IS NULL OR x.kennzeichen = ?8)
@@ -337,7 +369,7 @@ module.exports = function finanzen({ db, all, get, tx, bh }) {
     finBuchungSpeichern: buchungSpeichern,
     finBuchungLoeschen: (b, id) => tx(() => {
       const x = mein('fin_buchungen', id, b);
-      db.prepare('DELETE FROM fin_buchungen WHERE benutzer = ? AND (id IN (?, ?) OR split_von = ?)').run(B(b), id, x.umbuchung_id ?? id, id);
+      db.prepare(`DELETE FROM fin_buchungen WHERE benutzer = ? AND bereich = ${W} AND (id IN (?, ?) OR split_von = ?)`).run(B(b), id, x.umbuchung_id ?? id, id);
       return true;
     }),
     // The parts of a split movement (one purchase, several categories); without parts the split is removed.
@@ -351,7 +383,7 @@ module.exports = function finanzen({ db, all, get, tx, bh }) {
       if (liste.length < 2) throw new Error('Eine Aufteilung braucht mindestens zwei Teile.');
       const summe = liste.reduce((s, t) => s + t.betrag_ct, 0);
       if (summe !== x.betrag_ct) throw new Error(`Die Teile ergeben ${(summe / 100).toFixed(2).replace('.', ',')} €, die Buchung hat ${(x.betrag_ct / 100).toFixed(2).replace('.', ',')} €.`);
-      const ins = db.prepare('INSERT INTO fin_buchungen (benutzer, konto_id, datum, betrag_ct, empfaenger, zweck, kategorie_id, split_von) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+      const ins = db.prepare(`INSERT INTO fin_buchungen (bereich, benutzer, konto_id, datum, betrag_ct, empfaenger, zweck, kategorie_id, split_von) VALUES (${W}, ?, ?, ?, ?, ?, ?, ?, ?)`);
       for (const t of liste) { if (t.kategorie_id) mein('fin_kategorien', t.kategorie_id, b); ins.run(B(b), x.konto_id, x.datum, t.betrag_ct, x.empfaenger, t.zweck, t.kategorie_id, id); }
       db.prepare('UPDATE fin_buchungen SET kategorie_id = NULL WHERE id = ?').run(id);
       return liste.length;
@@ -359,27 +391,27 @@ module.exports = function finanzen({ db, all, get, tx, bh }) {
     // Several movements get the same category; with regel the payee becomes a rule for the next ones.
     finKategorisieren: (b, ids, kategorieId, regel = null) => tx(() => {
       if (kategorieId) mein('fin_kategorien', kategorieId, b);
-      const st = db.prepare(`UPDATE fin_buchungen SET kategorie_id = ?, neu = 0 WHERE id = ? AND benutzer = ? AND umbuchung_id IS NULL AND NOT EXISTS (SELECT 1 FROM fin_buchungen t WHERE t.split_von = fin_buchungen.id)`);
+      const st = db.prepare(`UPDATE fin_buchungen SET kategorie_id = ?, neu = 0 WHERE id = ? AND benutzer = ? AND bereich = ${W} AND umbuchung_id IS NULL AND NOT EXISTS (SELECT 1 FROM fin_buchungen t WHERE t.split_von = fin_buchungen.id)`);
       let n = 0;
       for (const id of ids ?? []) n += st.run(kategorieId || null, id, B(b)).changes;
       const muster = String(regel ?? '').trim();
-      if (muster && kategorieId && !get('SELECT 1 AS x FROM fin_regeln WHERE benutzer = ? AND lower(muster) = lower(?)', B(b), muster))
-        db.prepare('INSERT INTO fin_regeln (benutzer, muster, kategorie_id) VALUES (?, ?, ?)').run(B(b), muster, kategorieId);
+      if (muster && kategorieId && !get(`SELECT 1 AS x FROM fin_regeln WHERE benutzer = ? AND bereich = ${W} AND lower(muster) = lower(?)`, B(b), muster))
+        db.prepare(`INSERT INTO fin_regeln (bereich, benutzer, muster, kategorie_id) VALUES (${W}, ?, ?, ?)`).run(B(b), muster, kategorieId);
       return n;
     }),
     // Imported movements are „new“ until looked at.
     finGesehen: (b, ids = null) => {
-      if (!ids) return db.prepare('UPDATE fin_buchungen SET neu = 0 WHERE benutzer = ? AND neu = 1').run(B(b)).changes;
-      const st = db.prepare('UPDATE fin_buchungen SET neu = 0 WHERE id = ? AND benutzer = ?');
+      if (!ids) return db.prepare(`UPDATE fin_buchungen SET neu = 0 WHERE benutzer = ? AND bereich = ${W} AND neu = 1`).run(B(b)).changes;
+      const st = db.prepare(`UPDATE fin_buchungen SET neu = 0 WHERE id = ? AND benutzer = ? AND bereich = ${W}`);
       return ids.reduce((n, id) => n + st.run(id, B(b)).changes, 0);
     },
-    finKennzeichen: (b) => all(`SELECT kennzeichen, count(*) AS anzahl FROM fin_buchungen WHERE benutzer = ? AND kennzeichen IS NOT NULL AND split_von IS NULL GROUP BY kennzeichen ORDER BY kennzeichen COLLATE NOCASE`, B(b)),
+    finKennzeichen: (b) => all(`SELECT kennzeichen, count(*) AS anzahl FROM fin_buchungen WHERE benutzer = ? AND bereich = ${W} AND kennzeichen IS NOT NULL AND split_von IS NULL GROUP BY kennzeichen ORDER BY kennzeichen COLLATE NOCASE`, B(b)),
     // Movements of a bank statement (read on the device): each once (its reference), categorised by the rules. An
     // expected movement of the same amount within a week is the same payment: it is confirmed instead of doubled.
     finImport: (b, kontoId, zeilen) => tx(() => {
       const konto = mein('fin_konten', kontoId, b);
       const regeln = regelnVon(b);
-      const ins = db.prepare(`INSERT OR IGNORE INTO fin_buchungen (benutzer, konto_id, datum, betrag_ct, empfaenger, zweck, kategorie_id, kennzeichen, import_ref, neu) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`);
+      const ins = db.prepare(`INSERT OR IGNORE INTO fin_buchungen (bereich, benutzer, konto_id, datum, betrag_ct, empfaenger, zweck, kategorie_id, kennzeichen, import_ref, neu) VALUES (${W}, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`);
       const auftraege = dauerRoh(b).filter((d) => d.aktiv && !d.gegenkonto_id);
       let neu = 0, kategorisiert = 0, bestaetigt = 0, doppelt = 0, zugeordnet = 0;
       for (const z of zeilen ?? []) {
@@ -418,9 +450,9 @@ module.exports = function finanzen({ db, all, get, tx, bh }) {
     // Two movements on different own accounts, opposite amounts within four days, both without category: most likely
     // one transfer seen from both sides (each account's statement brings its half).
     finUmbuchungVorschlaege: (b) => all(`SELECT a.id AS von_id, z.id AS nach_id, a.datum, a.betrag_ct, ka.name AS von_konto, kz.name AS nach_konto, a.empfaenger, z.empfaenger AS gegen
-      FROM fin_buchungen a JOIN fin_buchungen z ON z.benutzer = a.benutzer AND z.konto_id <> a.konto_id AND z.betrag_ct = -a.betrag_ct AND abs(julianday(z.datum) - julianday(a.datum)) <= 4
+      FROM fin_buchungen a JOIN fin_buchungen z ON z.benutzer = a.benutzer AND z.bereich = a.bereich AND z.konto_id <> a.konto_id AND z.betrag_ct = -a.betrag_ct AND abs(julianday(z.datum) - julianday(a.datum)) <= 4
       JOIN fin_konten ka ON ka.id = a.konto_id JOIN fin_konten kz ON kz.id = z.konto_id
-      WHERE a.benutzer = ? AND a.betrag_ct < 0 AND a.umbuchung_id IS NULL AND z.umbuchung_id IS NULL AND a.kategorie_id IS NULL AND z.kategorie_id IS NULL
+      WHERE a.benutzer = ? AND a.bereich = ${W} AND a.betrag_ct < 0 AND a.umbuchung_id IS NULL AND z.umbuchung_id IS NULL AND a.kategorie_id IS NULL AND z.kategorie_id IS NULL
         AND a.split_von IS NULL AND z.split_von IS NULL AND a.ziel_art IS NULL AND z.ziel_art IS NULL
         AND NOT EXISTS (SELECT 1 FROM fin_buchungen t WHERE t.split_von IN (a.id, z.id))
       GROUP BY a.id ORDER BY a.datum DESC LIMIT 50`, B(b)),
@@ -432,7 +464,7 @@ module.exports = function finanzen({ db, all, get, tx, bh }) {
     }),
 
     finRegeln: (b) => all(`SELECT r.*, c.name AS kategorie, k.name AS konto FROM fin_regeln r JOIN fin_kategorien c ON c.id = r.kategorie_id LEFT JOIN fin_konten k ON k.id = r.konto_id
-      WHERE r.benutzer = ? ORDER BY r.rang DESC, r.muster COLLATE NOCASE`, B(b)),
+      WHERE r.benutzer = ? AND r.bereich = ${W} ORDER BY r.rang DESC, r.muster COLLATE NOCASE`, B(b)),
     finRegelSpeichern: (b, row) => {
       const muster = String(row.muster ?? '').trim();
       if (muster.length < 3) throw new Error('Der Suchtext braucht mindestens drei Zeichen.');
@@ -440,7 +472,7 @@ module.exports = function finanzen({ db, all, get, tx, bh }) {
       if (row.konto_id) mein('fin_konten', row.konto_id, b);
       const w = [muster, row.kategorie_id, ['empfaenger', 'zweck'].includes(row.feld) ? row.feld : 'beide', ct(row.betrag_von_ct), ct(row.betrag_bis_ct), row.konto_id || null, String(row.kennzeichen ?? '').trim() || null, Number(row.rang) || 0];
       if (row.id) { mein('fin_regeln', row.id, b); db.prepare('UPDATE fin_regeln SET muster = ?, kategorie_id = ?, feld = ?, betrag_von_ct = ?, betrag_bis_ct = ?, konto_id = ?, kennzeichen = ?, rang = ? WHERE id = ?').run(...w, row.id); return row.id; }
-      return Number(db.prepare('INSERT INTO fin_regeln (benutzer, muster, kategorie_id, feld, betrag_von_ct, betrag_bis_ct, konto_id, kennzeichen, rang) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(B(b), ...w).lastInsertRowid);
+      return Number(db.prepare(`INSERT INTO fin_regeln (bereich, benutzer, muster, kategorie_id, feld, betrag_von_ct, betrag_bis_ct, konto_id, kennzeichen, rang) VALUES (${W}, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(B(b), ...w).lastInsertRowid);
     },
     finRegelLoeschen: (b, id) => { mein('fin_regeln', id, b); db.prepare('DELETE FROM fin_regeln WHERE id = ?').run(id); return true; },
     // The rules applied to everything that has no category yet.
@@ -448,7 +480,7 @@ module.exports = function finanzen({ db, all, get, tx, bh }) {
       const regeln = regelnVon(b);
       const st = db.prepare('UPDATE fin_buchungen SET kategorie_id = ?, kennzeichen = coalesce(kennzeichen, ?) WHERE id = ?');
       let n = 0;
-      for (const x of all(`SELECT x.id, x.konto_id, x.betrag_ct, x.empfaenger, x.zweck FROM fin_buchungen x WHERE x.benutzer = ? AND x.kategorie_id IS NULL AND ${WERT('x')} AND ${GANZ('x')}`, B(b))) {
+      for (const x of all(`SELECT x.id, x.konto_id, x.betrag_ct, x.empfaenger, x.zweck FROM fin_buchungen x WHERE x.benutzer = ? AND x.bereich = ${W} AND x.kategorie_id IS NULL AND ${WERT('x')} AND ${GANZ('x')}`, B(b))) {
         const r = regelFuer(regeln, x);
         if (r) { st.run(r.kategorie_id, r.kennzeichen, x.id); n++; }
       }
@@ -461,8 +493,8 @@ module.exports = function finanzen({ db, all, get, tx, bh }) {
       const row = typeof kategorieOderRow === 'object' && kategorieOderRow ? kategorieOderRow : { kategorie_id: kategorieOderRow, betrag_ct: betragCt };
       mein('fin_kategorien', row.kategorie_id, b);
       const betrag = Math.round(Number(row.betrag_ct) || 0);
-      if (betrag <= 0) db.prepare('DELETE FROM fin_budgets WHERE benutzer = ? AND kategorie_id = ?').run(B(b), row.kategorie_id);
-      else db.prepare(`INSERT INTO fin_budgets (benutzer, kategorie_id, betrag_ct, intervall_monate, mit_unter, prognose) VALUES (?, ?, ?, ?, ?, ?)
+      if (betrag <= 0) db.prepare(`DELETE FROM fin_budgets WHERE benutzer = ? AND bereich = ${W} AND kategorie_id = ?`).run(B(b), row.kategorie_id);
+      else db.prepare(`INSERT INTO fin_budgets (bereich, benutzer, kategorie_id, betrag_ct, intervall_monate, mit_unter, prognose) VALUES (${W}, ?, ?, ?, ?, ?, ?)
         ON CONFLICT DO UPDATE SET betrag_ct = excluded.betrag_ct, intervall_monate = excluded.intervall_monate, mit_unter = excluded.mit_unter, prognose = excluded.prognose`)
         .run(B(b), row.kategorie_id, betrag, [1, 3, 12].includes(Number(row.intervall_monate)) ? Number(row.intervall_monate) : 1, row.mit_unter === 0 || row.mit_unter === false ? 0 : 1, row.prognose ? 1 : 0);
       return true;
@@ -484,7 +516,7 @@ module.exports = function finanzen({ db, all, get, tx, bh }) {
       const spalten = ['konto_id', 'gegenkonto_id', 'empfaenger', 'zweck', 'betrag_ct', 'kategorie_id', 'rhythmus_monate', 'naechste', 'ende', 'kuendbar_bis', 'aktiv', 'typ', 'vertragsnummer', 'kundennummer', 'beginn',
         'laufzeit_bis', 'verlaengerung_monate', 'kuendigungsfrist_tage', 'gekuendigt_am', 'variabel', 'notiz'];
       if (row.id) { mein('fin_dauer', row.id, b); db.prepare(`UPDATE fin_dauer SET ${spalten.map((s) => `${s} = ?`).join(', ')} WHERE id = ?`).run(...w, row.id); return row.id; }
-      return Number(db.prepare(`INSERT INTO fin_dauer (benutzer, ${spalten.join(', ')}) VALUES (?, ${spalten.map(() => '?').join(', ')})`).run(B(b), ...w).lastInsertRowid);
+      return Number(db.prepare(`INSERT INTO fin_dauer (bereich, benutzer, ${spalten.join(', ')}) VALUES (${W}, ?, ${spalten.map(() => '?').join(', ')})`).run(B(b), ...w).lastInsertRowid);
     },
     finDauerLoeschen: (b, id) => { mein('fin_dauer', id, b); db.prepare('DELETE FROM fin_dauer WHERE id = ?').run(id); return true; },
     // Books the next run of a standing order and moves it on by its rhythm. betrag_ct: this run's amount when it varies
@@ -504,17 +536,17 @@ module.exports = function finanzen({ db, all, get, tx, bh }) {
     // What was really paid on a contract: its movements, the sum per year and how the amount changed.
     finDauerVerlauf: (b, id) => {
       const d = mein('fin_dauer', id, b);
-      const zeilen = all(`SELECT id, datum, betrag_ct FROM fin_buchungen WHERE benutzer = ? AND split_von IS NULL AND (dauer_id = ? OR (dauer_id IS NULL AND konto_id = ? AND lower(empfaenger) = lower(?))) ORDER BY datum DESC LIMIT 120`, B(b), id, d.konto_id, d.empfaenger);
+      const zeilen = all(`SELECT id, datum, betrag_ct FROM fin_buchungen WHERE benutzer = ? AND bereich = ${W} AND split_von IS NULL AND (dauer_id = ? OR (dauer_id IS NULL AND konto_id = ? AND lower(empfaenger) = lower(?))) ORDER BY datum DESC LIMIT 120`, B(b), id, d.konto_id, d.empfaenger);
       const jahre = {};
       for (const z of zeilen) jahre[z.datum.slice(0, 4)] = (jahre[z.datum.slice(0, 4)] ?? 0) + z.betrag_ct;
       return { zeilen, jahre: Object.entries(jahre).map(([jahr, summe_ct]) => ({ jahr, summe_ct })).sort((x, y) => y.jahr.localeCompare(x.jahr)) };
     },
     // Payees that were paid about the same amount in at least three different months and are no standing order yet.
     finDauerErkennen: (b) => {
-      const bekannt = new Set(all('SELECT lower(empfaenger) AS e FROM fin_dauer WHERE benutzer = ?', B(b)).map((x) => x.e));
+      const bekannt = new Set(all(`SELECT lower(empfaenger) AS e FROM fin_dauer WHERE benutzer = ? AND bereich = ${W}`, B(b)).map((x) => x.e));
       return all(`SELECT empfaenger, konto_id, kategorie_id, count(DISTINCT substr(datum, 1, 7)) AS monate, count(*) AS n, min(betrag_ct) AS von_ct, max(betrag_ct) AS bis_ct,
           cast(round(avg(betrag_ct)) AS INTEGER) AS betrag_ct, max(datum) AS letzte
-        FROM fin_buchungen WHERE benutzer = ? AND umbuchung_id IS NULL AND split_von IS NULL AND empfaenger IS NOT NULL AND datum >= ? GROUP BY lower(empfaenger), konto_id
+        FROM fin_buchungen WHERE benutzer = ? AND bereich = ${W} AND umbuchung_id IS NULL AND split_von IS NULL AND empfaenger IS NOT NULL AND datum >= ? GROUP BY lower(empfaenger), konto_id
         HAVING monate >= 3 AND n <= monate + 1 AND abs(max(betrag_ct) - min(betrag_ct)) <= max(500, abs(avg(betrag_ct)) / 10) ORDER BY abs(betrag_ct) DESC LIMIT 30`,
       B(b), plusMonate(ortszeit.heute(), -13))
         .filter((x) => !bekannt.has(String(x.empfaenger).toLowerCase()))
@@ -531,7 +563,7 @@ module.exports = function finanzen({ db, all, get, tx, bh }) {
       const w = [k.id, name, String(row.isin ?? '').trim().toUpperCase() || null, stueck, Math.round(Number(row.einstand_ct) || 0), ct(row.kurs_ct), row.kurs_ct == null || row.kurs_ct === '' ? null : row.kurs_datum || ortszeit.heute()];
       let id = row.id;
       if (id) { mein('fin_wertpapiere', id, b); db.prepare('UPDATE fin_wertpapiere SET konto_id = ?, name = ?, isin = ?, stueck = ?, einstand_ct = ?, kurs_ct = ?, kurs_datum = ? WHERE id = ?').run(...w, id); }
-      else id = Number(db.prepare('INSERT INTO fin_wertpapiere (benutzer, konto_id, name, isin, stueck, einstand_ct, kurs_ct, kurs_datum) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(B(b), ...w).lastInsertRowid);
+      else id = Number(db.prepare(`INSERT INTO fin_wertpapiere (bereich, benutzer, konto_id, name, isin, stueck, einstand_ct, kurs_ct, kurs_datum) VALUES (${W}, ?, ?, ?, ?, ?, ?, ?, ?)`).run(B(b), ...w).lastInsertRowid);
       if (w[5] != null) db.prepare('INSERT INTO fin_kurse (wertpapier_id, datum, kurs_ct) VALUES (?, ?, ?) ON CONFLICT DO UPDATE SET kurs_ct = excluded.kurs_ct').run(id, w[6], w[5]);
       return id;
     }),
@@ -545,9 +577,9 @@ module.exports = function finanzen({ db, all, get, tx, bh }) {
       const v = von || `${ortszeit.heute().slice(0, 4)}-01-01`, z = bis || ortszeit.heute();
       const kat = jeKategorie(b, v, z);
       const monate = all(`SELECT substr(x.datum, 1, 7) AS monat, coalesce(sum(CASE WHEN x.betrag_ct > 0 THEN x.betrag_ct END), 0) AS ein_ct, coalesce(-sum(CASE WHEN x.betrag_ct < 0 THEN x.betrag_ct END), 0) AS aus_ct
-        FROM fin_buchungen x WHERE x.benutzer = ? AND ${WERT('x')} AND x.datum BETWEEN ? AND ? GROUP BY monat ORDER BY monat`, B(b), v, z);
+        FROM fin_buchungen x WHERE x.benutzer = ? AND x.bereich = ${W} AND ${WERT('x')} AND x.datum BETWEEN ? AND ? GROUP BY monat ORDER BY monat`, B(b), v, z);
       const empfaenger = all(`SELECT x.empfaenger, -sum(x.betrag_ct) AS summe_ct, count(*) AS anzahl FROM fin_buchungen x
-        WHERE x.benutzer = ? AND x.umbuchung_id IS NULL AND ${GANZ('x')} AND x.betrag_ct < 0 AND x.empfaenger IS NOT NULL AND x.datum BETWEEN ? AND ? GROUP BY lower(x.empfaenger) ORDER BY summe_ct DESC LIMIT 10`, B(b), v, z);
+        WHERE x.benutzer = ? AND x.bereich = ${W} AND x.umbuchung_id IS NULL AND ${GANZ('x')} AND x.betrag_ct < 0 AND x.empfaenger IS NOT NULL AND x.datum BETWEEN ? AND ? GROUP BY lower(x.empfaenger) ORDER BY summe_ct DESC LIMIT 10`, B(b), v, z);
       const sum = einAus(b, v, z);
       const steuer = {};
       for (const k of kat) if (k.steuer) steuer[k.steuer] = (steuer[k.steuer] ?? 0) + Math.abs(k.summe_ct);
@@ -577,9 +609,9 @@ module.exports = function finanzen({ db, all, get, tx, bh }) {
       const vermoegen = k.reduce((s, x) => s + x.wert_ct, 0);
       const m = einAus(b, `${monat}-01`, monatsende(monat));
       const ab = plusMonate(`${monat}-01`, -11);
-      const netto = Object.fromEntries(all(`SELECT substr(x.datum, 1, 7) AS monat, sum(x.betrag_ct) AS s FROM fin_buchungen x WHERE x.benutzer = ? AND ${GANZ('x')} AND x.datum >= ? GROUP BY monat`, B(b), ab).map((r) => [r.monat, r.s]));
+      const netto = Object.fromEntries(all(`SELECT substr(x.datum, 1, 7) AS monat, sum(x.betrag_ct) AS s FROM fin_buchungen x WHERE x.benutzer = ? AND x.bereich = ${W} AND ${GANZ('x')} AND x.datum >= ? GROUP BY monat`, B(b), ab).map((r) => [r.monat, r.s]));
       const einaus = Object.fromEntries(all(`SELECT substr(x.datum, 1, 7) AS monat, coalesce(sum(CASE WHEN x.betrag_ct > 0 THEN x.betrag_ct END), 0) AS ein_ct, coalesce(-sum(CASE WHEN x.betrag_ct < 0 THEN x.betrag_ct END), 0) AS aus_ct
-        FROM fin_buchungen x WHERE x.benutzer = ? AND ${WERT('x')} AND x.datum >= ? GROUP BY monat`, B(b), ab).map((r) => [r.monat, r]));
+        FROM fin_buchungen x WHERE x.benutzer = ? AND x.bereich = ${W} AND ${WERT('x')} AND x.datum >= ? GROUP BY monat`, B(b), ab).map((r) => [r.monat, r]));
       // Net worth at each month's end, counted back from today (securities at today's prices).
       const verlauf = [];
       let stand = vermoegen;
@@ -596,9 +628,9 @@ module.exports = function finanzen({ db, all, get, tx, bh }) {
         faellig: d.filter((x) => x.aktiv && x.naechste <= plusMonate(heute, 1)).slice(0, 8),
         kuendigen: d.filter((x) => x.aktiv && x.vertragsstand === 'bald').sort((x, y) => x.kuendigen_bis.localeCompare(y.kuendigen_bis)).slice(0, 6),
         fix_monat_ct: -d.filter((x) => x.aktiv && !x.gegenkonto_id && x.betrag_ct < 0).reduce((s, x) => s + x.monatlich_ct, 0),
-        ohne_kategorie: get(`SELECT count(*) AS n FROM fin_buchungen x WHERE x.benutzer = ? AND x.kategorie_id IS NULL AND ${WERT('x')}`, B(b)).n,
-        neue: get(`SELECT count(*) AS n FROM fin_buchungen x WHERE x.benutzer = ? AND x.neu = 1 AND ${GANZ('x')}`, B(b)).n,
-        vorgemerkt: get(`SELECT count(*) AS n, coalesce(sum(betrag_ct), 0) AS summe_ct FROM fin_buchungen x WHERE x.benutzer = ? AND x.vorgemerkt = 1 AND ${GANZ('x')}`, B(b)),
+        ohne_kategorie: get(`SELECT count(*) AS n FROM fin_buchungen x WHERE x.benutzer = ? AND x.bereich = ${W} AND x.kategorie_id IS NULL AND ${WERT('x')}`, B(b)).n,
+        neue: get(`SELECT count(*) AS n FROM fin_buchungen x WHERE x.benutzer = ? AND x.bereich = ${W} AND x.neu = 1 AND ${GANZ('x')}`, B(b)).n,
+        vorgemerkt: get(`SELECT count(*) AS n, coalesce(sum(betrag_ct), 0) AS summe_ct FROM fin_buchungen x WHERE x.benutzer = ? AND x.bereich = ${W} AND x.vorgemerkt = 1 AND ${GANZ('x')}`, B(b)),
         warnungen: k.filter((x) => x.warnung || x.abgleich_ct).map((x) => ({ konto_id: x.id, konto: x.name, warnung: x.warnung, abgleich_ct: x.abgleich_ct, saldo_ct: x.saldo_ct })),
         top: gruppiert(jeKategorie(b, `${monat}-01`, monatsende(monat)).filter((r) => r.summe_ct < 0), -1).slice(0, 6).map((r) => ({ name: r.name, summe_ct: r.summe_ct })),
         prognose: prognose(b, 3),
@@ -611,6 +643,8 @@ module.exports = function finanzen({ db, all, get, tx, bh }) {
     // account „Privat“. The movement remembers where it went, so it is handed over only once.
     finUebergeben: (b, id, { ziel, projekt_id = null, objekt_id = null, konto_id = null, titel = null } = {}) => tx(() => {
       const x = mein('fin_buchungen', id, b);
+      if (ziel === 'projekt') imBereich(x.bereich, 'projekt', projekt_id);
+      if (ziel === 'objekt') imBereich(x.bereich, 'objekt', objekt_id);
       if (x.ziel_art) throw new Error('Diese Buchung wurde schon übergeben.');
       if (x.umbuchung_id) throw new Error('Eine Umbuchung zwischen eigenen Konten kann nicht übergeben werden.');
       if (x.split_von) throw new Error('Übergib die ganze Buchung, nicht einen Teil.');
@@ -638,9 +672,11 @@ module.exports = function finanzen({ db, all, get, tx, bh }) {
     // this user has not taken over yet.
     finUebernehmbar: (b, { objekt_id = null, projekt_id = null, von = null } = {}) => {
       const ab = von || plusMonate(ortszeit.heute(), -3);
+      if (projekt_id) imBereich(bereich(), 'projekt', projekt_id);
+      if (objekt_id) imBereich(bereich(), 'objekt', objekt_id);
       if (projekt_id) return all(`SELECT 'projektposten' AS quelle, p.id, coalesce(p.bezahlt_am, p.datum) AS datum, p.titel AS text, p.firma AS name, -p.betrag_ct AS betrag_ct FROM projektposten p
         WHERE p.projekt_id = ? AND p.art = 'rechnung' AND coalesce(p.bezahlt_am, p.datum) >= ?
-          AND NOT EXISTS (SELECT 1 FROM fin_buchungen f WHERE f.benutzer = ? AND f.ziel_art = 'projektposten' AND f.ziel_id = p.id) ORDER BY datum DESC LIMIT 200`, projekt_id, ab, B(b));
+          AND NOT EXISTS (SELECT 1 FROM fin_buchungen f WHERE f.benutzer = ? AND f.bereich = ${W} AND f.ziel_art = 'projektposten' AND f.ziel_id = p.id) ORDER BY datum DESC LIMIT 200`, projekt_id, ab, B(b));
       // Money leaving the house (credit on a bank account) is money the owner receives, and the other way round. The
       // account „Privat“ is no bank account: what was booked against it is private already.
       const bank = (k) => `(${k}.klasse = 'geld' AND coalesce(${k}.kategorie, '') <> 'privat')`;
@@ -648,13 +684,14 @@ module.exports = function finanzen({ db, all, get, tx, bh }) {
           CASE WHEN ${bank('h')} THEN x.betrag_ct ELSE -x.betrag_ct END AS betrag_ct
         FROM buchungen x JOIN konten s ON s.id = x.soll_id JOIN konten h ON h.id = x.haben_id
         WHERE x.objekt_id = ? AND x.datum >= ? AND ${bank('s')} <> ${bank('h')}
-          AND NOT EXISTS (SELECT 1 FROM fin_buchungen f WHERE f.benutzer = ? AND f.ziel_art = 'buchung' AND f.ziel_id = x.id) ORDER BY x.datum DESC, x.id DESC LIMIT 200`, objekt_id, ab, B(b));
+          AND NOT EXISTS (SELECT 1 FROM fin_buchungen f WHERE f.benutzer = ? AND f.bereich = ${W} AND f.ziel_art = 'buchung' AND f.ziel_id = x.id) ORDER BY x.datum DESC, x.id DESC LIMIT 200`, objekt_id, ab, B(b));
     },
     // Takes such a movement into a private account (the sign as given: what it means privately is the user's call).
     finUebernehmen: (b, { quelle, id, konto_id, kategorie_id = null, betrag_ct = null } = {}) => tx(() => {
-      mein('fin_konten', konto_id, b);
+      const konto = mein('fin_konten', konto_id, b);
       if (!['buchung', 'projektposten'].includes(quelle)) throw new Error('Unbekannte Quelle.');
-      if (get('SELECT 1 AS x FROM fin_buchungen WHERE benutzer = ? AND ziel_art = ? AND ziel_id = ?', B(b), quelle, id)) throw new Error('Das wurde schon übernommen.');
+      imBereich(konto.bereich, quelle, id);
+      if (get(`SELECT 1 AS x FROM fin_buchungen WHERE benutzer = ? AND bereich = ${W} AND ziel_art = ? AND ziel_id = ?`, B(b), quelle, id)) throw new Error('Das wurde schon übernommen.');
       const q = quelle === 'buchung'
         ? get(`SELECT x.datum, x.text, x.betrag_ct, o.bezeichnung AS herkunft FROM buchungen x JOIN objekte o ON o.id = x.objekt_id WHERE x.id = ?`, id)
         : get(`SELECT coalesce(p.bezahlt_am, p.datum) AS datum, p.titel AS text, -p.betrag_ct AS betrag_ct, j.titel AS herkunft, p.firma FROM projektposten p JOIN projekte j ON j.id = p.projekt_id WHERE p.id = ?`, id);
@@ -664,6 +701,6 @@ module.exports = function finanzen({ db, all, get, tx, bh }) {
       return bid;
     }),
     // Accounts of a house a private movement can be booked against (costs for an expense, income and tenants for money received).
-    finObjektKonten: (b, objektId) => all(`SELECT id, nr, bezeichnung, klasse FROM konten WHERE objekt_id = ? AND inaktiv = 0 AND klasse IN ('kosten', 'einnahme', 'person') ORDER BY klasse, nr`, objektId),
+    finObjektKonten: (b, objektId) => imBereich(bereich(), 'objekt', objektId) ?? all(`SELECT id, nr, bezeichnung, klasse FROM konten WHERE objekt_id = ? AND inaktiv = 0 AND klasse IN ('kosten', 'einnahme', 'person') ORDER BY klasse, nr`, objektId),
   };
 };

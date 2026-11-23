@@ -1,5 +1,8 @@
 const ortszeit = require('./zeit.cjs');
 const belege = require('./belege.cjs');
+const { KW, objektSql, zeileSql, dokumentOhne, weltVonArt } = require('./welt.cjs');
+// Documents of the world being worked in (electron/welt.cjs): by project, else house, else the world they were sorted to.
+const IN_WELT = (a) => zeileSql(a, dokumentOhne(a));
 // Document archive: inbox, recognised fields, full-text index and the global search.
 // Used by the app and by the Claude Desktop connection (MCP), so it only touches the database.
 
@@ -71,7 +74,7 @@ const GLEICHE_RECHNUNG = (x, d) => `${x}.id <> ${d}.id AND ${x}.status <> 'papie
 const PAPIERKORB_TAGE = 30;
 const mitJson = (d) => d && { ...d, steller: json(d.steller), steuer: json(d.steuer), positionen: json(d.positionen) };
 
-module.exports = function archiv({ db, all, get, tx, PERSON_NAME }) {
+module.exports = function archiv({ db, all, get, tx, PERSON_NAME, wl }) {
   // Our own names and addresses (manager, objects, tenants and owners): never taken for the sender of a letter.
   function eigene() {
     const e = Object.fromEntries(all(`SELECT schluessel, wert FROM einstellungen WHERE schluessel LIKE 'verwalter_%'`).map((r) => [r.schluessel, r.wert]));
@@ -115,7 +118,8 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME }) {
   function objektBeiStandort(lat, lon, maxM = 150) {
     const r = (x) => (x * Math.PI) / 180;
     const abstand = (o) => 2 * 6371000 * Math.asin(Math.sqrt(Math.sin(r(o.breite - lat) / 2) ** 2 + Math.cos(r(lat)) * Math.cos(r(o.breite)) * Math.sin(r(o.laenge - lon) / 2) ** 2));
-    return all('SELECT id, bezeichnung, breite, laenge FROM objekte WHERE breite IS NOT NULL AND laenge IS NOT NULL')
+    // Only houses of the world being worked in: a photo near a house of the other world goes to the inbox.
+    return all(`SELECT id, bezeichnung, breite, laenge FROM objekte WHERE breite IS NOT NULL AND laenge IS NOT NULL AND ${objektSql('id')}`)
       .map((o) => ({ ...o, m: abstand(o) })).filter((o) => o.m <= maxM).sort((a, b) => a.m - b.m)[0] ?? null;
   }
 
@@ -195,6 +199,7 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME }) {
   // done by this firm (its cost type, e.g. boiler service → heating costs).
   function kontoVorschlag(objektId, absender, personId = null) {
     if (!objektId || (!absender && !personId)) return null;
+    wl.zugriff('objekt', objektId);
     const r = absender ? get(`SELECT b.soll_id FROM dokumente d JOIN buchungen b ON b.id = d.buchung_id
       WHERE d.objekt_id = ? AND d.absender = ? ORDER BY d.id DESC LIMIT 1`, objektId, absender) : null;
     if (r) return r.soll_id;
@@ -224,11 +229,24 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME }) {
     const alte = all(`SELECT d.id, d.titel, d.status, ${UEBERNEHMEN.map((k) => `d.${k}`).join(', ')} FROM json_each(?) j JOIN dokumente d ON d.id = j.value
       WHERE d.status <> 'papierkorb' ORDER BY j.key`, JSON.stringify([ids].flat().map(Number).filter((id) => id && id !== neuId)));
     if (new Set(alte.map((d) => d.buchung_id).filter((b) => b != null)).size > 1) throw new Error('Die Dokumente gehören zu verschiedenen Buchungen und lassen sich nicht zusammenfügen.');
+    for (const d of alte) wl.zugriff('dokument', d.id);
+    wl.gleich(...alte.map((d) => ['dokument', d.id]), ['dokument', neuId]);
     for (const [tabelle, spalte] of BILDVERWEISE) {
       const r = get(`SELECT ${spalte} AS id FROM ${tabelle} WHERE ${spalte} IN (SELECT value FROM json_each(?)) LIMIT 1`, JSON.stringify(alte.map((d) => d.id)));
       if (r) throw new Error(`„${alte.find((d) => d.id === r.id).titel}“ ist als Bild in Gebrauch (Titelbild, Inventar- oder Zählerfoto) und lässt sich nicht in ein PDF zusammenfügen.`);
     }
     return alte;
+  }
+
+  // The links of a document (new values over the stored ones) must lie in one world, and a new or changed link in the
+  // world being worked in; so must the document itself.
+  const VERWEISE = [['objekt', 'objekt_id'], ['einheit', 'einheit_id'], ['projekt', 'projekt_id'], ['vorgang', 'vorgang_id'], ['buchung', 'buchung_id']];
+  function weltPruefen(id, werte = {}) {
+    if (id) wl.zugriff('dokument', id);
+    const alt = id ? get('SELECT objekt_id, einheit_id, projekt_id, vorgang_id, buchung_id FROM dokumente WHERE id = ?', id) ?? {} : {};
+    const teile = VERWEISE.map(([art, k]) => [art, k in werte && werte[k] !== '' ? werte[k] : k in werte ? null : alt[k]]);
+    VERWEISE.forEach(([art, k], i) => { if (teile[i][1] != null && teile[i][1] !== alt[k]) wl.zugriff(art, teile[i][1]); });
+    wl.gleich(...teile);
   }
 
   // Removes records for good and returns their files, which the caller deletes (only from the recycle bin).
@@ -261,6 +279,7 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME }) {
 
     dokumentLoeschen: (ids) => tx(() => {
       const liste = [ids].flat().map(Number).filter(Boolean);
+      for (const id of liste) wl.zugriff('dokument', id);
       const jetzt = new Date().toISOString();
       for (const id of liste) {
         db.prepare(`UPDATE dokumente SET geloescht_aus = status, status = 'papierkorb', geloescht = ? WHERE id = ? AND status <> 'papierkorb'`).run(jetzt, id);
@@ -293,12 +312,12 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME }) {
       indexieren(neu.id);
       return { id: neu.id, entfernt: alte.length };
     }),
-    dokumentWiederherstellen: (ids) => tx(() => { for (const id of [ids].flat()) wiederherstellen(Number(id)); }),
-    dokumentEndgueltig: (ids) => tx(() => endgueltig([ids].flat().map(Number))),
+    dokumentWiederherstellen: (ids) => tx(() => { for (const id of [ids].flat()) { wl.zugriff('dokument', Number(id)); wiederherstellen(Number(id)); } }),
+    dokumentEndgueltig: (ids) => tx(() => { for (const id of [ids].flat()) wl.zugriff('dokument', Number(id)); return endgueltig([ids].flat().map(Number)); }),
     papierkorb: () => all(`SELECT d.id, d.titel, d.typ, d.name, d.datei, d.absender, d.betrag_ct, d.geloescht, d.geloescht_aus, d.buchung_id, o.bezeichnung AS objekt
-      FROM dokumente d LEFT JOIN objekte o ON o.id = d.objekt_id WHERE d.status = 'papierkorb' ORDER BY d.geloescht DESC`)
+      FROM dokumente d LEFT JOIN objekte o ON o.id = d.objekt_id WHERE d.status = 'papierkorb' AND ${IN_WELT('d')} ORDER BY d.geloescht DESC`)
       .map((d) => ({ ...d, endgueltig_am: new Date(Date.parse(d.geloescht) + PAPIERKORB_TAGE * 864e5).toISOString() })),
-    papierkorbAnzahl: () => get(`SELECT count(*) AS n FROM dokumente WHERE status = 'papierkorb'`).n,
+    papierkorbAnzahl: () => get(`SELECT count(*) AS n FROM dokumente d WHERE d.status = 'papierkorb' AND ${IN_WELT('d')}`).n,
     // Empties what has been in the bin longer than the days given; returns the files to delete.
     papierkorbLeeren: (tage = PAPIERKORB_TAGE, jetzt = Date.now()) => tx(() => endgueltig(
       all(`SELECT id, geloescht FROM dokumente WHERE status = 'papierkorb'`).filter((d) => !d.geloescht || Date.parse(d.geloescht) <= jetzt - tage * 864e5).map((d) => d.id))),
@@ -380,9 +399,15 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME }) {
         wiederherstellen(vorhanden.id);
         return { id: vorhanden.id, doppelt: false, wiederhergestellt: true, titel: vorhanden.titel };
       }
-      if (vorhanden) return { id: vorhanden.id, doppelt: true, titel: vorhanden.titel };
-      const id = Number(db.prepare(`INSERT INTO dokumente (objekt_id, einheit_id, projekt_id, person_id, buchung_id, vorgang_id, typ, titel, datei, name, groesse, sha256, status, quelle, erfasst, analyse)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, date('now', 'localtime'), 'offen')`).run(row.objekt_id ?? null, row.einheit_id ?? null, row.projekt_id ?? null,
+      if (vorhanden) {
+        // The copy may lie in the other world, where it cannot be seen from here: say so.
+        const w = wl.von('dokument', vorhanden.id), jetzt = wl.aktuelle();
+        return { id: vorhanden.id, doppelt: true, titel: vorhanden.titel, ...(jetzt && (w === 'privat' || w === 'weg') && w !== jetzt ? { welt: w } : {}) };
+      }
+      weltPruefen(null, row);
+      // Added while working in a world (and nowhere else yet): it belongs to that world.
+      const id = Number(db.prepare(`INSERT INTO dokumente (welt, objekt_id, einheit_id, projekt_id, person_id, buchung_id, vorgang_id, typ, titel, datei, name, groesse, sha256, status, quelle, erfasst, analyse)
+        VALUES (${KW}, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, date('now', 'localtime'), 'offen')`).run(row.objekt_id ?? null, row.einheit_id ?? null, row.projekt_id ?? null,
         row.person_id ?? null, row.buchung_id ?? null, row.vorgang_id ?? null, row.typ ?? null, row.titel, row.datei, row.name, row.groesse, row.sha256 ?? null, row.status ?? 'postfach', row.quelle ?? 'upload').lastInsertRowid);
       indexieren(id);
       return { id, doppelt: false };
@@ -393,6 +418,7 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME }) {
         'absender', 'rechnungsnr', 'iban', 'faellig', 'zusammenfassung', 'buchung_id', 'netto_ct', 'ust_ct', 'vorgang_id',
         'steller', 'steuer', 'positionen', 'lohn_ct'];
       // Sender, VAT and items come as objects/lists and are kept as JSON; the VAT sums follow the rates.
+      weltPruefen(row.id, row);
       const r = { ...row };
       // Filed means checked: the sender's name is no longer marked uncertain.
       if (row.status === 'abgelegt' && r.steller && typeof r.steller === 'object') { const { name_unsicher, ...rest } = r.steller; r.steller = rest; }
@@ -424,13 +450,14 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME }) {
       const erlaubt = ['objekt_id', 'einheit_id', 'person_id', 'buchung_id', 'projekt_id', 'vorgang_id'];
       const werte = Object.fromEntries(Object.entries(ziel).filter(([k, v]) => erlaubt.includes(k) && v != null));
       const keys = Object.keys(werte);
+      weltPruefen(id, werte);
       if (get('SELECT status FROM dokumente WHERE id = ?', id)?.status !== 'abgelegt') duplikatSperre(id);
       if (keys.length) db.prepare(`UPDATE dokumente SET ${keys.map((k) => `${k} = ?`).join(', ')}, status = 'abgelegt' WHERE id = ?`).run(...keys.map((k) => werte[k]), id);
       kontaktSicherstellen(id);
       indexieren(id);
     },
 
-    dokument: (id) => mitDuplikat(mitJson(get(`SELECT d.*, o.bezeichnung AS objekt, e.bezeichnung AS einheit, ${PERSON_NAME} AS person,
+    dokument: (id) => wl.zugriff('dokument', id) ?? mitDuplikat(mitJson(get(`SELECT d.*, o.bezeichnung AS objekt, e.bezeichnung AS einheit, ${PERSON_NAME} AS person,
         (SELECT b.soll_id FROM buchungen b WHERE b.id = d.buchung_id) AS buchung_konto_id, (SELECT b.datum FROM buchungen b WHERE b.id = d.buchung_id) AS buchung_datum
       FROM dokumente d LEFT JOIN objekte o ON o.id = d.objekt_id LEFT JOIN einheiten e ON e.id = d.einheit_id
       LEFT JOIN personen p ON p.id = d.person_id WHERE d.id = ?`, id))),
@@ -439,12 +466,12 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME }) {
     dokumentListe: ({ q = '', status = null, objekt_id = null, projekt_id = null, typ = null, jahr = null, limit = 300 } = {}) => {
       const fts = ftsAbfrage(q);
       const sql = `SELECT d.id, d.titel, d.typ, d.kategorie, d.datum, d.erfasst, d.status, d.analyse, d.name, d.datei, d.groesse, d.betrag_ct,
-          d.absender, d.objekt_id, d.einheit_id, d.person_id, d.buchung_id, d.ocr, d.seiten, o.bezeichnung AS objekt, e.bezeichnung AS einheit, ${PERSON_NAME} AS person,
+          d.absender, d.objekt_id, d.einheit_id, d.person_id, d.buchung_id, d.projekt_id, d.welt, d.ocr, d.seiten, o.bezeichnung AS objekt, e.bezeichnung AS einheit, ${PERSON_NAME} AS person,
           (SELECT min(x.id) FROM dokumente x WHERE ${GLEICHE_RECHNUNG('x', 'd')}) AS duplikat_von
           ${fts ? ", snippet(dokumente_fts, 1, '[', ']', ' … ', 12) AS treffer" : ''}
         FROM dokumente d ${fts ? 'JOIN dokumente_fts f ON f.rowid = d.id' : ''}
         LEFT JOIN objekte o ON o.id = d.objekt_id LEFT JOIN einheiten e ON e.id = d.einheit_id LEFT JOIN personen p ON p.id = d.person_id
-        WHERE ${status ? '1 = 1' : "d.status <> 'papierkorb'"} ${fts ? 'AND dokumente_fts MATCH ?' : ''} ${status ? 'AND d.status = ?' : ''} ${objekt_id ? 'AND d.objekt_id = ?' : ''} ${projekt_id ? 'AND d.projekt_id = ?' : ''}
+        WHERE ${status ? '1 = 1' : "d.status <> 'papierkorb'"} AND ${IN_WELT('d')} ${fts ? 'AND dokumente_fts MATCH ?' : ''} ${status ? 'AND d.status = ?' : ''} ${objekt_id ? 'AND d.objekt_id = ?' : ''} ${projekt_id ? 'AND d.projekt_id = ?' : ''}
           ${typ ? 'AND d.typ = ?' : ''} ${jahr ? "AND substr(coalesce(d.datum, d.erfasst), 1, 4) = ?" : ''}
         ORDER BY ${fts ? 'rank' : "coalesce(d.datum, d.erfasst) DESC, d.id DESC"} LIMIT ?`;
       return all(sql, ...[fts || null, status, objekt_id, projekt_id, typ, jahr ? String(jahr) : null].filter((x) => x != null), limit);
@@ -454,6 +481,7 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME }) {
     stapelAblegen: (ids, felder, ablegen) => tx(() => {
       const erlaubt = ['objekt_id', 'einheit_id', 'projekt_id', 'person_id', 'typ', 'kategorie'];
       const keys = erlaubt.filter((k) => k in felder);
+      for (const id of ids) weltPruefen(id, felder);
       // Copies of filed invoices – or the same invoice twice in the selection – are not filed: nothing changes then.
       if (ablegen) {
         const doppelt = ids.filter((id, i) => get(`SELECT status FROM dokumente WHERE id = ?`, id)?.status !== 'abgelegt'
@@ -473,13 +501,24 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME }) {
     // Photos and documents linked to an object, a unit or a project (for the galleries).
     galerie: ({ objekt_id = null, einheit_id = null, projekt_id = null, person_id = null, vorgang_id = null, nur_bilder = false } = {}) => all(`SELECT d.id, d.titel, d.typ, d.datum, d.erfasst,
         d.datei, d.name, d.einheit_id, d.status, e.bezeichnung AS einheit FROM dokumente d LEFT JOIN einheiten e ON e.id = d.einheit_id
-      WHERE d.status = 'abgelegt' AND (?1 IS NULL OR d.objekt_id = ?1) AND (?2 IS NULL OR d.einheit_id = ?2) AND (?3 IS NULL OR d.projekt_id = ?3)
+      WHERE d.status = 'abgelegt' AND ${IN_WELT('d')} AND (?1 IS NULL OR d.objekt_id = ?1) AND (?2 IS NULL OR d.einheit_id = ?2) AND (?3 IS NULL OR d.projekt_id = ?3)
         AND (?5 IS NULL OR d.person_id = ?5) AND (?6 IS NULL OR d.vorgang_id = ?6)
         AND (?4 = 0 OR lower(d.datei) GLOB '*.png' OR lower(d.datei) GLOB '*.jp*g' OR lower(d.datei) GLOB '*.webp' OR lower(d.datei) GLOB '*.gif'
           OR lower(d.datei) GLOB '*.mp4' OR lower(d.datei) GLOB '*.m4v' OR lower(d.datei) GLOB '*.mov' OR lower(d.datei) GLOB '*.webm')
       ORDER BY coalesce(d.datum, d.erfasst) DESC, d.id DESC`, objekt_id, einheit_id, projekt_id, nur_bilder ? 1 : 0, person_id, vorgang_id),
 
-    postfachAnzahl: () => get(`SELECT count(*) AS n FROM dokumente WHERE status = 'postfach'`).n,
+    postfachAnzahl: () => get(`SELECT count(*) AS n FROM dokumente d WHERE d.status = 'postfach' AND ${IN_WELT('d')}`).n,
+    // Inbox documents waiting in the other world only (shown as a hint, so nothing is overlooked).
+    postfachAnderswo: () => get(`SELECT count(*) AS n FROM dokumente d WHERE d.status = 'postfach' AND NOT ${IN_WELT('d')}`).n,
+    // Sorts a document without house and project to a world (button „Gehört zu“ in the inbox).
+    dokumentWelt: (id, welt) => {
+      if (!['privat', 'weg', null].includes(welt ?? null)) throw new Error('Unbekannte Welt.');
+      wl.zugriff('dokument', id);
+      const d = get('SELECT objekt_id, projekt_id FROM dokumente WHERE id = ?', id);
+      if (!d) throw new Error('Dieses Dokument gibt es nicht (mehr).');
+      if (d.objekt_id != null || d.projekt_id != null) throw new Error('Das Dokument ist schon einem Haus oder Projekt zugeordnet; seine Welt folgt daraus.');
+      db.prepare('UPDATE dokumente SET welt = ? WHERE id = ?').run(welt ?? null, id);
+    },
 
     kontoVorschlag,
 
@@ -489,7 +528,7 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME }) {
         (SELECT min(x.id) FROM dokumente x WHERE ${GLEICHE_RECHNUNG('x', 'd')}) AS duplikat_von
       FROM dokumente d LEFT JOIN objekte o ON o.id = d.objekt_id LEFT JOIN buchungen b ON b.id = d.buchung_id
       LEFT JOIN konten k ON k.id = b.soll_id LEFT JOIN konten g ON g.id = b.haben_id
-      WHERE d.typ IN ('Rechnung', 'Gutschrift', 'Mahnung') AND d.status <> 'papierkorb' AND (?1 IS NULL OR d.objekt_id = ?1)
+      WHERE d.typ IN ('Rechnung', 'Gutschrift', 'Mahnung') AND d.status <> 'papierkorb' AND ${IN_WELT('d')} AND (?1 IS NULL OR d.objekt_id = ?1)
         AND (?2 IS NULL OR substr(coalesce(d.datum, d.erfasst), 1, 4) = ?2)
       ORDER BY coalesce(d.datum, d.erfasst) DESC`, objekt_id, jahr ? String(jahr) : null),
 
@@ -500,17 +539,20 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME }) {
       const lower = (col) => `lower(replace(replace(replace(replace(coalesce(${col},''),'ä','ae'),'ö','oe'),'ü','ue'),'ß','ss'))`;
       const fts = ftsAbfrage(q);
       return {
-        dokumente: fts ? all(`SELECT d.id, d.titel, d.typ, d.datum, d.datei, d.objekt_id, o.bezeichnung AS objekt,
+        dokumente: fts ? all(`SELECT d.id, d.titel, d.typ, d.datum, d.datei, d.objekt_id, o.bezeichnung AS objekt, o.art AS objekt_art, d.welt,
+            (SELECT bereich FROM projekte j WHERE j.id = d.projekt_id) AS projekt_welt,
             snippet(dokumente_fts, 1, '[', ']', ' … ', 10) AS treffer FROM dokumente_fts f JOIN dokumente d ON d.id = f.rowid
-            LEFT JOIN objekte o ON o.id = d.objekt_id WHERE dokumente_fts MATCH ? ORDER BY rank LIMIT 20`, fts) : [],
+            LEFT JOIN objekte o ON o.id = d.objekt_id WHERE dokumente_fts MATCH ? ORDER BY rank LIMIT 20`, fts)
+          .map(({ objekt_art, projekt_welt, ...d }) => ({ ...d, welt: projekt_welt ?? weltVonArt(objekt_art) ?? d.welt ?? null })) : [],
         personen: all(`SELECT p.id, ${PERSON_NAME} AS name, p.ort, p.telefon, p.email FROM personen p
           WHERE ${lower("p.vorname || ' ' || p.nachname || ' ' || coalesce(p.firma,'') || ' ' || coalesce(p.email,'') || ' ' || coalesce(p.iban,'')")} LIKE ? LIMIT 10`, n),
-        objekte: all(`SELECT id, bezeichnung, art, ort FROM objekte WHERE ${lower("bezeichnung || ' ' || coalesce(strasse,'') || ' ' || coalesce(ort,'')")} LIKE ? LIMIT 10`, n),
+        objekte: all(`SELECT id, bezeichnung, art, ort FROM objekte WHERE ${lower("bezeichnung || ' ' || coalesce(strasse,'') || ' ' || coalesce(ort,'')")} LIKE ? LIMIT 10`, n)
+          .map((o) => ({ ...o, welt: weltVonArt(o.art) })),
         einheiten: all(`SELECT e.id, e.bezeichnung, e.objekt_id, o.bezeichnung AS objekt, o.art FROM einheiten e JOIN objekte o ON o.id = e.objekt_id
-          WHERE ${lower("e.bezeichnung || ' ' || coalesce(e.lage,'')")} LIKE ? LIMIT 10`, n),
-        buchungen: all(`SELECT b.id, b.datum, b.text, b.beleg, b.betrag_ct, b.objekt_id, o.bezeichnung AS objekt FROM buchungen b
+          WHERE ${lower("e.bezeichnung || ' ' || coalesce(e.lage,'')")} LIKE ? LIMIT 10`, n).map((e) => ({ ...e, welt: weltVonArt(e.art) })),
+        buchungen: all(`SELECT b.id, b.datum, b.text, b.beleg, b.betrag_ct, b.objekt_id, o.bezeichnung AS objekt, o.art FROM buchungen b
           JOIN objekte o ON o.id = b.objekt_id WHERE ${lower("coalesce(b.text,'') || ' ' || coalesce(b.beleg,'')")} LIKE ?
-          ORDER BY b.datum DESC LIMIT 15`, n),
+          ORDER BY b.datum DESC LIMIT 15`, n).map((b) => ({ ...b, welt: weltVonArt(b.art) })),
       };
     },
 

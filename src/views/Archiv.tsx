@@ -1,9 +1,10 @@
 // Document inbox, archive with full-text search and the invoice overview.
 import { useEffect, useState } from 'react';
-import { betrag, call, datum, diesesJahr, euro, fehler, heute, inTagen, parseCent, personName, zahl, type Row } from '../api';
+import { betrag, call, datum, diesesJahr, euro, fehler, heute, inTagen, parseCent, personName, zahl, type Row, objekteDerWelt } from '../api';
 import { useLoad } from '../useLoad';
 import { Dialog, Fenster, FensterTitel, KontoSelect, Leer } from '../ui';
-import { L } from '../navi';
+import { L, useNavi } from '../navi';
+import { WELT_NAME, type Welt } from '../welt';
 import { painUeberweisung } from '../bankformate';
 import { bestaetigen, hinweis } from '../frage';
 import { emailSchreiben } from '../Mail';
@@ -82,7 +83,7 @@ const analyseText = (a: string) => (a === 'offen' ? 'wird gelesen…' : a === 'f
 function DokumentFormular(props: { id: number; onFertig: () => void; postfach?: boolean }) {
   const [d, ladeD] = useLoad<Row>(() => call('dokument', props.id), [props.id]);
   const [typen] = useLoad<string[]>(() => call('dokumentTypen'), []);
-  const [objekte] = useLoad<Row[]>(async () => [...await call('objekte', 'miete'), ...await call('objekte', 'weg')], []);
+  const [objekte] = useLoad<Row[]>(objekteDerWelt, []);
   const [personen] = useLoad<Row[]>(() => call('personen'), []);
   const [projekte] = useLoad<Row[]>(() => call('projektListe'), []);
   const [f, setF] = useState<Row | null>(null);
@@ -270,7 +271,16 @@ function Belegbuchung(props: { dok: Row; onFertig: (buchungId: number) => void; 
 }
 
 export function Postfach() {
+  const navi = useNavi();
   const [liste, reload] = useLoad<Row[]>(() => call('dokumentListe', { status: 'postfach' }), []);
+  // Inbox documents of the other world (so nothing is overlooked), and sorting a document without house to a world.
+  const [anderswo] = useLoad<number>(() => call('postfachAnderswo'), [liste]);
+  const andereWelt: Welt = navi.ort.welt === 'weg' ? 'privat' : 'weg';
+  const gehoertZu = async (d: Row, w: Welt) => {
+    try { await call('dokumentWelt', d.id, d.welt === w ? null : w); } catch (e) { fehler(e); }
+    reload();
+    window.dispatchEvent(new Event('hv-daten'));
+  };
   const [auswahl, setAuswahl] = useState<Record<number, boolean>>({});
   useEffect(() => {
     if (liste) setAuswahl((a) => Object.fromEntries(Object.entries(a).filter(([id]) => liste.some((d) => d.id === Number(id)))));
@@ -303,6 +313,12 @@ export function Postfach() {
         <BelegFoto onFertig={reload} />
         <button className="primary" onClick={() => window.hv.dateienImportieren({}, { dokument: true }).then(reload)}>Dateien hinzufügen…</button>
       </div>
+      {!!anderswo && (
+        <p className="hinweis klein welt-hinweis">
+          {anderswo === 1 ? '1 weiteres Dokument wartet' : `${anderswo} weitere Dokumente warten`} im Postfach der Welt {WELT_NAME[andereWelt]}.{' '}
+          <button className="link" onClick={() => navi.zu({ seite: 'postfach', welt: andereWelt })}>Dorthin wechseln</button>
+        </p>
+      )}
       <p className="hinweis klein">
         Das Programm hat die Dokumente gelesen und Vorschläge eingetragen. Nichts wird abgelegt oder gebucht, bevor du es prüfst:
         <span className="postfach-breit"> einzeln rechts, oder mehrere links anhaken und gemeinsam zuordnen. Alternativ in Claude Desktop: „Arbeite das Postfach im Mietshaus ab“.</span>
@@ -330,6 +346,16 @@ export function Postfach() {
               <span className="klein">{[x.typ, x.absender, x.betrag_ct != null ? euro(x.betrag_ct) : null, x.objekt].filter(Boolean).join(' · ') || x.name}</span>
               <span className="klein hinweis">{analyseText(x.analyse) || datum(x.datum ?? x.erfasst)}</span>
               {x.duplikat_von && <span className="tag fehlertext">Duplikat</span>}
+              {/* Without house and project the document is in both worlds' inboxes until sorted to one. */}
+              {x.objekt_id == null && x.projekt_id == null && (
+                <span className="welt-wahl" role="group" aria-label={`Welt von ${x.titel}`} onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+                  <span className="klein hinweis">Gehört zu</span>
+                  {(['privat', 'weg'] as Welt[]).map((w) => (
+                    <button key={w} type="button" className="klein" aria-pressed={x.welt === w} title={x.welt === w ? 'Wieder in beiden Welten zeigen' : `Nur noch im Postfach der Welt ${WELT_NAME[w]} zeigen`}
+                      onClick={() => gehoertZu(x, w)}>{WELT_NAME[w]}</button>
+                  ))}
+                </span>
+              )}
             </>}
             detail={(d) => (
               <div className="postfach-detail">
@@ -380,7 +406,7 @@ function Papierkorb(props: { onClose: () => void }) {
 // Batch filing: assign object, unit, project or type to all selected documents at once.
 function Stapel(props: { dokumente: Row[]; onFertig: () => void; onLoeschen: () => void }) {
   const [typen] = useLoad<string[]>(() => call('dokumentTypen'), []);
-  const [objekte] = useLoad<Row[]>(async () => [...new Map([...await call('objekte', 'miete'), ...await call('objekte', 'weg')].map((o: Row) => [o.id, o])).values()], []);
+  const [objekte] = useLoad<Row[]>(objekteDerWelt, []);
   const [projekte] = useLoad<Row[]>(() => call('projektListe'), []);
   const [f, setF] = useState<Row>({});
   const [einheiten] = useLoad<Row[]>(async () => (f.objekt_id ? call('einheiten', f.objekt_id) : []), [f.objekt_id]);

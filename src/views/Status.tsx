@@ -5,6 +5,7 @@ import { fehler, type Row } from '../api';
 import { anfrage } from '../bruecke';
 import { useLoad } from '../useLoad';
 import { bestaetigen } from '../frage';
+import { geraetName } from '../diagnose';
 
 const groesse = (b: number) => (b > 1e9 ? `${(b / 1e9).toLocaleString('de-DE', { maximumFractionDigits: 1 })} GB` : b > 1e6 ? `${(b / 1e6).toLocaleString('de-DE', { maximumFractionDigits: 1 })} MB` : `${Math.round(b / 1e3)} KB`);
 const zeit = (iso?: string | null) => (iso ? new Date(iso.replace(' ', 'T')).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' }) : '–');
@@ -77,12 +78,4 @@ export function Status() {
       <p className="klein hinweis">Postleitzahlen: <a href="https://www.geonames.org" onClick={(e) => { e.preventDefault(); window.hv.extern('https://www.geonames.org'); }}>GeoNames</a> (CC BY 4.0).</p>
     </section>
   );
-}
-
-// "Mozilla/5.0 (iPhone; …) … Safari" → "iPhone · Safari"
-function geraetName(ua?: string | null) {
-  if (!ua) return '–';
-  const system = /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) ? 'iPad' : /Android/.test(ua) ? 'Android' : /Mac OS X/.test(ua) ? 'Mac' : /Windows/.test(ua) ? 'Windows' : /Linux/.test(ua) ? 'Linux' : 'Gerät';
-  const programm = /Electron|Mietshaus/.test(ua) ? 'Mietshaus-App' : /Edg\//.test(ua) ? 'Edge' : /Firefox/.test(ua) ? 'Firefox' : /Chrome/.test(ua) ? 'Chrome' : /Safari/.test(ua) ? 'Safari' : 'Browser';
-  return `${system} · ${programm}`;
 }

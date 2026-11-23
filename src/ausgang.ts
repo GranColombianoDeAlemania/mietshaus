@@ -30,7 +30,7 @@ export type Eintrag = {
 const SCHREIBEND = new Set(['save', 'remove', 'dokumentSpeichern', 'dokumentZuordnen', 'vorgangStatus', 'vorgangKommentieren', 'aufgabeVerschieben',
   'hinweisSetzen', 'mitteilungGelesen', 'alleMitteilungenGelesen', 'ablesung', 'uebergabeSpeichern', 'begehungNeu', 'begehungSpeichern', 'begehungMangel',
   'begehungAbschliessen', 'pflichtenAnlegen', 'pflichtErledigen', 'ablaufStarten', 'buchen', 'belegBuchen', 'stapelAblegen', 'dokumenteZusammengefuegt', 'einkaufNeu', 'einkaufGekauft', 'einkaufWagen',
-  'einkaufAbschliessen']);
+  'einkaufAbschliessen', 'rueckmeldungNeu']);
 // Calls that create a record and answer with its number.
 const neueNummer = (fn: string, args: unknown[]) => (fn === 'save' && !(args[1] as { id?: unknown } | undefined)?.id)
   || ['begehungNeu', 'begehungMangel', 'ablaufStarten', 'buchen', 'einkaufNeu'].includes(fn) || (fn === 'finBuchungSpeichern' && !(args[0] as { id?: unknown } | undefined)?.id);
@@ -48,7 +48,7 @@ function titelVon(fn: string, args: unknown[]): string {
     begehungMangel: `Mangel „${a[2]?.text ?? ''}“`, begehungAbschliessen: 'Begehung abgeschlossen', ablesung: 'Zählerstände', pflichtErledigen: 'Pflicht erledigt',
     pflichtenAnlegen: 'Pflichten angelegt', dokumentSpeichern: 'Angaben zu einem Dokument', ablaufStarten: 'Ablauf gestartet', uebergabeSpeichern: 'Übergabeprotokoll',
     buchen: 'Buchung', belegBuchen: 'Beleg gebucht', einkaufNeu: `Einkauf „${a[1]?.titel ?? ''}“`, einkaufGekauft: 'Einkauf gekauft',
-    einkaufWagen: 'Einkauf in den Wagen', finBuchungSpeichern: `Private Buchung „${a[0]?.empfaenger ?? ''}“`, finKategorisieren: 'Kategorie gesetzt', einkaufAbschliessen: `Kassenbon (${a[0]?.ids?.length ?? 0} Artikel)` } as Record<string, string>)[fn] ?? fn;
+    einkaufWagen: 'Einkauf in den Wagen', finBuchungSpeichern: `Private Buchung „${a[0]?.empfaenger ?? ''}“`, finKategorisieren: 'Kategorie gesetzt', einkaufAbschliessen: `Kassenbon (${a[0]?.ids?.length ?? 0} Artikel)`, rueckmeldungNeu: a[0]?.art === 'fehler' ? 'Fehler gemeldet' : 'Idee festgehalten' } as Record<string, string>)[fn] ?? fn;
 }
 
 // ---------- storage ----------
@@ -132,7 +132,7 @@ export async function trotzdem(nr: number) {
 // ---------- sending ----------
 type Wege = {
   rufen: (fn: string, args: unknown[], kopf: Record<string, string>, schluessel: string) => Promise<unknown>;
-  hochladen: (blob: Blob, name: string, opt: Record<string, unknown>) => Promise<{ id: number; datei?: string | null }>;
+  hochladen: (blob: Blob, name: string, opt: Record<string, unknown>, kopf?: Record<string, string>) => Promise<{ id: number; datei?: string | null }>;
   aktualisiert: () => void;
 };
 let wege: Wege | null = null;
@@ -159,7 +159,7 @@ export async function senden() {
       if (!e || e.status !== 'wartet') break;
       try {
         if (e.art === 'upload') {
-          const r = await wege.hochladen(e.blob!, e.name!, umschreiben(e.opt ?? {}));
+          const r = await wege.hochladen(e.blob!, e.name!, umschreiben(e.opt ?? {}), e.kopf);
           if (e.vorlaeufig) zuordnen(e.vorlaeufig, r.id, r.datei);
         } else {
           const wert = await wege.rufen(e.fn!, umschreiben(e.args ?? []), e.kopf ?? {}, e.schluessel);

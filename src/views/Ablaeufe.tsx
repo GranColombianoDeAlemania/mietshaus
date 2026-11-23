@@ -1,7 +1,7 @@
 // Workflow templates: start one for a house (and unit or person) from a key date, and edit the templates – one step
 // per line, "-30 Vorabnahme" meaning 30 days before the key date.
 import { useState } from 'react';
-import { call, datum, fehler, heute, personName, type Row } from '../api';
+import { call, datum, fehler, heute, personName, type Row, objekteDerWelt } from '../api';
 import { useLoad } from '../useLoad';
 import { Auswahl, Dialog } from '../ui';
 import { FormDialog } from '../Form';
@@ -9,7 +9,7 @@ import { FormDialog } from '../Form';
 export function AblaufStarten(props: { vorgabe?: { art?: string; objekt_id?: number; einheit_id?: number | null; person_id?: number | null; stichtag?: string }; onClose: (id?: number) => void }) {
   const v = props.vorgabe ?? {};
   const [vorlagen] = useLoad<Row[]>(() => call('ablaeufe'), []);
-  const [objekte] = useLoad<Row[]>(async () => [...new Map([...await call('objekte', 'miete'), ...await call('objekte', 'weg')].map((o: Row) => [o.id, o])).values()], []);
+  const [objekte] = useLoad<Row[]>(objekteDerWelt, []);
   const [benutzer] = useLoad<Row[]>(() => call<Row[]>('benutzerListe').catch(() => []), []);
   const [personen] = useLoad<Row[]>(() => call('personen'), []);
   const [wahl, setWahl] = useState<number | ''>('');
