@@ -1073,7 +1073,7 @@ button.haken.gross { width: 26px; height: 26px; }
   background: var(--ink); color: var(--panel); padding: 10px 16px; border-radius: 10px; box-shadow: var(--schatten-gross); }
 .kurzmeldung span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .kurzmeldung button.link { color: var(--accent-soft); font-weight: 600; flex-shrink: 0; }
-@media (max-width: 800px) { .kurzmeldung { bottom: calc(78px + env(safe-area-inset-bottom)); } }
+@media (max-width: 800px) { .kurzmeldung { bottom: calc(156px + env(safe-area-inset-bottom)); } }
 
 /* ---------- one task as a sheet (Aufgabenblatt.tsx) ---------- */
 .blatt.eingebettet { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; }
@@ -1407,12 +1407,32 @@ ul.jago-liste button > span { flex: 1; overflow-wrap: anywhere; }
 ul.rueckmeldungen { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
 .rueckmeldung-text { white-space: pre-wrap; margin: 8px 0; }
 .jago-kopf { display: flex; align-items: flex-end; gap: 10px; margin-bottom: 8px; }
-.jago-bild { flex: none; width: 80px; height: 80px; border-radius: 50%; object-fit: cover; border: 3px solid var(--panel); box-shadow: 0 0 0 1.5px var(--line-stark, #1f1c19); animation: jago-neigen 8s ease-in-out infinite; }
-@keyframes jago-neigen { 0%, 62%, 100% { transform: rotate(0); } 68% { transform: rotate(-7deg); } 76% { transform: rotate(-4deg); } 82% { transform: rotate(0); } }
-@media (prefers-reduced-motion: reduce) { .jago-bild { animation: none; } }
+.jago-bild { flex: none; width: 80px; height: 80px; border-radius: 50%; object-fit: cover; border: 3px solid var(--panel); box-shadow: 0 0 0 1.5px var(--line-stark, #1f1c19); }
 .jago-mini { border-radius: 50%; object-fit: cover; }
 .jago-blase { position: relative; margin: 0 0 10px; padding: 8px 12px; border-radius: 14px; background: var(--accent-soft); line-height: 1.4; }
 .jago-blase::before { content: ''; position: absolute; left: -6px; bottom: 10px; border: 6px solid transparent; border-right-color: var(--accent-soft); border-left: 0; }
-button.jago-knopf { padding: 0; overflow: hidden; }
-button.jago-knopf img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
+/* Jago alive (src/JagoFigur.tsx): idle film below, the thinking one fades in above it. */
+.jago-figur { position: relative; display: inline-block; flex: none; border-radius: 50%; overflow: hidden; background: #000000; }
+.jago-figur video, .jago-figur img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: 50% 30%; display: block; }
+.jago-figur video.denk { opacity: 0; transition: opacity 0.25s ease; }
+.jago-figur.denkt video.denk { opacity: 1; }
+/* Floating at the bottom right: a round Jago above everything but dialogs. */
+.jago-schwebend { position: fixed; z-index: 35; right: 22px; bottom: 22px; width: 72px; height: 72px; padding: 0; border-radius: 50%; border: 3px solid var(--panel);
+  background: #000000; box-shadow: 0 0 0 2px var(--welt-farbe), var(--schatten-gross); cursor: pointer; display: grid; place-items: center; overflow: hidden;
+  transition: transform 0.18s ease, box-shadow 0.18s ease; }
+.jago-schwebend:hover:not(:disabled) { transform: translateY(-2px) scale(1.04); border-color: var(--panel); box-shadow: 0 0 0 3px var(--welt-farbe), var(--schatten-gross); }
+.jago-schwebend:active { transform: scale(0.96); }
+.jago-schwebend.offen { opacity: 0; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) { .jago-schwebend, .jago-figur video.denk { transition: none; } .jago-schwebend:hover:not(:disabled) { transform: none; } }
+main { padding-bottom: 110px; }
+/* His window opens where he sits: at the bottom right (a sheet from below on the phone). */
+.overlay:has(> .dialog.jago-fenster) { align-items: flex-end; justify-content: flex-end; padding: 16px 22px 22px; }
+.dialog.jago-fenster { width: min(480px, 100%); max-height: calc(100dvh - 40px); overflow: auto; }
+.dialog.jago-fenster .jago { min-width: 0; }
+@media (max-width: 800px) {
+  .jago-schwebend { right: 14px; bottom: calc(86px + env(safe-area-inset-bottom)); width: 60px; height: 60px; }
+  .overlay:has(> .dialog.jago-fenster) { padding: 0; align-items: flex-end; justify-content: center; }
+  .dialog.jago-fenster { width: 100%; border-radius: 16px 16px 0 0; max-height: 88dvh; padding: 18px 16px calc(16px + env(safe-area-inset-bottom)); }
+  main { padding-bottom: 170px; }
+}
 .kurzmeldung img { flex: none; }

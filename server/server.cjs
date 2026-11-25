@@ -301,18 +301,20 @@ async function starten(o) {
     rueckfrage: req.headers['x-bestaetigt'] === '1' ? null : '1' });
 
   function statisch(req, res, pfad) {
-    let datei = path.join(dist, path.normalize(decodeURIComponent(pfad)).replace(/^(\.\.[/\\])+/, ''));
-    if (!datei.startsWith(dist) || !fs.existsSync(datei) || fs.statSync(datei).isDirectory()) {
+    // Jago's little films: with byte ranges, which Safari needs to play a video.
+    if (/^\/jago\/[a-z0-9-]+\.mp4$/.test(pfad)) return datei(req, res, path.join(dist, 'jago'), path.basename(pfad));
+    let ziel = path.join(dist, path.normalize(decodeURIComponent(pfad)).replace(/^(\.\.[/\\])+/, ''));
+    if (!ziel.startsWith(dist) || !fs.existsSync(ziel) || fs.statSync(ziel).isDirectory()) {
       // A missing file (logo, script) is a 404 – the page itself only for addresses inside the app.
       if (path.extname(pfad)) return json(res, 404, { fehler: 'Datei nicht gefunden.' });
-      datei = path.join(dist, 'index.html');
+      ziel = path.join(dist, 'index.html');
     }
-    if (!fs.existsSync(datei)) return json(res, 503, { fehler: 'Die Oberfläche ist nicht gebaut (npm run build).' });
-    const ext = path.extname(datei).toLowerCase();
+    if (!fs.existsSync(ziel)) return json(res, 503, { fehler: 'Die Oberfläche ist nicht gebaut (npm run build).' });
+    const ext = path.extname(ziel).toLowerCase();
     // Only the built files with a hash in their name (assets/) may be kept for long; sw.js, icons and the page are checked each time.
-    const lange = datei.startsWith(path.join(dist, 'assets') + path.sep);
+    const lange = ziel.startsWith(path.join(dist, 'assets') + path.sep);
     res.writeHead(200, { 'Content-Type': TYPEN[ext] ?? 'application/octet-stream', 'Cache-Control': lange ? 'public, max-age=31536000, immutable' : 'no-cache', ...SICHERHEIT });
-    fs.createReadStream(datei).pipe(res);
+    fs.createReadStream(ziel).pipe(res);
   }
 
   // A file of the archive. Byte ranges are answered too: Safari plays videos only from a server that does (206).

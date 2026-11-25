@@ -6,6 +6,7 @@ import * as I from 'lucide-react';
 import { call, fehler, type Modus, type Row } from './api';
 import { useNavi } from './navi';
 import { Dialog } from './ui';
+import { JagoFigur } from './JagoFigur';
 import { DiktatKnopf } from './Diktat';
 import { norm, type Befehl } from './Suche';
 import { diagnose, letzteFehler, letzteSeite } from './diagnose';
@@ -22,6 +23,8 @@ const mitHaus = (m: Modus) => m === 'miete' || m === 'weg';
 export function Jago(props: { befehle: Befehl[]; modus: Modus; objektId: number | null }) {
   const navi = useNavi();
   const [offen, setOffen] = useState(false);
+  // Someone points at the floating Jago (or focuses him): he looks up and thinks.
+  const [zeigt, setZeigt] = useState(false);
   const [text, setText] = useState('');
   const [melden, setMelden] = useState<Melden | null>(null);
   const [thema, setThema] = useState<Row | null>(null);
@@ -119,13 +122,21 @@ export function Jago(props: { befehle: Befehl[]; modus: Modus; objektId: number 
           : 'Das habe ich gefunden:';
   return (
     <>
+      {/* Jago floats at the bottom right, like the assistants of many apps: a tap opens his window. */}
+      <button type="button" className={`jago-schwebend${offen ? ' offen' : ''}`} aria-label="Jago – Fragen, Aufgaben, Fehler und Ideen" aria-expanded={offen} aria-haspopup="dialog"
+        title="Jago – frag mich, oder halte einen Fehler oder eine Idee fest"
+        onPointerEnter={(e) => { if (e.pointerType === 'mouse') setZeigt(true); }} onPointerLeave={() => setZeigt(false)}
+        onFocus={(e) => { if (e.currentTarget.matches(':focus-visible')) setZeigt(true); }} onBlur={() => setZeigt(false)}
+        onClick={() => { setZeigt(false); jagoOeffnen(); }}>
+        <JagoFigur groesse={64} denkt={zeigt} />
+      </button>
       {offen && (
-        <Dialog titel={melden ? (melden.art === 'fehler' ? 'Jago · Fehler melden' : 'Jago · Idee festhalten') : 'Jago'} onClose={schliessen}
+        <Dialog titel={melden ? (melden.art === 'fehler' ? 'Jago · Fehler melden' : 'Jago · Idee festhalten') : 'Jago'} onClose={schliessen} klasse="jago-fenster"
           aktionen={melden && <>
             <button onClick={() => setMelden(null)}>Zurück</button>
             <button className="primary" disabled={!melden.text.trim() || laeuft} onClick={speichern}>Festhalten</button>
           </>}>
-          <div className="jago-kopf"><img className="jago-bild" src="/jago.jpg" alt="Jago" width={80} height={80} /><p className="jago-blase">{spruch}</p></div>
+          <div className="jago-kopf"><JagoFigur groesse={80} denkt={offen} className="jago-bild" /><p className="jago-blase">{spruch}</p></div>
           {melden ? (
             <div className="jago">
               <div className="knopfreihe" role="group" aria-label="Art">

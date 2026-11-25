@@ -764,7 +764,6 @@ export default function App(props: { benutzer?: Row | null }) {
           </nav>
           <Suche befehle={befehle} onDokument={(d) => { if ((d.welt === 'privat' || d.welt === 'weg') && d.welt !== welt) wechsleWelt(d.welt); setDokOffen({ id: d.id, datei: d.datei }); }} />
           <button className="rund ring" title="Dokumente ablegen – sie landen zur Prüfung im Postfach" onClick={schnellAblegen}><I.FilePlus2 size={16} /></button>
-          <button className="rund ring jago-knopf" title="Jago – Fragen, Aufgaben, Fehler und Ideen" aria-label="Jago" onClick={() => jagoOeffnen()}><img src="/jago.jpg" alt="" width={34} height={34} /></button>
           <Glocke />
           <Ampel benutzer={props.benutzer?.name ?? null} />
         </header>

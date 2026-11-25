@@ -226,7 +226,7 @@ From the pick of 28.10.2026 („Paket 1 – ich will nichts bezahlen; Paket 2 so
 | Area | Contents | Status |
 |------|----------|--------|
 | Symbole | 50 illustrated symbols in a cel-shading style (two tones per colour, ink outline, hatching in deep shadow, a hand-drawn wobble), drawn by `scripts/symbole/` into `public/symbole/`; `Bild` (`Symbol.tsx`) in the sidebar, mode buttons, phone bar, bell, cockpit tiles and empty lists; buttons, tables and toolbars keep the Lucide lines | done |
-| Logo | Jago, the mascot: his photo (`resources/jago.jpg`) in a round frame under a small roof; `scripts/icons.cjs` writes `resources/logo.svg`, `public/jago.jpg` and the Mac, browser and home-screen icons | done |
+| Logo | Jago, the mascot: his drawing (`resources/jago.jpg`, first frame of his films) in a round frame under a small roof; `scripts/icons.cjs` writes `resources/logo.svg`, `public/jago.jpg` and the Mac, browser and home-screen icons | done |
 | Glas | Floating parts as glass (sidebar, top bar, phone bar, bell, menus, dialogs, cockpit tiles, board columns) over soft fields in the mode colour; tables, forms and fields stay almost solid; blur only on a few large surfaces | done |
 | Darstellung | Settings per device: glass automatic/on/off (automatic follows „Transparenz reduzieren“), symbols illustrated/plain (Lucide); browsers without blur get solid surfaces | done |
 | Extras | „Alles erledigt“ with a large symbol for an empty inbox or task list; a short check when a task is done (off with „Bewegung reduzieren“); the bell in the phone bar with its label | done |
@@ -391,6 +391,12 @@ How the depth was found: the installer of a personal finance program the user ow
 - Anlage V: hint when the building has an AfA rate but no purchase date.
 - Private finances: „Differenz ausbuchen“ (reconciliation), payment history of a contract, price history of a security.
 - Inbox on the phone: 44 px tap areas for boxes and bin, own hint text. Tasks: delete in the embedded task sheet.
+
+### 0.28.1 – Jago floats and moves
+
+- Jago floats at the bottom right in a circle (above the phone bar), like the assistants of many apps; his window opens there (a sheet from below on the phone). The header button is gone.
+- He is alive: two short idle films take turns; pointing at him (or keyboard focus) and opening his window play the film where he thinks and pricks up his ears (`src/JagoFigur.tsx`, `public/jago/*.mp4`, 320 px, silent, 370 KB together). „Bewegung reduzieren“ shows the still picture; a hidden window plays nothing. The server answers byte ranges for them (Safari plays videos only so).
+- New logo and icons from the drawing of Jago.
 
 ### 0.28.0 – two worlds (Privat and WEG), Jago
 

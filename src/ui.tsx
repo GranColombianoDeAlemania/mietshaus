@@ -187,10 +187,11 @@ export function Fenster(props: { onClose: () => void; children: ReactElement; sc
 }
 export const FensterTitel = RD.Title;
 
-export function Dialog(props: { titel: string; children: ReactNode; onClose: () => void; breit?: boolean; aktionen?: ReactNode }) {
+// klasse: an extra class, e.g. for Jago's window anchored at the bottom right.
+export function Dialog(props: { titel: string; children: ReactNode; onClose: () => void; breit?: boolean; aktionen?: ReactNode; klasse?: string }) {
   return (
     <Fenster onClose={props.onClose}>
-      <div className={`dialog${props.breit ? ' breit' : ''}`}>
+      <div className={`dialog${props.breit ? ' breit' : ''}${props.klasse ? ` ${props.klasse}` : ''}`}>
         <FensterTitel>{props.titel}</FensterTitel>
         {props.children}
         <div className="buttons">
