@@ -6,3 +6,4 @@ release
 scripts
 *.md
 !README.md
+mac-dedupe
