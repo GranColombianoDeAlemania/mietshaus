@@ -56,10 +56,10 @@ function Rendite(props: { objekt: Row }) {
             <RingZeile ring={<Ring wert={w.netto} max={8} zonen={ZONEN_RENDITE} text={w.netto == null ? '–' : prozentKz(w.netto, 1)} />}
               wert={<>{euro0(w.netto_ct)}<small>Überschuss</small></>}><div className="kz-text">{erklaerung}</div></RingZeile>
           </Kennzahl>
-          <Kennzahl titel={`Bruttomietrendite ${letzte.jahr}`} breite={3}><div className="kz-wert">{prozent(w.brutto)}</div>
+          <Kennzahl titel={`Bruttomietrendite ${letzte.jahr}${letzte.hochgerechnet ? ` (hochgerechnet aus ${letzte.monate} Monaten)` : ''}`} breite={3}><div className="kz-wert">{prozent(w.brutto)}</div>
             <div className="kz-text">Jahreskaltmiete{sl && sicht === 'fiktiv' ? ' mit Vergleichsmiete' : ''} / Kaufpreis{sl && sicht === 'teil' ? ' des vermieteten Teils' : ''}</div></Kennzahl>
           <Kennzahl titel="Kaltmiete je m² und Monat" breite={3}><div className="kz-wert">{letzte.miete_qm != null ? `${betrag(letzte.miete_qm)} €` : '–'}</div>
-            <div className="kz-text">{sl ? `über alle Flächen; vermietet: ${betrag(letzte.soll_kaltmiete_ct / 12 / Math.max(1, sl.flaeche_vermietet))} €` : 'über alle Flächen des Hauses'}</div></Kennzahl>
+            <div className="kz-text">{sl ? `über alle Flächen; vermietet: ${betrag(letzte.soll_kaltmiete_ct / (letzte.monate ?? 12) / Math.max(1, sl.flaeche_vermietet))} €` : 'über alle Flächen des Hauses'}</div></Kennzahl>
           <Kennzahl titel={`Mietausfall ${letzte.jahr}`} breite={2}><div className="kz-wert">{euro0(letzte.ausfall_ct)}</div><div className="kz-text">Soll – Ist</div></Kennzahl>
         </div>
       )}

@@ -108,6 +108,14 @@ const einheitVonSql = (b) => `coalesce(${b}.einheit_id,
 // The next service-charge statement an object owes (§ 556 Abs. 3 BGB): the period after the last saved statement
 // (any period, e.g. 01.07.–30.06.), or last calendar year if there is none; due at the end of the twelfth month after
 // the period. null if the period has not ended yet or had no tenancy.
+// Deadline of a service-charge statement (§ 556 Abs. 3 S. 2 BGB): the end of the twelfth month after the period –
+// for a period ending on a month's last day the last day of that month a year later, otherwise the same day a year later.
+function nkFrist(bis) {
+  const [y, m, d] = bis.split('-').map(Number);
+  const monatsEnde = d === new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return monatsEnde ? new Date(Date.UTC(y + 1, m, 0)).toISOString().slice(0, 10) : `${y + 1}-${String(m).padStart(2, '0')}-${String(Math.min(d, new Date(Date.UTC(y + 1, m, 0)).getUTCDate())).padStart(2, '0')}`;
+}
+
 function nkFaellig(get, objektId, t) {
   const tag = (iso, monate, tage = 0) => {
     const d = new Date(iso + 'T00:00:00Z');
@@ -122,8 +130,7 @@ function nkFaellig(get, objektId, t) {
   if (bis >= t) return null;
   if (!get(`SELECT 1 FROM mietverhaeltnisse m JOIN einheiten e ON e.id = m.einheit_id WHERE e.objekt_id = ? AND m.beginn <= ?
       AND (m.ende IS NULL OR m.ende = '' OR m.ende >= ?)`, objektId, bis, von)) return null;
-  const ende = tag(bis, 12);
-  const frist = new Date(Date.UTC(Number(ende.slice(0, 4)), Number(ende.slice(5, 7)), 0)).toISOString().slice(0, 10);
+  const frist = nkFrist(bis);
   const name = von.slice(5) === '01-01' && bis.slice(5) === '12-31' ? von.slice(0, 4) : `${von.slice(0, 4)}/${bis.slice(2, 4)}`;
   return { von, bis, frist, name, nach_zwei_monaten: tag(bis, 2), drei_monate_vorher: tag(frist, -3) };
 }
@@ -279,7 +286,7 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
   // Payments settle the oldest due month first. Money paid back to the tenant/owner (e.g. a returned direct
   // debit) reduces the payments, so the affected month becomes open again.
   function offenePostenKonto(kontoId, stichtag = ortszeit.heute()) {
-    const lasten = all(`SELECT b.id, b.datum, b.monat, b.text, b.betrag_ct FROM buchungen b JOIN konten g ON g.id = b.haben_id
+    const lasten = all(`SELECT b.id, b.datum, b.monat, b.text, b.betrag_ct, g.kategorie FROM buchungen b JOIN konten g ON g.id = b.haben_id
       WHERE b.soll_id = ? AND g.klasse <> 'geld' AND b.datum <= ? ORDER BY b.datum, b.id`, kontoId, stichtag);
     let zahlungen = get(`SELECT
         coalesce((SELECT sum(betrag_ct) FROM buchungen WHERE haben_id = ?1 AND datum <= ?2), 0) -
@@ -291,11 +298,14 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
       const key = l.monat ? `${l.datum}|${l.monat}` : `${l.datum}|#${l.id}`;
       let p = posten.at(-1)?.key === key ? posten.at(-1) : null;
       if (!p) posten.push((p = { key, id: l.id, datum: l.datum, monat: l.monat, teile: [], soll_ct: 0 }));
-      p.teile.push({ text: l.text, betrag_ct: l.betrag_ct });
+      p.teile.push({ text: l.text, betrag_ct: l.betrag_ct, kategorie: l.kategorie });
       p.soll_ct += l.betrag_ct;
     }
     const offen = [];
-    for (const p of posten) {
+    // Payments settle the running rent and advance payments first (items with a month), then everything else – BK
+    // additional payments, fees, damages –, each oldest first. So an unpaid additional payment never turns into "rent
+    // arrears" (it does not count for § 543 Abs. 2 Nr. 3 BGB) while the monthly rent is paid.
+    for (const p of [...posten.filter((p) => p.monat), ...posten.filter((p) => !p.monat)]) {
       const bezahlt = Math.max(0, Math.min(zahlungen, p.soll_ct));
       zahlungen -= bezahlt;
       if (p.soll_ct > bezahlt) {
@@ -312,6 +322,7 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
       }
     }
     const guthaben = Math.max(0, zahlungen);
+    offen.sort((a, b) => (a.datum < b.datum ? -1 : a.datum > b.datum ? 1 : a.id - b.id));
     return { offen, guthaben_ct: guthaben, summe_ct: offen.reduce((s, o) => s + o.offen_ct, 0) - guthaben };
   }
 
@@ -958,4 +969,5 @@ module.exports.tageZwischen = tageZwischen;
 module.exports.monatsliste = monatsliste;
 module.exports.selbstSql = selbstSql;
 module.exports.nkFaellig = nkFaellig;
+module.exports.nkFrist = nkFrist;
 module.exports.einheitVonSql = einheitVonSql;

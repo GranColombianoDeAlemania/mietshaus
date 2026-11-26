@@ -1136,6 +1136,20 @@ const MIGRATIONS = [
     db.exec(`ALTER TABLE dokumente ADD COLUMN welt TEXT CHECK (welt IN ('privat', 'weg'))`);
     for (const t of ['fin_konten', 'fin_kategorien', 'fin_buchungen', 'fin_dauer', 'fin_regeln']) db.exec(`CREATE INDEX ${t}_w ON ${t} (benutzer, bereich)`);
   },
+  // 0.29 (review against the literature): payee of a WEG for letters and direct debits, date of the SEPA mandate,
+  // duties on a fixed date, and when an applicant was turned down (deleted after six months, GDPR).
+  `ALTER TABLE objekte ADD COLUMN zahlung_empfaenger TEXT;
+   ALTER TABLE mietverhaeltnisse ADD COLUMN sepa_mandat_datum TEXT;
+   ALTER TABLE eigentum ADD COLUMN sepa_mandat_datum TEXT;
+   ALTER TABLE pflichten ADD COLUMN fester_termin INTEGER NOT NULL DEFAULT 0;
+   ALTER TABLE interessenten ADD COLUMN abgesagt_am TEXT;
+   UPDATE interessenten SET abgesagt_am = date('now') WHERE status = 'absage';
+   CREATE TRIGGER interessenten_absage AFTER UPDATE OF status ON interessenten BEGIN
+     UPDATE interessenten SET abgesagt_am = CASE WHEN NEW.status = 'absage' THEN coalesce(OLD.abgesagt_am, date('now')) ELSE NULL END WHERE id = NEW.id;
+   END;
+   CREATE TRIGGER interessenten_absage_neu AFTER INSERT ON interessenten WHEN NEW.status = 'absage' BEGIN
+     UPDATE interessenten SET abgesagt_am = date('now') WHERE id = NEW.id;
+   END;`,
 ];
 
 // Tables without change time: the log itself, settings of this installation and page state.
@@ -1196,17 +1210,17 @@ function datenStand(db) {
 // Columns the renderer may write, per table. Everything else is rejected.
 const TABLES = {
   objekte: ['bezeichnung', 'art', 'strasse', 'plz', 'ort', 'baujahr', 'wj_beginn', 'iban', 'bic', 'bank',
-    'ruecklage_iban', 'sepa_glaeubiger_id', 'hausmeister', 'notiz', 'kaufpreis_ct', 'kaufnebenkosten_ct', 'kaufdatum', 'gebaeudeanteil', 'afa_satz', 'titelbild_id', 'vorsteuer_quote', 'kappungsgrenze', 'breite', 'laenge',
+    'ruecklage_iban', 'sepa_glaeubiger_id', 'zahlung_empfaenger', 'hausmeister', 'notiz', 'kaufpreis_ct', 'kaufnebenkosten_ct', 'kaufdatum', 'gebaeudeanteil', 'afa_satz', 'titelbild_id', 'vorsteuer_quote', 'kappungsgrenze', 'breite', 'laenge',
     'vergleichsmiete_ct', 'mietspiegel_von_ct', 'mietspiegel_bis_ct'],
   einheiten: ['objekt_id', 'nr', 'bezeichnung', 'art', 'lage', 'wohnflaeche', 'zimmer', 'mea', 'notiz', 'vergleichsmiete_ct', 'mietspiegel_von_ct', 'mietspiegel_bis_ct'],
   selbstnutzung: ['einheit_id', 'beginn', 'ende', 'personen', 'notiz'],
   personen: ['anrede', 'titel', 'vorname', 'nachname', 'firma', 'strasse', 'plz', 'ort', 'land', 'telefon',
     'mobil', 'email', 'iban', 'bic', 'kontoinhaber', 'geburtsdatum', 'notiz', 'ust_id', 'steuernr', 'web'],
   mietverhaeltnisse: ['einheit_id', 'person_id', 'person2_id', 'beginn', 'ende', 'kaltmiete_ct', 'bk_vz_ct',
-    'hk_vz_ct', 'sonstiges_ct', 'kaution_ct', 'personen_anzahl', 'faelligkeitstag', 'lastschrift', 'sepa_mandat', 'notiz',
+    'hk_vz_ct', 'sonstiges_ct', 'kaution_ct', 'personen_anzahl', 'faelligkeitstag', 'lastschrift', 'sepa_mandat', 'sepa_mandat_datum', 'notiz',
     'teilmonat_beginn', 'teilmonat_ende', 'ust_satz', 'mietmonat_ab', 'bk_abrechnung', 'bk_art', 'teilbetrag_beginn_ct'],
   eigentum: ['einheit_id', 'person_id', 'person2_id', 'beginn', 'ende', 'hausgeld_ct', 'ruecklage_ct',
-    'selbstnutzer', 'faelligkeitstag', 'lastschrift', 'sepa_mandat', 'notiz', 'teilmonat_beginn', 'teilmonat_ende'],
+    'selbstnutzer', 'faelligkeitstag', 'lastschrift', 'sepa_mandat', 'sepa_mandat_datum', 'notiz', 'teilmonat_beginn', 'teilmonat_ende'],
   umlageschluessel: ['objekt_id', 'bezeichnung', 'einheit', 'typ', 'zaehler_art'],
   konten: ['objekt_id', 'nr', 'bezeichnung', 'klasse', 'kategorie', 'umlagefaehig', 'heizkosten', 'schluessel_id',
     'weg_schluessel_id', 'aus_ruecklage', 'p35a', 'iban', 'inaktiv'],
@@ -1222,7 +1236,7 @@ const TABLES = {
   schluessel: ['objekt_id', 'bezeichnung', 'nummer', 'anzahl', 'notiz'],
   schluesselausgaben: ['schluessel_id', 'person_id', 'anzahl', 'ausgabe', 'rueckgabe', 'notiz'],
   versicherungen: ['objekt_id', 'art', 'gesellschaft', 'police', 'beitrag_ct', 'faellig', 'kuendbar_bis', 'ablauf', 'notiz'],
-  pflichten: ['objekt_id', 'einheit_id', 'art', 'titel', 'intervall_monate', 'naechste', 'vorlauf_tage', 'firma_id', 'kategorie', 'aktiv', 'notiz'],
+  pflichten: ['objekt_id', 'einheit_id', 'art', 'titel', 'intervall_monate', 'naechste', 'vorlauf_tage', 'firma_id', 'kategorie', 'aktiv', 'notiz', 'fester_termin'],
   ablaeufe: ['titel', 'anlass', 'schritte'],
   inventar: ['objekt_id', 'einheit_id', 'bezeichnung', 'kategorie', 'hersteller', 'modell', 'seriennr', 'kaufdatum', 'preis_ct', 'garantie_bis',
     'nutzungsdauer_jahre', 'dokument_id', 'buchung_id', 'foto_id', 'abgang_am', 'abgang_art', 'notiz'],
@@ -1747,6 +1761,7 @@ function api(db) {
       if (!p) throw new Error('Den Protokolleintrag gibt es nicht mehr.');
       const alt = p.alt ? JSON.parse(p.alt) : null;
       const neu = p.neu ? JSON.parse(p.neu) : null;
+      if (alt?.anonymisiert || neu?.anonymisiert) throw new Error('Diese Daten wurden aus Datenschutzgründen gelöscht und lassen sich nicht wiederherstellen.');
       const jetzt = get(`SELECT * FROM ${p.tabelle} WHERE id = ?`, p.datensatz);
       const gleich = (a, b) => a === b || (a == null && b == null) || (typeof a === 'number' && typeof b === 'number' && Math.abs(a - b) < 1e-9);
       const unveraendert = (soll) => !!jetzt && Object.entries(soll ?? {}).every(([k, v]) => !(k in jetzt) || gleich(jetzt[k], v));

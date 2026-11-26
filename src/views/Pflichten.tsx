@@ -29,6 +29,7 @@ export function Pflichten(props: { objekt: Row }) {
     { key: 'einheit_id', label: 'Nur für Einheit (optional)', type: 'select', options: (einheiten ?? []).map((e) => [e.id, e.bezeichnung]) },
     { key: 'intervall_monate', label: 'Turnus in Monaten (leer = laut Bescheid)', type: 'number' },
     { key: 'naechste', label: 'Nächster Termin', type: 'date', required: !!r.aktiv },
+    { key: 'fester_termin', label: 'Fester Stichtag: der nächste Termin bleibt auf diesem Datum, auch wenn spät erledigt', type: 'check' },
     { key: 'vorlauf_tage', label: 'Vorgang so viele Tage vorher anlegen', type: 'number', required: true },
     { key: 'firma_id', label: 'Firma', type: 'select', options: (personen ?? []).map((p) => [p.id, personName(p)]) },
     { key: 'kategorie', label: 'Kostenart der Rechnung', type: 'select', options: KATEGORIEN_KOSTEN },

@@ -92,6 +92,7 @@ export function vertragFelder(modus: Modus, einheiten: Row[], personen: Row[], f
     ...a.felder(f),
     { key: 'lastschrift', label: 'Zahlt per SEPA-Lastschrift', type: 'check', section: 'Zahlungsweg' },
     { key: 'sepa_mandat', label: 'Mandatsreferenz' },
+    { key: 'sepa_mandat_datum', label: 'Mandat unterschrieben am', type: 'date' },
     { key: 'notiz', label: 'Notiz', type: 'textarea' },
   ];
 }

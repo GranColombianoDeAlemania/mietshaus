@@ -259,7 +259,15 @@ module.exports = function auswertung({ db, all, get, tx, bh, ab }) {
     for (let j = jetzt - jahre + 1; j <= jetzt; j++) {
       const von = `${j}-01-01`, bis = `${j}-12-31`;
       const soll = get(`SELECT coalesce(sum(b.betrag_ct), 0) AS s FROM buchungen b JOIN konten e ON e.id = b.haben_id JOIN konten p ON p.id = b.soll_id
-        WHERE e.objekt_id = ? AND e.kategorie IN ('miete', 'sonst') AND p.klasse = 'person' AND b.datum BETWEEN ? AND ?`, objektId, von, bis).s;
+        WHERE e.objekt_id = ? AND e.kategorie IN ('miete', 'sonst') AND p.klasse = 'person' AND b.datum BETWEEN ? AND ?
+          AND NOT EXISTS (SELECT 1 FROM buchungen x WHERE x.storno_von = b.id)`, objektId, von, bis).s;
+      // Months of the year that count: the running year up to this month, the year of purchase from the purchase month.
+      // Yearly figures of a part year are projected to twelve months (and marked), so they compare with full years.
+      const heuteIso = ortszeit.heute();
+      const bisMonat = j === jetzt ? Number(heuteIso.slice(5, 7)) : 12;
+      const abMonat = o.kaufdatum && Number(o.kaufdatum.slice(0, 4)) === j ? Number(o.kaufdatum.slice(5, 7)) : 1;
+      const monate = Math.max(1, bisMonat - abMonat + 1);
+      const hoch = 12 / monate;
       const ein = einnahmen(objektId, von, bis);
       // Before financing: interest from loan instalments is not a cost here.
       const ks = kosten(objektId, von, bis).filter((k) => k.kategorie !== 'zinsen');
@@ -289,19 +297,20 @@ module.exports = function auswertung({ db, all, get, tx, bh, ab }) {
         selbst = {
           anteil: va.anteil, flaeche_vermietet: va.flaeche_vermietet, einheiten: va.selbst, kosten_ct: zuordenbar,
           netto_ct: nettoTeil, invest_ct: Math.round(invest * va.anteil),
-          brutto_rendite: o.kaufpreis_ct ? soll / (o.kaufpreis_ct * va.anteil) * 100 : null,
-          netto_rendite: invest ? nettoTeil / (invest * va.anteil) * 100 : null,
+          brutto_rendite: o.kaufpreis_ct ? soll * hoch / (o.kaufpreis_ct * va.anteil) * 100 : null,
+          netto_rendite: invest ? nettoTeil * hoch / (invest * va.anteil) * 100 : null,
           fiktiv_kaltmiete_ct: fiktiv, eigenanteil_ct: eigenanteil, fiktiv_netto_ct: nettoFiktiv,
-          fiktiv_brutto_rendite: o.kaufpreis_ct ? (soll + fiktiv) / o.kaufpreis_ct * 100 : null,
-          fiktiv_netto_rendite: invest ? nettoFiktiv / invest * 100 : null,
+          fiktiv_brutto_rendite: o.kaufpreis_ct ? (soll + fiktiv) * hoch / o.kaufpreis_ct * 100 : null,
+          fiktiv_netto_rendite: invest ? nettoFiktiv * hoch / invest * 100 : null,
         };
       }
       zeilen.push({
         jahr: j, soll_kaltmiete_ct: soll, ist_kaltmiete_ct: ist, umlagen_ct: umlagen, umlagefaehig_ct: uml, nicht_umlagefaehig_ct: nichtUml,
         netto_ct: netto, ausfall_ct: Math.max(0, soll - ist),
-        brutto_rendite: invest && o.kaufpreis_ct ? soll / o.kaufpreis_ct * 100 : null,
-        netto_rendite: invest ? netto / invest * 100 : null,
-        miete_qm: flaeche ? soll / 12 / flaeche : null, kosten_qm: flaeche ? (uml + nichtUml) / 12 / flaeche : null,
+        monate, hochgerechnet: monate < 12,
+        brutto_rendite: invest && o.kaufpreis_ct ? soll * hoch / o.kaufpreis_ct * 100 : null,
+        netto_rendite: invest ? netto * hoch / invest * 100 : null,
+        miete_qm: flaeche ? soll / monate / flaeche : null, kosten_qm: flaeche ? (uml + nichtUml) / monate / flaeche : null,
         selbst,
       });
     }

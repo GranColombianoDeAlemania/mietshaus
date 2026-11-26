@@ -58,7 +58,7 @@ module.exports = [
   T('Pauschale statt Vorauszahlung', 'pauschale inklusivmiete bruttomiete nebenkosten pauschal', 'vertraege', 'Im Vertrag die Art der Betriebskosten wählen: Vorauszahlung, Pauschale oder inklusive. Pauschalen werden nicht abgerechnet.', 'miete'),
   T('Ratenzahlung vereinbaren', 'raten rückstand ratenzahlung vereinbarung abstottern', 'vertraege', 'Am Vertrag „Ratenzahlung vereinbaren…“: Betrag, Rate und erste Rate; Mietshaus schreibt die Vereinbarung.', 'miete'),
   T('Eigentümer anlegen', 'eigentümer weg neu eigentum hausgeld', 'vertraege', 'Im WEG-Bereich unter Eigentümer → neu: Person, Einheit, Beginn, Hausgeld und Rücklage.', 'weg'),
-  T('Eigentümerwechsel', 'verkauf eigentümer wechsel neuer eigentümer weg', 'vertraege', 'Beim bisherigen Eigentum das Ende eintragen und den neuen Eigentümer ab dem Folgetag anlegen; die Abrechnung teilt nach Tagen.', 'weg'),
+  T('Eigentümerwechsel', 'verkauf eigentümer wechsel neuer eigentümer weg', 'vertraege', 'Beim bisherigen Eigentum das Ende eintragen und den neuen Eigentümer ab dem Folgetag anlegen; die Abrechnungsspitze schuldet, wer am Tag des Beschlusses Eigentümer ist (Fälligkeitstheorie); die Aufteilung nach Tagen zeigt die Abrechnung nur als Information für den Kaufvertrag.', 'weg'),
 
   // ---------- people ----------
   T('Adressbuch', 'kontakte personen adressen firmen handwerker', 'personen', 'Im Adressbuch stehen Mieter, Eigentümer, Handwerker und Firmen; jede Person hat einen Steckbrief mit Verträgen und Dokumenten.'),
@@ -75,7 +75,7 @@ module.exports = [
   T('Zählerstand erfassen', 'zählerstand ablesen ablesung eintragen stand', 'zaehler', 'Unter Zähler den Stand mit Datum eintragen, für das ganze Haus auf einmal; am Handy mit Foto des Zählers.'),
   T('Zählerfoto', 'foto zähler ablesen bild beweis', 'zaehler', 'Beim Erfassen am Handy ein Foto machen; Mietshaus liest die Ziffern vor und legt das Foto als Nachweis ab.'),
   T('Zählertausch', 'zähler tauschen wechsel ausbau einbau neuer zähler', 'zaehler', 'Beim alten Zähler das Ausbaudatum mit Endstand eintragen und den neuen mit Einbaudatum und Anfangsstand anlegen.'),
-  T('Eichfrist', 'eichung eichfrist abgelaufen zähler tausch', 'zaehler', 'Das Eichdatum steht beim Zähler; ablaufende Eichungen erscheinen bei den Fristen.'),
+  T('Eichfrist', 'eichung eichfrist abgelaufen zähler tausch', 'zaehler', 'Das Eichdatum steht beim Zähler; ablaufende Eichungen erscheinen bei den Fristen. Kaltwasser 6 Jahre, Warmwasser und Wärme 5 Jahre.'),
   T('Verbrauch fehlt', 'verbrauch fehlt ablesung abrechnung zähler leer', 'zaehler', 'Für die Abrechnung braucht jeder Zähler einen Stand am Anfang und am Ende des Zeitraums; Zwischenstände rechnet Mietshaus anteilig.'),
   T('Heizkostenverteiler', 'hkv heizkostenverteiler heizung verbrauch', 'zaehler', 'Heizkostenverteiler als Zählerart anlegen; sie sind dann Schlüssel für den Verbrauchsanteil der Heizkosten.'),
   T('Wasserzähler je Wohnung', 'wasser wohnung zähler kaltwasser warmwasser', 'zaehler', 'Wohnungszähler mit Einheit anlegen; ein Umlageschlüssel „nach Zähler“ verteilt das Wasser dann nach Verbrauch.'),
@@ -144,7 +144,7 @@ module.exports = [
   T('Darlehen anlegen', 'darlehen kredit finanzierung bank annuität', 'darlehen', 'Unter Darlehen: Bank, Betrag, Zins, Tilgung, erste Rate. Mietshaus rechnet den Tilgungsplan.'),
   T('Tilgungsplan', 'tilgung plan restschuld zinsen raten', 'darlehen', 'Der Tilgungsplan zeigt je Rate Zins, Tilgung und Restschuld und die Zinsen je Jahr.'),
   T('Schuldzinsen für die Steuer', 'schuldzinsen zinsen steuer anlage v', 'auswertung', 'Schuldzinsen trägst du in Rendite & Steuer unter „Ergänzende Angaben“ ein; bei Selbstnutzung zählt der vermietete Anteil.', 'miete'),
-  T('Sondertilgung', 'sondertilgung zusätzlich tilgen', 'darlehen', 'Eine Sondertilgung als zusätzliche Zahlung beim Darlehen eintragen; der Plan rechnet neu.'),
+  T('Sondertilgung', 'sondertilgung zusätzlich tilgen', 'darlehen', 'Eine Sondertilgung als zusätzliche Zahlung beim Darlehen eintragen; der Plan rechnet ab der aktuellen Restschuld neu, auch die Restschuld zum Ende der Zinsbindung.'),
 
   // ---------- service charges ----------
   T('Nebenkostenabrechnung', 'nebenkosten abrechnung betriebskosten nka jahresabrechnung', 'nk', 'Unter Betriebskosten den Zeitraum wählen; Mietshaus verteilt die umlagefähigen Kosten nach Schlüssel und Tagen und schreibt die Briefe.', 'miete'),
@@ -179,7 +179,7 @@ module.exports = [
   T('Einladung zur Versammlung', 'einladung etv frist drei wochen', 'versammlungen', 'Die Einladung mit Tagesordnung entsteht aus der Versammlung als Brief; die Frist beträgt drei Wochen.', 'weg'),
   T('Hausgeld anpassen', 'hausgeld ändern erhöhen neuer wirtschaftsplan', 'wipl', 'Nach dem Beschluss des Wirtschaftsplans das neue Hausgeld je Eigentümer übernehmen.', 'weg'),
   T('Rücklage entnehmen', 'entnahme rücklage zahlen aus rücklage', 'konten', 'Kostenkonten mit „aus Rücklage“ gehen nicht ins Hausgeld, sondern erscheinen in der Rücklagenabrechnung.', 'weg'),
-  T('Abrechnungsspitze', 'abrechnungsspitze ergebnis nachzahlung weg', 'wegabr', 'Die Abrechnungsspitze ist der Unterschied zwischen Kosten und gezahltem Hausgeld; nur sie wird beschlossen.', 'weg'),
+  T('Abrechnungsspitze', 'abrechnungsspitze ergebnis nachzahlung weg', 'wegabr', 'Die Abrechnungsspitze ist der Unterschied zwischen den Kosten und den beschlossenen Hausgeld-Vorschüssen (Soll); nur sie wird beschlossen. Rückstände bleiben als offene Posten stehen.', 'weg'),
   T('Umlagefähige Kosten für vermietende Eigentümer', 'umlagefähig eigentümer vermietet weitergeben', 'wegabr', 'Die Jahresabrechnung weist den umlagefähigen Anteil je Eigentümer aus, für dessen eigene Nebenkostenabrechnung.', 'weg'),
   T('Stimmrecht nach Anteilen', 'stimmrecht kopfprinzip mea einheiten', 'versammlungen', 'Je Beschluss wählst du nach Köpfen, nach Miteigentumsanteilen oder nach Einheiten.', 'weg'),
 
@@ -213,11 +213,11 @@ module.exports = [
   T('Pflichten am Haus', 'pflichten prüfpflicht wartung turnus verkehrssicherung', 'pflichten', 'Unter Pflichten am Haus wählst du aus dem Katalog, was zutrifft (Rauchmelder, Heizung, Trinkwasser …), mit Turnus und Firma.'),
   T('Rauchmelder', 'rauchmelder prüfung jährlich wartung', 'pflichten', 'Pflicht „Rauchmelder prüfen“ (12 Monate) anlegen; wer prüfen muss, hängt vom Bundesland ab.'),
   T('Heizungswartung', 'heizung wartung jährlich heizungsbauer', 'pflichten', 'Pflicht „Heizungswartung“ anlegen; vor der Frist entsteht ein Vorgang, „Erledigt“ mit Nachweis setzt den nächsten Termin.'),
-  T('Trinkwasserprüfung', 'legionellen trinkwasser großanlage prüfung', 'pflichten', 'Legionellenprüfung alle 3 Jahre nur bei Großanlagen; Mietshaus fragt das beim Anlegen ab.'),
+  T('Trinkwasserprüfung', 'legionellen trinkwasser großanlage prüfung', 'pflichten', 'Legionellenprüfung alle 3 Jahre, nur bei Großanlagen: zentraler Speicher über 400 Liter oder über 3 Liter Leitungsinhalt bis zur Zapfstelle, mit Duschen, vermietet. Sonst die Pflicht nicht auswählen.'),
   T('Pflicht erledigen', 'erledigt nachweis pflicht abhaken', 'pflichten', '„Erledigt“ mit Datum und Nachweis (Foto oder Datei); der nächste Termin rückt um den Turnus weiter.'),
   T('Begehung', 'begehung rundgang kontrolle haus mängel', 'begehungen', 'Unter Begehungen am Handy Bereich für Bereich Fotos, Notizen und Mängel festhalten; am Ende entsteht das Protokoll.'),
   T('Mangel festhalten', 'mangel schaden defekt begehung vorgang', 'begehungen', 'In der Begehung „Mangel“: wird ein Vorgang mit Foto, optional mit dem Ablauf „Schadensfall“.'),
-  T('Versicherungen', 'versicherung gebäudeversicherung haftpflicht police', 'versicherungen', 'Unter Versicherungen stehen Policen mit Beitrag, Laufzeit und Kündigungsfrist.'),
+  T('Versicherungen', 'versicherung gebäudeversicherung haftpflicht police', 'versicherungen', 'Unter Versicherungen stehen Policen mit Beitrag, Fälligkeit, „kündbar bis“ und Ablauf.'),
   T('Schaden melden', 'schaden versicherung melden wasserschaden', 'vorgaenge', 'Einen Vorgang anlegen; der Ablauf „Schadensfall“ führt durch Aufnahme, Meldung an die Versicherung, Handwerker und Rechnung.'),
 
   // ---------- communication, tasks ----------
@@ -255,7 +255,7 @@ module.exports = [
   T('Dokumenteneingang per E-Mail', 'email eingang postfach imap automatisch', 'einstellungen', 'Unter Einstellungen → Dokumenteneingang ein E-Mail-Postfach verbinden; Anhänge landen von selbst im Postfach.'),
   T('Eingangsordner', 'ordner scanner nas eingangsordner automatisch', 'einstellungen', 'Unter Einstellungen → Dokumenteneingang einen Ordner verbinden; neue Dateien kommen ins Postfach und werden nach „eingelesen“ verschoben.'),
   T('Vorschläge von Claude', 'claude vorschläge ki postfach abarbeiten', 'vorschlaege', 'Hier stehen Vorschläge, die Claude über die Claude-Verbindung gemacht hat; du nimmst sie an oder verwirfst sie.'),
-  T('Aufbewahrungsfristen', 'aufbewahren zehn jahre belege löschen gobd', 'archiv', 'Buchungsbelege sind 10 Jahre aufzubewahren; Mietshaus fragt nach, bevor ein gebuchter Beleg in den Papierkorb geht.'),
+  T('Aufbewahrungsfristen', 'aufbewahren acht zehn jahre belege löschen gobd', 'archiv', 'Buchungsbelege 8 Jahre (seit 2025), Bücher und Abschlüsse 10 Jahre, jeweils ab Jahresende (§ 147 AO). Gebuchte Belege und Verträge löscht der Papierkorb nie von selbst.'),
   T('Dokument öffnen', 'öffnen anzeigen pdf vorschau herunterladen', 'archiv', 'Ein Dokument anklicken zeigt die Vorschau; „Öffnen“ zeigt es im Browser bzw. mit dem Programm auf dem Mac.'),
 
   // ---------- system ----------

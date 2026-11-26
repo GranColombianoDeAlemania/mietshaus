@@ -103,9 +103,9 @@ module.exports = function pflichten({ db, all, get, tx, PERSON_NAME }) {
         if (!k) throw new Error(`Unbekannte Pflicht: ${a.art}`);
         if (get(`SELECT 1 FROM pflichten WHERE objekt_id = ? AND art = ? AND coalesce(einheit_id, 0) = ? AND aktiv = 1`, objektId, k.art, a.einheit_id ?? 0)) continue;
         const monate = a.intervall_monate === undefined ? k.monate : a.intervall_monate || null;
-        const r = db.prepare(`INSERT INTO pflichten (objekt_id, einheit_id, art, titel, intervall_monate, naechste, firma_id, kategorie)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(objektId, a.einheit_id ?? null, k.art, a.titel || k.titel, monate,
-          a.naechste || vorschlagNaechste(k, t), a.firma_id ?? null, k.kategorie);
+        const r = db.prepare(`INSERT INTO pflichten (objekt_id, einheit_id, art, titel, intervall_monate, naechste, firma_id, kategorie, fester_termin)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(objektId, a.einheit_id ?? null, k.art, a.titel || k.titel, monate,
+          a.naechste || vorschlagNaechste(k, t), a.firma_id ?? null, k.kategorie, k.start ? 1 : 0);
         neu.push(Number(r.lastInsertRowid));
       }
       return neu;
@@ -121,7 +121,13 @@ module.exports = function pflichten({ db, all, get, tx, PERSON_NAME }) {
       if (d > ortszeit.heute()) throw new Error('Das Datum liegt in der Zukunft – erledigt wird es, wenn es gemacht ist.');
       db.prepare('INSERT INTO pflicht_erledigt (pflicht_id, datum, dokument_id, buchung_id, notiz, von) VALUES (?, ?, ?, ?, ?, ?)')
         .run(id, d, dokument_id, buchung_id, notiz || null, von);
-      const weiter = naechste || (p.intervall_monate ? plusMonate(d, p.intervall_monate) : null);
+      // Next date: from the day it was done, or – for a duty on a fixed date (winter service before November) – the same
+      // date in the next turn, however late it was done.
+      let weiter = naechste || null;
+      if (!weiter && p.intervall_monate) {
+        if (p.fester_termin && p.naechste) { weiter = p.naechste; while (weiter <= d) weiter = plusMonate(weiter, p.intervall_monate); }
+        else weiter = plusMonate(d, p.intervall_monate);
+      }
       db.prepare('UPDATE pflichten SET naechste = ? WHERE id = ?').run(weiter, id);
       for (const v of all(`SELECT id FROM vorgaenge WHERE pflicht_id = ? AND status <> 'erledigt'`, id)) {
         db.prepare(`UPDATE vorgaenge SET status = 'erledigt' WHERE id = ?`).run(v.id);

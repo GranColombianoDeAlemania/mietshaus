@@ -28,6 +28,30 @@ module.exports = function darlehen({ db, all, get, tx, bh }) {
     return zeilen;
   }
 
+  // The schedule with the special repayments made: a month in which more was repaid on the loan account than the plan
+  // says (Sondertilgung, or a larger instalment) lowers the balance by the excess; the plan then runs on with the same
+  // instalment – so the remaining term and the balance at the end of the fixed-interest period include it. Instalments
+  // not booked yet change nothing.
+  function planMitIst(d) {
+    if (!d.konto_id) return { zeilen: plan(d), neu_ab: null };
+    const gebucht = new Map(all(`SELECT substr(datum, 1, 7) AS m, sum(betrag_ct) AS s FROM buchungen WHERE soll_id = ? GROUP BY m`, d.konto_id).map((x) => [x.m, x.s]));
+    const zeilen = [];
+    let rest = d.betrag_ct, neuAb = null;
+    const r = rate(d);
+    let monat = d.erste_rate.slice(0, 7);
+    for (let i = 0; rest > 0 && i < 600; i++) {
+      const zins = Math.round(rest * d.zinssatz / 100 / 12);
+      const tilgung = Math.min(rest, Math.max(0, r - zins));
+      const extra = Math.min(rest - tilgung, Math.max(0, (gebucht.get(monat) ?? 0) - tilgung));
+      rest -= tilgung + (extra > 100 ? extra : 0);
+      if (extra > 100) neuAb ??= monat;
+      zeilen.push({ monat, rate_ct: zins + tilgung, zins_ct: zins, tilgung_ct: tilgung, rest_ct: rest, ...(extra > 100 ? { sondertilgung_ct: extra } : {}) });
+      monat = monatPlus(`${monat}-01`, 1);
+      if (tilgung === 0) break;
+    }
+    return { zeilen, neu_ab: neuAb };
+  }
+
   function konten(objektId, d) {
     // Interest account (expense, not allocable) shared by all loans of the object.
     let zins = get(`SELECT id FROM konten WHERE objekt_id = ? AND kategorie = 'zinsen' AND klasse = 'kosten'`, objektId);
@@ -67,7 +91,7 @@ module.exports = function darlehen({ db, all, get, tx, bh }) {
 
     tilgungsplan: (id) => {
       const d = get('SELECT * FROM darlehen WHERE id = ?', id);
-      const zeilen = plan(d);
+      const { zeilen, neu_ab } = planMitIst(d);
       // Yearly totals are what the tax return and the bank statement show.
       const jahre = {};
       for (const z of zeilen) {
@@ -75,7 +99,7 @@ module.exports = function darlehen({ db, all, get, tx, bh }) {
         j.zins_ct += z.zins_ct; j.tilgung_ct += z.tilgung_ct; j.rest_ct = z.rest_ct;
       }
       const restBindung = d.zinsbindung_bis ? zeilen.filter((z) => z.monat <= d.zinsbindung_bis.slice(0, 7)).at(-1)?.rest_ct ?? null : null;
-      return { darlehen: d, rate_ct: rate(d), zeilen, jahre: Object.values(jahre), rest_zinsbindung_ct: restBindung, laufzeit_monate: zeilen.length };
+      return { darlehen: d, rate_ct: rate(d), zeilen, jahre: Object.values(jahre), rest_zinsbindung_ct: restBindung, laufzeit_monate: zeilen.length, neu_berechnet_ab: neu_ab };
     },
 
     darlehenSpeichern: (row) => tx(() => {

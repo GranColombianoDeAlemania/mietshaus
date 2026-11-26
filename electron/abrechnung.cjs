@@ -1,6 +1,6 @@
 // Annual statements: service charges for tenants (incl. heating and CO2 split), house money for owners,
 // budget plan, reserves and special levies. All amounts in cents.
-const { tageZwischen } = require('./buchhaltung.cjs');
+const { tageZwischen, nkFrist } = require('./buchhaltung.cjs');
 const ortszeit = require('./zeit.cjs');
 
 const tage = (von, bis) => tageZwischen(von, bis) + 1;
@@ -184,17 +184,25 @@ module.exports = function abrechnung({ db, all, get, tx, PERSON_NAME, bh }) {
 
     let heizung = null;
     if (heizkonten.length && o.heizung === 'intern') {
-      // HeizkostenV: a share by consumption (50–70 %), the rest by heated area.
+      // HeizkostenV: a share by consumption (50–70 %), the rest by heated area. Accounts without a consumption key or
+      // without readings, and let units without their own meter, are reported (the check blocks the statement).
+      const ohneVerbrauch = [], ohneZaehler = new Set();
       for (const k of heizkonten) {
         const zArt = k.kategorie === 'bk05' ? 'warmwasser' : 'waerme';
         const vKey = get(`SELECT id FROM umlageschluessel WHERE objekt_id = ? AND typ = 'zaehler' AND zaehler_art IN (?, ?) ORDER BY id LIMIT 1`,
           objektId, zArt, zArt === 'waerme' ? 'heizkostenverteiler' : zArt)?.id;
         const vr = vKey ? rechner(vKey, segmente) : null;
         const verbrauch = vr && vr.gesamt > 0 ? Math.round(k.betrag_ct * o.verbrauchsanteil / 100) : 0;
+        if (!verbrauch) ohneVerbrauch.push(k.bezeichnung);
+        else {
+          const art = vr.k.zaehler_art;
+          for (const sg of segmente.filter((sg) => sg.vertrag && ['Wohnung', 'Gewerbe'].includes(sg.einheit.art ?? 'Wohnung')))
+            if (!get('SELECT 1 FROM zaehler WHERE einheit_id = ? AND art = ?', sg.einheit.id, art)) ohneZaehler.add(sg.einheit.bezeichnung);
+        }
         verteile(`${k.bezeichnung} – Grundkosten (${verbrauch ? 100 - o.verbrauchsanteil : 100} %)`, k, k.betrag_ct - verbrauch, flaecheKey, { kategorie: k.kategorie, heizung: true, p35a: k.p35a });
         if (verbrauch) verteile(`${k.bezeichnung} – Verbrauchskosten (${o.verbrauchsanteil} %)`, k, verbrauch, vKey, { kategorie: k.kategorie, heizung: true });
       }
-      heizung = { modus: 'intern', ohne_zaehler: !get(`SELECT 1 FROM zaehler WHERE objekt_id = ? AND art IN ('waerme','heizkostenverteiler')`, objektId) };
+      heizung = { modus: 'intern', ohne_zaehler: ohneVerbrauch.length > 0, ohne_verbrauch: ohneVerbrauch, einheiten_ohne_zaehler: [...ohneZaehler] };
     } else if (o.heizung === 'extern') {
       // Results of an external billing company, entered per contract.
       const p = posten.length;
@@ -223,6 +231,11 @@ module.exports = function abrechnung({ db, all, get, tx, PERSON_NAME, bh }) {
       co2 = { kg: o.co2_kg, kg_pro_qm: kgProQm, vermieter_prozent: prozent, kosten_ct: o.co2_kosten_ct };
     }
 
+    // § 556 Abs. 3 S. 3 BGB: after the deadline no additional payment can be demanded – unless the landlord states why
+    // the delay is not his fault (o.verspaetung_grund, printed in the letter). Credits are paid out in any case.
+    const frist = nkFrist(bis);
+    const fristInfo = { frist, abgelaufen: ortszeit.heute() > frist, grund: (o.verspaetung_grund ?? '').trim() || null };
+    const sperre = fristInfo.abgelaufen && !fristInfo.grund;
     const ergebnisse = segmente.map((s, i) => {
       const a = posten.map((_, p) => anteil.get(i)?.[p] ?? { ct: 0, einheiten: 0 });
       const kosten = a.reduce((sum, x) => sum + x.ct, 0);
@@ -240,18 +253,20 @@ module.exports = function abrechnung({ db, all, get, tx, PERSON_NAME, bh }) {
       const monate = 12 * s.tage / tage(von, bis);
       // Commercial lettings with VAT: the result is net, VAT is added on top.
       const ustSatz = s.vertrag ? Number(s.vertrag.ust_satz) || 0 : 0;
-      const ergebnis = umgelegt - bkVz - hkVz;
+      const roh = umgelegt - bkVz - hkVz;
+      const ergebnis = sperre && s.vertrag && roh > 0 ? 0 : roh;
       return {
         segment: { von: s.von, bis: s.bis, tage: s.tage, einheit: s.einheit, vertrag: s.vertrag, konto_id: konto?.id ?? null, selbst: s.selbst ?? null },
         anteile: a, kosten_ct: kosten, heiz_ct: heiz, bk_ct: kosten - heiz, bk_vz_ct: bkVz, hk_vz_ct: hkVz,
         bk_art: s.vertrag ? bkArt : null, umgelegt_ct: umgelegt, nicht_umgelegt_ct: kosten - umgelegt,
-        ergebnis_ct: ergebnis, ust_satz: ustSatz, ust_ct: ustSatz ? Math.round(ergebnis * ustSatz / 100) : 0, p35a,
+        ergebnis_ct: ergebnis, ausgeschlossen_ct: roh - ergebnis, ust_satz: ustSatz, ust_ct: ustSatz ? Math.round(ergebnis * ustSatz / 100) : 0, p35a,
         neu_bk_vz_ct: pauschal ? null : Math.ceil((kosten - heiz) / Math.max(1, monate) / 100) * 100,
         neu_hk_vz_ct: Math.ceil(heiz / Math.max(1, monate) / 100) * 100,
       };
     });
 
-    return { typ: 'nk', objekt_id: objektId, von, bis, optionen: o, posten, ergebnisse, heizung, co2,
+    return { typ: 'nk', objekt_id: objektId, von, bis, optionen: o, posten, ergebnisse, heizung, co2, frist: fristInfo,
+      ausgeschlossen_ct: ergebnisse.reduce((s, e) => s + e.ausgeschlossen_ct, 0),
       summe_ct: posten.reduce((s, p) => s + p.gesamt_ct, 0),
       leerstand_ct: ergebnisse.filter((e) => !e.segment.vertrag && !e.segment.selbst).reduce((s, e) => s + e.kosten_ct, 0),
       eigenanteil_ct: ergebnisse.filter((e) => e.segment.selbst).reduce((s, e) => s + e.kosten_ct, 0),
@@ -272,11 +287,10 @@ module.exports = function abrechnung({ db, all, get, tx, PERSON_NAME, bh }) {
 
     // Period and deadline (§ 556 Abs. 3 BGB).
     if (tageP > 366) add('fehler', `Der Abrechnungszeitraum ist länger als zwölf Monate (${tageP} Tage).`, '§ 556 Abs. 3 Satz 1 BGB: höchstens ein Jahr.');
-    const [by, bm, bd] = bis.split('-').map(Number);
-    const monatsEnde = bd === new Date(Date.UTC(by, bm, 0)).getUTCDate();
-    const frist = monatsEnde ? new Date(Date.UTC(by + 1, bm, 0)).toISOString().slice(0, 10) : `${by + 1}-${String(bm).padStart(2, '0')}-${String(bd).padStart(2, '0')}`;
+    const frist = a.frist.frist;
     const rest = Math.round((Date.parse(frist) - Date.parse(heuteIso)) / 864e5);
-    if (rest < 0) add('fehler', `Die Abrechnungsfrist ist am ${datumDe(frist)} abgelaufen: Nachzahlungen können nicht mehr verlangt werden, Guthaben müssen trotzdem ausgezahlt werden.`, '§ 556 Abs. 3 Satz 3 BGB (es sei denn, die Verspätung ist nicht vom Vermieter zu vertreten).');
+    if (rest < 0 && a.frist.grund) add('warnung', `Die Abrechnungsfrist ist am ${datumDe(frist)} abgelaufen. Nachzahlungen werden trotzdem verlangt, weil du die Verspätung begründest: „${a.frist.grund}“. Der Grund steht im Brief.`, '§ 556 Abs. 3 Satz 3 BGB: nur zulässig, wenn der Vermieter die Verspätung nicht zu vertreten hat (z. B. Bescheid kam zu spät). Im Streit musst du das belegen.');
+    else if (rest < 0) add('warnung', `Die Abrechnungsfrist ist am ${datumDe(frist)} abgelaufen: ${a.ausgeschlossen_ct ? `Nachzahlungen (${euro(a.ausgeschlossen_ct)}) sind gesperrt und werden nicht verlangt` : 'Nachzahlungen könnten nicht mehr verlangt werden'}, Guthaben werden ausgezahlt.`, '§ 556 Abs. 3 Satz 3 BGB. Hattest du die Verspätung nicht zu vertreten, den Grund unter „Verspätung begründen“ eintragen.');
     else if (rest <= 30) add('warnung', `Die Abrechnung muss bis spätestens ${datumDe(frist)} beim Mieter eingegangen sein – noch ${rest} Tage.`, '§ 556 Abs. 3 Satz 2 BGB. Zugang nachweisbar machen.');
     else add('info', `Frist: Die Abrechnung muss bis ${datumDe(frist)} beim Mieter eingegangen sein.`, '§ 556 Abs. 3 Satz 2 BGB.');
 
@@ -331,7 +345,11 @@ module.exports = function abrechnung({ db, all, get, tx, PERSON_NAME, bh }) {
     // Heating (HeizkostenV) and CO2 split.
     if (o.heizung === 'intern' && a.posten.some((p) => p.heizung)) {
       if (o.verbrauchsanteil < 50 || o.verbrauchsanteil > 70) add('fehler', `Der Verbrauchsanteil der Heizkosten beträgt ${o.verbrauchsanteil} % – zulässig sind 50 bis 70 %.`, '§§ 7, 8 HeizkostenV.');
-      if (a.heizung?.ohne_zaehler) add('warnung', 'Für die Heizkosten gibt es keine Verbrauchserfassung; sie werden nur nach Fläche verteilt.', 'Der Mieter darf seinen Anteil dann um 15 % kürzen (§ 12 Abs. 1 HeizkostenV).');
+      if (a.heizung?.ohne_verbrauch?.length) add('fehler', `Keine Verbrauchserfassung für ${a.heizung.ohne_verbrauch.map((x) => `„${x}“`).join(', ')}: Es fehlt ein Umlageschlüssel vom Typ „Zähler“ (Wärme, Heizkostenverteiler bzw. Warmwasser) oder es gibt keine Zählerstände.`,
+        'Die HeizkostenV verlangt 50–70 % nach Verbrauch (§§ 7, 8). Ohne Verbrauchserfassung darf der Mieter 15 % kürzen (§ 12 Abs. 1). Schlüssel und Stände ergänzen. Ist das Haus von der HeizkostenV ausgenommen (§ 11, z. B. Zweifamilienhaus mit selbst bewohnter Wohnung), „wie Betriebskosten“ wählen.', { sperrt: true });
+      if (a.heizung?.einheiten_ohne_zaehler?.length) add('fehler', `Ohne eigenen Zähler: ${a.heizung.einheiten_ohne_zaehler.join(', ')} – diese Einheiten trügen keinen Verbrauchsanteil, die anderen zahlten ihn mit.`,
+        'Zähler bzw. Heizkostenverteiler erfassen. Fiel ein Gerät aus, den Verbrauch nach § 9a HeizkostenV schätzen (Vorjahr oder vergleichbare Räume) und als Zählerstand eintragen.', { sperrt: true });
+      add('info', 'Heizkosten zählen nach Rechnungsdatum im Zeitraum.', 'Richtig bei Gas, Fernwärme und Strom. Bei Brennstoff mit Vorrat (Öl, Pellets, Flüssiggas) zählt der Verbrauch: Anfangsbestand + Lieferungen − Endbestand (§ 7 Abs. 2 HeizkostenV).');
     }
     if (a.posten.some((p) => p.heizung) && !a.co2) add('warnung', 'Die CO₂-Kostenaufteilung fehlt.',
       'Bei Heizöl, Erdgas, Flüssiggas oder fossiler Fernwärme trägt der Vermieter je nach Ausstoß einen Teil der CO₂-Kosten (CO2KostAufG). Fehlt die Angabe, darf der Mieter seinen Heizkostenanteil um 3 % kürzen. CO₂-Menge und -Kosten stehen auf der Brennstoff- bzw. Fernwärmerechnung.');
@@ -401,20 +419,36 @@ module.exports = function abrechnung({ db, all, get, tx, PERSON_NAME, bh }) {
     if (frueher) add('info', `Für diesen Zeitraum ist bereits eine Abrechnung gespeichert (${frueher.erstellt.slice(0, 10).split('-').reverse().join('.')}).`);
     const ordnung = { fehler: 0, warnung: 1, info: 2 };
     return { frist, punkte: punkte.sort((x, y) => ordnung[x.stufe] - ordnung[y.stufe]),
-      fehler: punkte.filter((x) => x.stufe === 'fehler').length, warnungen: punkte.filter((x) => x.stufe === 'warnung').length };
+      fehler: punkte.filter((x) => x.stufe === 'fehler').length, warnungen: punkte.filter((x) => x.stufe === 'warnung').length, sperrt: punkte.some((x) => x.sperrt) };
   }
 
   // ---------- House-money statement (owners), § 28 WEG ----------
-  function wegAbrechnung(objektId, von, bis) {
+  function wegAbrechnung(objektId, von, bis, opt = {}) {
+    const o = { verbrauchsanteil: 70, stichtag: ortszeit.heute(), ...opt };
     const segmente = abschnitte(objektId, 'weg', von, bis);
     const rechner = schluesselRechner(objektId, von, bis);
     const meaKey = get(`SELECT id FROM umlageschluessel WHERE objekt_id = ? AND typ = 'mea' ORDER BY id LIMIT 1`, objektId)?.id;
+    const flaecheKey = get(`SELECT id FROM umlageschluessel WHERE objekt_id = ? AND typ = 'flaeche' ORDER BY id LIMIT 1`, objektId)?.id;
     // Costs paid from the reserve are not allocated as house money; they show up in the reserve statement.
     const konten = kostenImZeitraum(objektId, von, bis, 'AND k.aus_ruecklage = 0');
-    const posten = konten.map((k) => {
-      const r = rechner(k.weg_schluessel_id ?? meaKey, segmente);
-      return { label: k.bezeichnung, konto: k, gesamt_ct: k.betrag_ct, umlagefaehig: !!k.umlagefaehig, p35a: k.p35a,
-        schluessel: r?.k?.bezeichnung ?? '–', einheit: r?.k?.einheit ?? '', gesamt_einheiten: r?.gesamt ?? 0, r };
+    const zeile = (label, k, betrag, schluesselId, extra = {}) => {
+      const r = rechner(schluesselId, segmente);
+      return { label, konto: k, gesamt_ct: betrag, umlagefaehig: !!k.umlagefaehig, p35a: k.p35a,
+        schluessel: r?.k?.bezeichnung ?? '–', einheit: r?.k?.einheit ?? '', gesamt_einheiten: r?.gesamt ?? 0, r, ...extra };
+    };
+    // Heating and hot water: the HeizkostenV applies between owners as well – 50–70 % by consumption, the rest by area,
+    // as in the tenants' statement. Without a consumption key with readings the account stays on its WEG key and is reported.
+    const heizOhneVerbrauch = [];
+    const posten = konten.flatMap((k) => {
+      if (!k.heizkosten) return [zeile(k.bezeichnung, k, k.betrag_ct, k.weg_schluessel_id ?? meaKey)];
+      const zArt = k.kategorie === 'bk05' ? 'warmwasser' : 'waerme';
+      const vKey = get(`SELECT id FROM umlageschluessel WHERE objekt_id = ? AND typ = 'zaehler' AND zaehler_art IN (?, ?) ORDER BY id LIMIT 1`,
+        objektId, zArt, zArt === 'waerme' ? 'heizkostenverteiler' : zArt)?.id;
+      const vr = vKey ? rechner(vKey, segmente) : null;
+      if (!vr || !(vr.gesamt > 0)) { heizOhneVerbrauch.push(k.bezeichnung); return [zeile(k.bezeichnung, k, k.betrag_ct, k.weg_schluessel_id ?? meaKey)]; }
+      const verbrauch = Math.round(k.betrag_ct * o.verbrauchsanteil / 100);
+      return [zeile(`${k.bezeichnung} – Grundkosten (${100 - o.verbrauchsanteil} %)`, k, k.betrag_ct - verbrauch, flaecheKey ?? k.weg_schluessel_id ?? meaKey, { heizung: true }),
+        zeile(`${k.bezeichnung} – Verbrauchskosten (${o.verbrauchsanteil} %)`, k, verbrauch, vKey, { heizung: true, p35a: null })];
     });
     // Shared over all segments (also those without an owner), so the shares add up to each account's costs.
     const verteilt = posten.map((p) => anteileCt(p.r, p.gesamt_ct, segmente));
@@ -438,7 +472,19 @@ module.exports = function abrechnung({ db, all, get, tx, PERSON_NAME, bh }) {
     const summe = posten.reduce((s, p) => s + p.gesamt_ct, 0);
     // Shares of units without an owner in (part of) the period are not charged to anyone.
     const ohne = segmente.filter((s) => !s.vertrag).map((s) => ({ einheit: s.einheit.bezeichnung, von: s.von, bis: s.bis }));
-    return { typ: 'weg', objekt_id: objektId, von, bis, posten: posten.map(({ r, ...p }) => p), ergebnisse, ohne_eigentuemer: ohne,
+    // Fälligkeitstheorie (BGH V ZR 7/97 und st. Rspr.): the Abrechnungsspitze of a unit is owed in full by whoever owns it
+    // on the day of the resolution (stichtag) – also when the unit changed hands during the year. The split per owner and
+    // period above stays as information for the settlement between seller and buyer.
+    const spitzen = [...new Set(ergebnisse.map((e) => e.segment.einheit.id))].map((eid) => {
+      const teile = ergebnisse.filter((e) => e.segment.einheit.id === eid);
+      const g = get(`SELECT g.id, ${PERSON_NAME} AS name FROM eigentum g JOIN personen p ON p.id = g.person_id
+        WHERE g.einheit_id = ? AND g.beginn <= ? AND (g.ende IS NULL OR g.ende = '' OR g.ende >= ?) ORDER BY g.beginn DESC LIMIT 1`, eid, o.stichtag, o.stichtag);
+      const schuldner = g ? { id: g.id, name: g.name } : { id: teile.at(-1).segment.vertrag.id, name: teile.at(-1).segment.vertrag.name };
+      return { einheit: teile[0].segment.einheit, schuldner, konto_id: bh.kontoVon('weg', schuldner.id)?.id ?? null,
+        ergebnis_ct: teile.reduce((s, e) => s + e.ergebnis_ct, 0), wechsel: teile.length > 1 || teile[0].segment.vertrag.id !== schuldner.id };
+    });
+    return { typ: 'weg', objekt_id: objektId, von, bis, stichtag: o.stichtag, posten: posten.map(({ r, ...p }) => p), ergebnisse, spitzen, ohne_eigentuemer: ohne,
+      heiz_ohne_verbrauch: heizOhneVerbrauch,
       nicht_verteilt_ct: summe - ergebnisse.reduce((s, e) => s + e.kosten_ct, 0),
       summe_ct: summe, ruecklage: ruecklagen(objektId, von, bis), vermoegen: vermoegen(objektId, bis) };
   }
@@ -461,7 +507,20 @@ module.exports = function abrechnung({ db, all, get, tx, PERSON_NAME, bh }) {
     const entnahmen = all(`SELECT b.datum, b.text, b.betrag_ct, k.bezeichnung FROM buchungen b JOIN konten k ON k.id = b.soll_id
       WHERE k.objekt_id = ? AND k.aus_ruecklage = 1 AND b.datum BETWEEN ? AND ? ORDER BY b.datum`, objektId, von, bis);
     const bankRl = get(`SELECT id FROM konten WHERE objekt_id = ? AND klasse = 'geld' AND kategorie = 'ruecklage'`, objektId);
+    // Actual reserve (§ 28 Abs. 4 WEG, Vermögensbericht): the target minus the contributions owners have not paid yet, plus
+    // the interest earned on the reserve account. Unpaid contributions: the reserve part of the open monthly charges.
+    const zinsenBis = (d) => summe(`SELECT sum(b.betrag_ct) AS s FROM buchungen b JOIN konten e ON e.id = b.haben_id
+      WHERE e.objekt_id = ? AND e.kategorie = 'zins' AND b.datum <= ?${bankRl ? ' AND b.soll_id = ' + Number(bankRl.id) : ''}`, objektId, d);
+    const offenBis = (d) => all(`SELECT id FROM konten WHERE objekt_id = ? AND klasse = 'person' AND vertrag_typ = 'weg'`, objektId)
+      .reduce((sum, k) => sum + bh.offenePostenKonto(k.id, d).offen.reduce((s2, x) => {
+        const rl = x.teile.filter((t) => t.kategorie === 'ruecklage').reduce((s3, t) => s3 + t.betrag_ct, 0);
+        return s2 + (x.soll_ct ? Math.round(x.offen_ct * rl / x.soll_ct) : 0);
+      }, 0), 0);
+    const ist = (d) => stand(d) - offenBis(d) + zinsenBis(d);
     return {
+      ist_anfang_ct: ist(vorher),
+      ist_ende_ct: ist(bis),
+      offen_zufuehrung_ct: offenBis(bis),
       anfang_ct: stand(vorher),
       zufuehrung_soll_ct: zufuehrungBis(bis) - zufuehrungBis(vorher),
       entnahmen_ct: entnahmeBis(bis) - entnahmeBis(vorher),
@@ -588,11 +647,18 @@ module.exports = function abrechnung({ db, all, get, tx, PERSON_NAME, bh }) {
     }),
 
     // Special levy: a total amount split by key and charged to the current owners.
-    sonderumlage: (objektId, { betrag_ct, schluessel_id, datum, text }) => tx(() => {
-      const segmente = abschnitte(objektId, 'weg', datum, datum, null, { tagesgenau: true }).filter((s) => s.vertrag);
+    // zweck 'massnahme' (pays costs, counts like an advance in the statement) or 'ruecklage' (a contribution to the reserve,
+    // shown in its development, not in the Abrechnungsspitze). The key runs over all units: a unit without an owner on the
+    // due date would leave its share unpaid, so the levy is refused until the owner is entered.
+    sonderumlage: (objektId, { betrag_ct, schluessel_id, datum, text, zweck = 'massnahme' }) => tx(() => {
+      const alle = abschnitte(objektId, 'weg', datum, datum, null, { tagesgenau: true });
+      const ohneEigentuemer = alle.filter((s) => !s.vertrag).map((s) => s.einheit.bezeichnung);
+      if (ohneEigentuemer.length) throw new Error(`Am ${datum.split('-').reverse().join('.')} ohne Eigentümer: ${ohneEigentuemer.join(', ')}. Bitte zuerst unter „Eigentümer“ ergänzen – sonst bliebe ihr Anteil unbezahlt.`);
+      const segmente = alle;
       const r = schluesselRechner(objektId, datum, datum)(schluessel_id, segmente);
       if (!r || !r.gesamt) throw new Error('Der Schlüssel hat keine Werte.');
-      const ertrag = get(`SELECT id FROM konten WHERE objekt_id = ? AND klasse = 'einnahme' AND kategorie = 'sonderumlage' ORDER BY nr LIMIT 1`, objektId);
+      const ertrag = get(`SELECT id FROM konten WHERE objekt_id = ? AND klasse = 'einnahme' AND kategorie = ? ORDER BY nr LIMIT 1`, objektId, zweck === 'ruecklage' ? 'ruecklage' : 'sonderumlage');
+      if (!ertrag) throw new Error(zweck === 'ruecklage' ? 'Das Einnahmenkonto „Zuführung Rücklage“ fehlt im Kontenplan.' : 'Das Einnahmenkonto „Sonderumlage“ fehlt im Kontenplan.');
       const st = db.prepare(`INSERT INTO buchungen (objekt_id, datum, text, betrag_ct, soll_id, haben_id, art) VALUES (?, ?, ?, ?, ?, ?, 'soll')`);
       const out = [];
       const { ct: anteile } = anteileCt(r, betrag_ct, segmente);

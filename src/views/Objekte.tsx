@@ -17,6 +17,7 @@ const FELDER: Field[] = [
   { key: 'bic', label: 'BIC' },
   { key: 'ruecklage_iban', label: 'IBAN Rücklagenkonto' },
   { key: 'sepa_glaeubiger_id', label: 'SEPA-Gläubiger-ID' },
+  { key: 'zahlung_empfaenger', label: 'Zahlungsempfänger (z. B. „WEG Lindenstraße 5“)' },
   { key: 'kaufpreis_ct', label: 'Kaufpreis', type: 'money', section: 'Kauf & Steuer (für Rendite und AfA)' },
   { key: 'kaufnebenkosten_ct', label: 'Kaufnebenkosten', type: 'money' },
   { key: 'kaufdatum', label: 'Kaufdatum', type: 'date' },

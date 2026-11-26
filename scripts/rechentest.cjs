@@ -1350,6 +1350,10 @@ Stadtsparkasse München | IBAN DE02 7015 0000 0000 1234 56 | BIC SSKMDEMMXXX`;
     t.remove('inventar', inv);
     t.dokumentLoeschen([s2, b2, neu2, neu3, zus, neu4, foto]);
     t.papierkorbLeeren(30, Date.now() + 31 * 864e5);
+    // Booked receipts are kept (retention, § 147 AO): only deleting them by hand removes them.
+    const bleiben = t.papierkorb();
+    gleich('Papierkorb leert gebuchte Belege nicht von selbst', [bleiben.length > 0, bleiben.every((x) => !!x.buchung_id && x.endgueltig_am === null)], [true, true]);
+    t.dokumentEndgueltig(bleiben.map((x) => x.id));
   }
 
   // Recycle bin.
@@ -2066,6 +2070,50 @@ Stadtsparkasse München | IBAN DE02 7015 0000 0000 1234 56 | BIC SSKMDEMMXXX`;
   const text = t.rueckmeldungenText(chef);
   gleich('Als Text: Fehler mit Gerät, Weg und Meldungen, dann Ideen', [/## Fehler \(1\)/.test(text), /iPhone · Safari/.test(text), /miete\/uebersicht → miete\/postfach/.test(text), /Server nicht erreichbar/.test(text), /## Ideen \(1\)/.test(text), text.indexOf('## Fehler') < text.indexOf('## Ideen')],
     [true, true, true, true, true, true]);
+}
+
+// ---------- 0.29: review against the literature ----------
+{
+  const { nkFrist } = require('../electron/buchhaltung.cjs');
+  gleich('Abrechnungsfrist § 556: Monatsende, Monatsmitte, Februar', ['2025-12-31', '2025-06-15', '2024-02-29'].map(nkFrist), ['2026-12-31', '2026-06-15', '2025-02-28']);
+  // § 580a BGB (Berlin): business premises by the 3rd working day of a quarter to the end of the next quarter.
+  const k = (zugang, gewerbe) => kalender.kuendigung580a({ zugang, gewerbe, land: 'BE' }).zum;
+  gleich('§ 580a: Gewerbe, Garage/Stellplatz', [k('2026-01-05', true), k('2026-01-07', true), k('2026-02-10', true), k('2026-03-04', false), k('2026-03-05', false)],
+    ['2026-06-30', '2026-09-30', '2026-09-30', '2026-05-31', '2026-06-30']);
+  const r2 = open(':memory:');
+  const t2 = api(r2);
+  t2.setzeEinstellungen({ bundesland: 'BE' });
+  const ob = t2.neuesObjekt({ bezeichnung: 'Prüfhaus', art: 'miete', strasse: 'Prüfweg 1', plz: '10115', ort: 'Berlin' });
+  const we = t2.save('einheiten', { objekt_id: ob, nr: 1, bezeichnung: 'Whg. 1', art: 'Wohnung', wohnflaeche: 60 });
+  const ge = t2.save('einheiten', { objekt_id: ob, nr: 2, bezeichnung: 'Laden', art: 'Gewerbe', wohnflaeche: 40 });
+  const pe = t2.save('personen', { anrede: 'Frau', vorname: 'Erika', nachname: 'Probe', strasse: 'Prüfweg 1', plz: '10115', ort: 'Berlin' });
+  const vm = t2.save('mietverhaeltnisse', { einheit_id: we, person_id: pe, beginn: '2023-01-01', kaltmiete_ct: 50000, personen_anzahl: 1 });
+  const vg = t2.save('mietverhaeltnisse', { einheit_id: ge, person_id: pe, beginn: '2020-01-01', kaltmiete_ct: 90000 });
+  gleich('Kündigungsrechner: Gewerbe nach § 580a, Wohnung nach § 573c', [t2.kuendigungBerechnen({ vertrag_id: vg, durch: 'vermieter', zugang: '2026-01-05' }).zum,
+    t2.kuendigungBerechnen({ vertrag_id: vm, durch: 'vermieter', zugang: '2026-01-05' }).zum], ['2026-06-30', '2026-03-31']);
+  const kt2 = Object.fromEntries(t2.konten(ob).map((x) => [x.kategorie + ':' + x.klasse, x.id]));
+  const bank2 = t2.konten(ob).find((x) => x.klasse === 'geld').id;
+  // Deadline: the 2023 statement is long overdue – the additional payment is excluded unless a reason is given.
+  t2.buchen({ objekt_id: ob, datum: '2023-06-01', text: 'Grundsteuer 2023', positionen: [{ soll_id: kt2['bk01:kosten'], haben_id: bank2, betrag_ct: 100000 }] });
+  const nk = (grund) => t2.nkAbrechnung(ob, '2023-01-01', '2023-12-31', { heizung: 'ohne', verspaetung_grund: grund }).ergebnisse.find((e) => e.segment.vertrag?.id === vm);
+  gleich('Frist abgelaufen: Nachzahlung gesperrt, mit Grund verlangt', [nk('').ergebnis_ct, nk('').ausgeschlossen_ct, nk('Bescheid kam erst 2025').ergebnis_ct], [0, 60000, 60000]);
+  // Payments settle the monthly rent first: an open BK additional payment is no rent arrears (§ 543).
+  t2.sollstellung(ob, '2026-01', '2026-03');
+  const konto2 = t2.kontoVon('miete', vm).id;
+  t2.abrechnungBuchen(ob, 'nk_ergebnis', '2026-01-02', 'BK 2025', [{ konto_id: konto2, ergebnis_ct: 30000 }]);
+  for (const d of ['2026-01-05', '2026-02-03', '2026-03-03']) t2.buchen({ objekt_id: ob, datum: d, text: 'Miete', art: 'bank', positionen: [{ soll_id: bank2, haben_id: konto2, betrag_ct: 50000 }] });
+  gleich('Zahlungen gehen zuerst auf die Miete, offen bleibt die Nachzahlung', t2.offenePostenKonto(konto2, '2026-03-31').offen.map((x) => [x.monat, x.offen_ct]), [[null, 30000]]);
+  // Duty on a fixed date: done late, the next date stays on the same day.
+  const pf = t2.save('pflichten', { objekt_id: ob, art: 'eigene', titel: 'Winterdienst', intervall_monate: 12, naechste: '2025-10-01', vorlauf_tage: 30, aktiv: 1, fester_termin: 1 });
+  t2.pflichtErledigen(pf, { datum: '2025-11-20' });
+  gleich('Fester Stichtag bleibt beim Erledigen', t2.get('pflichten', pf).naechste, '2026-10-01');
+  // GDPR: deleting a person blanks the change log.
+  const px = t2.save('personen', { anrede: 'Herr', vorname: 'Max', nachname: 'Geheim', email: 'max@example.de' });
+  t2.save('personen', { id: px, telefon: '030 1' });
+  t2.remove('personen', px);
+  const log = r2.prepare(`SELECT aktion, alt, neu FROM protokoll WHERE tabelle = 'personen' AND datensatz = ?`).all(px);
+  gleich('Gelöschte Person: 30 Tage rückgängig machbar, danach getilgt', [JSON.stringify(log).includes('Geheim'), t2.protokollAnonymisieren(30, '2099-01-01') >= 3,
+    JSON.stringify(r2.prepare(`SELECT alt, neu FROM protokoll WHERE tabelle = 'personen' AND datensatz = ?`).all(px)).includes('Geheim')], [true, true, false]);
 }
 
 console.log(`\nRechentest: ${ok} Prüfungen richtig, ${falsch} falsch.`);

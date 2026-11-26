@@ -42,13 +42,16 @@ export function Kuendigung(props: { vertrag: Row; einheit: Row; onClose: () => v
   const [art, setArt] = useState<'ordentlich' | 'fristlos'>('ordentlich');
   const [zugang, setZugang] = useState(heute());
   const [r, setR] = useState<Row | null>(null);
+  // Garage, parking space, business premises: § 580a BGB – no reason, no form by law, no right to object.
+  const nichtWohnraum = r?.wohnraum === false;
   const [zum, setZum] = useState('');
   const [gruende, setGruende] = useState('');
   const [termine, setTermine] = useState('');
   const [fehler, setFehler] = useState('');
   const [laeuft, setLaeuft] = useState(false);
   const [op] = useLoad<Row | null>(() => (v.konto_id ? call("offenePostenKonto", v.konto_id) : Promise.resolve(null)), [v.konto_id]);
-  const ueberfaellig = (op?.offen ?? []).filter((o: Row) => o.verzug >= 1);
+  // Only rent and advance payments (items with a month) count; BK additional payments and fees do not (§ 543 Abs. 2 Nr. 3 BGB).
+  const ueberfaellig = (op?.offen ?? []).filter((o: Row) => o.verzug >= 1 && o.monat);
   const monatsmiete = v.monatlich_ct || 1;
   // § 543 Abs. 2 Nr. 3 BGB: two consecutive due dates with more than one month's rent, or two months' rent in total.
   const zweiInFolge = ueberfaellig.length >= 2 && ueberfaellig.slice(-2).reduce((s: number, o: Row) => s + o.offen_ct, 0) > monatsmiete;
@@ -72,17 +75,17 @@ export function Kuendigung(props: { vertrag: Row; einheit: Row; onClose: () => v
       const p = await empfaengerVon(v);
       const objekt = await call('get', 'objekte', props.einheit.objekt_id);
       const lage = `${props.einheit.bezeichnung}, ${[objekt.strasse, [objekt.plz, objekt.ort].filter(Boolean).join(' ')].filter(Boolean).join(', ')}`;
-      const widerspruch = (ende: string) => `Hinweis zu Ihrem Widerspruchsrecht (§ 568 Abs. 2, §§ 574 bis 574b BGB): Sie können der ${art === 'fristlos' ? 'hilfsweise erklärten ordentlichen ' : ''}Kündigung widersprechen und die Fortsetzung des Mietverhältnisses verlangen, wenn die Beendigung für Sie, Ihre Familie oder einen anderen Angehörigen Ihres Haushalts eine Härte bedeuten würde, die auch unter Würdigung unserer berechtigten Interessen nicht zu rechtfertigen ist. Der Widerspruch ist schriftlich zu erklären und muss uns spätestens zwei Monate vor der Beendigung des Mietverhältnisses zugehen, also bis zum ${datum(zweiMonateVorEnde(ende))}.`;
+      const widerspruch = (ende: string) => `Hinweis zu Ihrem Widerspruchsrecht (§ 568 Abs. 2, §§ 574 bis 574b BGB): Sie können der ${art === 'fristlos' ? 'hilfsweise erklärten ordentlichen ' : ''}Kündigung widersprechen und die Fortsetzung des Mietverhältnisses verlangen, wenn die Beendigung für Sie, Ihre Familie oder einen anderen Angehörigen Ihres Haushalts eine Härte bedeuten würde, die auch unter Würdigung unserer berechtigten Interessen nicht zu rechtfertigen ist. Der Widerspruch ist in Textform (z. B. Brief oder E-Mail) zu erklären und muss uns spätestens zwei Monate vor der Beendigung des Mietverhältnisses zugehen, also bis zum ${datum(zweiMonateVorEnde(ende))}.`;
       let titel: string, betreff: string, inhalt: string;
       if (durch === 'mieter') {
         titel = 'Kündigungsbestätigung';
         betreff = `Bestätigung Ihrer Kündigung – ${lage}`;
         inhalt = absaetze([
-          `wir bestätigen, dass Ihre Kündigung des Mietverhältnisses über die Wohnung ${lage} am ${datum(zugang)} bei uns eingegangen ist.`,
+          `wir bestätigen, dass Ihre Kündigung des Mietverhältnisses über ${nichtWohnraum ? '' : 'die Wohnung '}${lage} am ${datum(zugang)} bei uns eingegangen ist.`,
           r?.rechtzeitig === false
-            ? `Da die Kündigung nach dem dritten Werktag des Monats eingegangen ist, endet das Mietverhältnis unter Einhaltung der gesetzlichen Kündigungsfrist (§ 573c BGB) zum ${datum(zum)}.`
-            : `Das Mietverhältnis endet unter Einhaltung der gesetzlichen Kündigungsfrist (§ 573c BGB) zum ${datum(zum)}.`,
-          `Bis dahin sind die Miete und die Vorauszahlungen wie bisher zu zahlen. Bitte geben Sie die Wohnung spätestens am ${datum(zum)} vollständig geräumt und mit allen Schlüsseln zurück.`,
+            ? `Da die Kündigung nach dem dritten Werktag eingegangen ist, endet das Mietverhältnis unter Einhaltung der gesetzlichen Kündigungsfrist (${nichtWohnraum ? '§ 580a' : '§ 573c'} BGB) zum ${datum(zum)}.`
+            : `Das Mietverhältnis endet unter Einhaltung der gesetzlichen Kündigungsfrist (${nichtWohnraum ? '§ 580a' : '§ 573c'} BGB) zum ${datum(zum)}.`,
+          `Bis dahin sind die Miete und die Vorauszahlungen wie bisher zu zahlen. Bitte geben Sie ${nichtWohnraum ? 'die Mietsache' : 'die Wohnung'} spätestens am ${datum(zum)} vollständig geräumt und mit allen Schlüsseln zurück.`,
           termine.trim() ? `Für die Vorbesichtigung und die Wohnungsübergabe schlagen wir vor:\n${termine.trim()}\nBitte teilen Sie uns mit, ob diese Termine für Sie passen.`
             : 'Für die Vorbesichtigung und die Wohnungsübergabe melden wir uns mit Terminvorschlägen bei Ihnen.',
           'Bei der Übergabe lesen wir gemeinsam die Zählerstände ab und halten den Zustand der Wohnung in einem Übergabeprotokoll fest.',
@@ -116,7 +119,13 @@ export function Kuendigung(props: { vertrag: Row; einheit: Row; onClose: () => v
       } else {
         titel = 'Kündigung';
         betreff = `Kündigung des Mietverhältnisses – ${lage}`;
-        inhalt = absaetze([
+        // Business premises, garages, parking spaces (§ 580a BGB): no reason needed and no right to object.
+        if (r?.wohnraum === false) inhalt = absaetze([
+          `hiermit kündigen wir das mit Ihnen bestehende Mietverhältnis über ${lage} ordentlich und fristgerecht zum ${datum(zum)} (§ 580a BGB).`,
+          gruende.trim(),
+          `Bitte geben Sie die Mietsache zum ${datum(zum)} geräumt und mit allen Schlüsseln zurück. Einer stillschweigenden Fortsetzung des Mietverhältnisses (§ 545 BGB) widersprechen wir bereits jetzt.`,
+        ].filter(Boolean).join('\n\n'));
+        else inhalt = absaetze([
           `hiermit kündigen wir das mit Ihnen bestehende Mietverhältnis über die Wohnung ${lage} ordentlich und fristgerecht zum ${datum(zum)}.`,
           `Die Kündigung begründen wir wie folgt (§ 573 Abs. 3 BGB):\n${gruende.trim() || '[Bitte die Gründe der Kündigung einsetzen – ohne Begründung ist die Kündigung unwirksam.]'}`,
           `Bitte geben Sie die Wohnung zum ${datum(zum)} geräumt und mit allen Schlüsseln zurück. Einer stillschweigenden Fortsetzung des Mietverhältnisses (§ 545 BGB) widersprechen wir bereits jetzt.`,
@@ -175,7 +184,8 @@ export function Kuendigung(props: { vertrag: Row; einheit: Row; onClose: () => v
       )}
       {durch === 'mieter' && (
         <p className="klein hinweis">
-          Die Kündigung des Mieters braucht die Schriftform mit eigenhändiger Unterschrift (§ 568 Abs. 1 BGB) – eine E-Mail reicht nicht.
+          {nichtWohnraum ? 'Für Garagen, Stellplätze und Gewerberäume schreibt das Gesetz keine Form vor (§ 568 gilt nur für Wohnraum) – maßgeblich ist der Vertrag.'
+            : 'Die Kündigung des Mieters braucht die Schriftform mit eigenhändiger Unterschrift (§ 568 Abs. 1 BGB) – eine E-Mail reicht nicht.'}
           {v.person2_id ? ' Dieses Mietverhältnis hat zwei Mieter: Beide müssen unterschrieben haben, sonst ist die Kündigung unwirksam.' : ''}
         </p>
       )}
@@ -185,13 +195,14 @@ export function Kuendigung(props: { vertrag: Row; einheit: Row; onClose: () => v
         </label>
       )}
       {durch !== 'mieter' && (
-        <label className="block">{durch === 'aufhebung' ? 'Weitere Vereinbarungen (optional)' : art === 'fristlos' ? 'Ergänzende Begründung (optional)' : 'Gründe der Kündigung (Pflicht, § 573 Abs. 3 BGB)'}
+        <label className="block">{durch === 'aufhebung' ? 'Weitere Vereinbarungen (optional)' : art === 'fristlos' ? 'Ergänzende Begründung (optional)' : nichtWohnraum ? 'Begründung (optional – bei § 580a BGB nicht nötig)' : 'Gründe der Kündigung (Pflicht, § 573 Abs. 3 BGB)'}
           <textarea className="brieftext" rows={4} value={gruende} onChange={(e) => setGruende(e.target.value)} />
         </label>
       )}
       {durch === 'vermieter' && (
         <p className="klein hinweis">
-          Eine Kündigung des Vermieters muss eigenhändig unterschrieben im Original zugehen (Schriftform, § 568 Abs. 1 BGB) – E-Mail oder Fax reichen nicht.
+          {nichtWohnraum ? 'Das Gesetz schreibt hier keine Form vor (§ 568 gilt nur für Wohnraum); sieht der Vertrag Schriftform vor, eigenhändig unterschreiben.'
+            : 'Eine Kündigung des Vermieters muss eigenhändig unterschrieben im Original zugehen (Schriftform, § 568 Abs. 1 BGB) – E-Mail oder Fax reichen nicht.'}{' '}
           Bei mehreren Mietern an alle richten. Den Zugang nachweisbar machen, etwa durch einen Boten mit Zeugen.
         </p>
       )}

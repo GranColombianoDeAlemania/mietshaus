@@ -46,10 +46,28 @@ module.exports = function automatik({ db, all, get, tx, PERSON_NAME, bh, ab, vw,
     return { erzeugt, ab_monat };
   }
 
+  // People and applicants: a deletion can be undone from the change log for 30 days; then their entries in the log are
+  // blanked (GDPR, Art. 17). Returns the number of entries blanked.
+  function protokollAnonymisieren(tage = 30, t = heute()) {
+    let n = 0;
+    for (const tab of ['personen', 'interessenten']) {
+      n += db.prepare(`UPDATE protokoll SET alt = CASE WHEN alt IS NULL THEN NULL ELSE '{"anonymisiert":1}' END,
+          neu = CASE WHEN neu IS NULL THEN NULL ELSE '{"anonymisiert":1}' END
+        WHERE tabelle = ?1 AND (coalesce(alt, '') NOT IN ('', '{"anonymisiert":1}') OR coalesce(neu, '') NOT IN ('', '{"anonymisiert":1}'))
+          AND datensatz IN (SELECT datensatz FROM protokoll WHERE tabelle = ?1 AND aktion = 'gelöscht' AND date(zeit) <= date(?2, '-' || ?3 || ' days'))
+          AND datensatz NOT IN (SELECT id FROM ${tab})`).run(tab, t, tage).changes;
+    }
+    return n;
+  }
+
   function lauf() {
     const r = sollstellungAutomatisch();
     // Duties of the houses: a case once the lead time of the next date has begun.
     try { r.pflichten = pf ? pf.pflichtVorgaenge() : 0; } catch (e) { console.error('Pflichten', e); }
+    // Applicants turned down are deleted six months later, as the self-disclosure promises (GDPR, Art. 5 and 17).
+    try { r.interessenten_geloescht = db.prepare(`DELETE FROM interessenten WHERE status = 'absage' AND abgesagt_am IS NOT NULL AND abgesagt_am <= date(?, '-6 months')`).run(ortszeit.heute()).changes; }
+    catch (e) { console.error('Interessenten löschen', e); }
+    try { r.protokoll_anonymisiert = protokollAnonymisieren(); } catch (e) { console.error('Protokoll anonymisieren', e); }
     db.prepare(`INSERT INTO einstellungen (schluessel, wert) VALUES ('auto_letzter_lauf', ?) ON CONFLICT (schluessel) DO UPDATE SET wert = excluded.wert`)
       .run(new Date().toISOString());
     return r;
@@ -358,6 +376,7 @@ module.exports = function automatik({ db, all, get, tx, PERSON_NAME, bh, ab, vw,
     ersteSchritte,
     ersteSchritteAusblenden: () => db.prepare(`INSERT OR IGNORE INTO checkliste (liste, punkt) VALUES ('erste-schritte', 'ausgeblendet')`).run(),
     automatikLauf: lauf,
+    protokollAnonymisieren,
     hinweise,
     kennzahlen,
     hinweisSetzen: (schluessel, status, tage) => db.prepare(`INSERT INTO hinweis_status (schluessel, status, bis) VALUES (?, ?, ?)

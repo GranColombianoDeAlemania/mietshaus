@@ -9,13 +9,13 @@ export function Ruecklagen(props: { objekt: Row }) {
   const [bis, setBis] = useState(`${diesesJahr()}-12-31`);
   const [r, reload] = useLoad<Row>(() => call('ruecklagen', props.objekt.id, von, bis), [props.objekt.id, von, bis]);
   const [keys] = useLoad<Row[]>(() => call('schluessel', props.objekt.id), [props.objekt.id]);
-  const [su, setSu] = useState({ betrag: '', schluessel_id: '', datum: heute(), text: 'Sonderumlage' });
+  const [su, setSu] = useState({ betrag: '', schluessel_id: '', datum: heute(), text: 'Sonderumlage', zweck: 'massnahme' });
   const [ergebnis, setErgebnis] = useState<Row[] | null>(null);
 
   async function sonderumlage() {
     try {
       const sid = Number(su.schluessel_id) || keys?.find((k) => k.typ === 'mea')?.id;
-      setErgebnis(await call('sonderumlage', props.objekt.id, { betrag_ct: parseCent(su.betrag), schluessel_id: sid, datum: su.datum, text: su.text }));
+      setErgebnis(await call('sonderumlage', props.objekt.id, { betrag_ct: parseCent(su.betrag), schluessel_id: sid, datum: su.datum, text: su.text, zweck: su.zweck }));
       reload();
     } catch (e) {
       fehler(e);
@@ -37,9 +37,11 @@ export function Ruecklagen(props: { objekt: Row }) {
               <tr><td>+ Soll-Zuführungen aus Hausgeld</td><td className="num">{euro(r.zufuehrung_soll_ct)}</td></tr>
               {r.eroeffnung_ct !== 0 && <tr><td>+ Eröffnung / Übernahme</td><td className="num">{euro(r.eroeffnung_ct)}</td></tr>}
               <tr><td>− Entnahmen</td><td className="num">{euro(-r.entnahmen_ct)}</td></tr>
-              <tr className="zwischen"><td>Stand am {datum(bis)}</td><td className="num">{euro(r.ende_ct)}</td></tr>
-              {r.bankkonto_ct != null && <tr><td>zum Vergleich: Saldo Rücklagen-Bankkonto</td><td className="num">{euro(r.bankkonto_ct)}</td></tr>}
+              <tr className="zwischen"><td>Soll-Stand am {datum(bis)}</td><td className="num">{euro(r.ende_ct)}</td></tr>
+              {r.offen_zufuehrung_ct !== 0 && <tr><td>− noch nicht gezahlte Zuführungen</td><td className="num">{euro(-r.offen_zufuehrung_ct)}</td></tr>}
               {r.zinsen_ct !== 0 && <tr><td>Zinserträge im Zeitraum</td><td className="num">{euro(r.zinsen_ct)}</td></tr>}
+              <tr className="zwischen"><td>Ist-Stand am {datum(bis)} (mit Zinsen)</td><td className="num">{euro(r.ist_ende_ct)}</td></tr>
+              {r.bankkonto_ct != null && <tr><td>zum Vergleich: Saldo Rücklagen-Bankkonto</td><td className="num">{euro(r.bankkonto_ct)}</td></tr>}
             </tbody>
           </table>
           {r.entnahmen.length > 0 && (
@@ -59,13 +61,19 @@ export function Ruecklagen(props: { objekt: Row }) {
       )}
       <div className="panel">
         <h3>Sonderumlage erheben</h3>
-        <p className="hinweis klein">Die Sonderumlage wird in der Jahresabrechnung wie ein Vorschuss angerechnet. Buche die Rechnungen der Maßnahme deshalb auf das normale Kostenkonto, nicht „aus Rücklage“.</p>
+        <p className="hinweis klein">Für eine Maßnahme: Die Sonderumlage wird in der Jahresabrechnung wie ein Vorschuss angerechnet; die Rechnungen auf das normale Kostenkonto buchen, nicht „aus Rücklage“. Zur Auffüllung der Rücklage: Sie erscheint als Zuführung in der Rücklagenentwicklung, nicht in der Abrechnungsspitze.</p>
         <div className="maske">
           <label>Gesamtbetrag (€)<input className="num" value={su.betrag} onChange={(e) => setSu({ ...su, betrag: e.target.value })} /></label>
           <label>Verteilen nach
             <select value={su.schluessel_id} onChange={(e) => setSu({ ...su, schluessel_id: e.target.value })}>
               <option value="">Miteigentumsanteile</option>
               {keys?.filter((k) => k.typ !== 'zaehler').map((k) => <option key={k.id} value={k.id}>{k.bezeichnung}</option>)}
+            </select>
+          </label>
+          <label>Zweck
+            <select value={su.zweck} onChange={(e) => setSu({ ...su, zweck: e.target.value })}>
+              <option value="massnahme">Maßnahme (Kosten)</option>
+              <option value="ruecklage">Rücklage auffüllen</option>
             </select>
           </label>
           <label>Fällig am<input type="date" value={su.datum} onChange={(e) => setSu({ ...su, datum: e.target.value })} /></label>

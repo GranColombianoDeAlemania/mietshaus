@@ -35,6 +35,18 @@ module.exports = function mieterwechsel({ db, all, get, tx, PERSON_NAME }) {
         hinweise.push('Beim Aufhebungsvertrag legt ihr das Ende gemeinsam fest; es gelten keine Kündigungsfristen. Beide unterschreiben.');
         return { zum: null, art, durch, rechtzeitig: true, hinweise };
       }
+      // Business premises, garages and parking spaces: § 580a BGB instead of the rules for dwellings.
+      const einheitArt = get('SELECT art FROM einheiten WHERE id = ?', v.einheit_id)?.art ?? 'Wohnung';
+      if (einheitArt !== 'Wohnung' && einheitArt !== 'Sonstiges') {
+        const gewerbe = einheitArt === 'Gewerbe';
+        const r = kalender.kuendigung580a({ zugang, gewerbe, land: land() });
+        hinweise.push(gewerbe
+          ? `Gewerberaum: Kündigung bis zum 3. Werktag eines Quartals (${datumDe(r.karenz_bis)}) zum Ende des nächsten Quartals (§ 580a Abs. 2 BGB) – für beide Seiten gleich, ohne Begründung, ohne Widerspruchsrecht. Ein befristeter Vertrag oder eine andere Frist im Vertrag geht vor.`
+          : `${einheitArt}: Kündigung bis zum 3. Werktag eines Monats (${datumDe(r.karenz_bis)}) zum Ende des übernächsten Monats (§ 580a Abs. 1 Nr. 3 BGB) – für beide Seiten gleich, ohne Begründung. Gehört der Platz zur Wohnung (ein Vertrag), gelten die Fristen der Wohnung.`);
+        if (!r.rechtzeitig) hinweise.push(`Zugegangen nach dem ${datumDe(r.karenz_bis)}: Die Kündigung wirkt erst zum ${datumDe(r.zum)}.`);
+        if (v.ende && v.ende < r.zum) hinweise.push(`Der Vertrag endet bereits am ${datumDe(v.ende)}.`);
+        return { ...r, art, durch, hinweise, wohnraum: false };
+      }
       const r = kalender.ordentlicheKuendigung({ zugang, durch, ueberlassung: v.beginn, land: land() });
       if (!r.rechtzeitig) hinweise.push(`Die Kündigung ist nach dem 3. Werktag (${datumDe(r.karenz_bis)}) zugegangen und wirkt deshalb erst zum ${datumDe(r.zum)}.`);
       else hinweise.push(`Zugegangen bis zum 3. Werktag (${datumDe(r.karenz_bis)}): Der laufende Monat zählt mit.`);
@@ -43,7 +55,7 @@ module.exports = function mieterwechsel({ db, all, get, tx, PERSON_NAME }) {
         hinweise.push('Der Vermieter braucht ein berechtigtes Interesse (§ 573 BGB), z. B. Eigenbedarf oder eine erhebliche Pflichtverletzung; die Gründe müssen im Schreiben stehen. Auf das Widerspruchsrecht des Mieters (§§ 574–574b BGB) soll hingewiesen werden.');
       } else hinweise.push('Für Mieter gilt immer eine Frist von drei Monaten, egal wie lange das Mietverhältnis besteht.');
       if (v.ende && v.ende < r.zum) hinweise.push(`Der Vertrag endet bereits am ${datumDe(v.ende)}.`);
-      return { ...r, art, durch, hinweise };
+      return { ...r, art, durch, hinweise, wohnraum: true };
     },
 
     // Records the notice: end of the tenancy, the tenant change entry and a case with the next steps.

@@ -4,7 +4,7 @@ import { call, datum, diesesJahr, euro, fehler, heute, parseCent, parseZahl, zah
 import { useLoad } from '../useLoad';
 import { L, mitLinks } from '../navi';
 import { Tabs } from '../ui';
-import { absenderAus, alsPdf, empfaengerVon } from '../dokument';
+import { absenderAus, zahlungsAbsender, alsPdf, empfaengerVon } from '../dokument';
 import { nkBrief, nkUebersicht, nurHeizung } from '../abrechnungDocs';
 import { bestaetigen } from '../frage';
 
@@ -22,7 +22,8 @@ export function NkAbrechnung(props: { objekt: Row }) {
   const [anteil, setAnteil] = useState(70);
   const [co2Kg, setCo2Kg] = useState('');
   const [co2Eur, setCo2Eur] = useState('');
-  const [leerPersonen, setLeerPersonen] = useState(1);
+  const leerPersonen = 1; // a vacant flat counts as one person: the landlord bears its share
+  const [grund, setGrund] = useState('');
   const [extern, setExtern] = useState<Record<number, string>>({});
   const [a, setA] = useState<Row | null>(null);
   const [pruefung, setPruefung] = useState<Row | null>(null);
@@ -37,7 +38,7 @@ export function NkAbrechnung(props: { objekt: Row }) {
   async function berechnen() {
     try {
       const opt = {
-        heizung, verbrauchsanteil: anteil, co2_kg: parseZahl(co2Kg) ?? 0, co2_kosten_ct: parseCent(co2Eur), leerstand_personen: leerPersonen,
+        heizung, verbrauchsanteil: anteil, co2_kg: parseZahl(co2Kg) ?? 0, co2_kosten_ct: parseCent(co2Eur), leerstand_personen: leerPersonen, verspaetung_grund: grund,
         extern: Object.fromEntries(Object.entries(extern).map(([k, v]) => [k, parseCent(v)])),
       };
       const r = await call('nkAbrechnung', props.objekt.id, von, bis, opt);
@@ -55,10 +56,11 @@ export function NkAbrechnung(props: { objekt: Row }) {
 
   async function pdfs() {
     if (!a) return;
+    if (pruefung?.sperrt) { fehler(new Error('Die Prüfung hat einen Fehler gefunden, der erst behoben werden muss (siehe rot markierte Punkte).')); return; }
     if (pruefung?.fehler && !await bestaetigen(`Die Prüfung hat ${pruefung.fehler} Fehler gefunden. Abrechnungen trotzdem erstellen?`)) return;
     const vzOffen = Object.fromEntries((pruefung?.punkte ?? []).filter((x: Row) => x.vz_offen_ct).map((x: Row) => [x.vertrag_id, x.vz_offen_ct]));
     const einst = await call('einstellungen');
-    const absender = { ...absenderAus(einst), iban: props.objekt.iban || einst.verwalter_iban, bank: props.objekt.bank || einst.verwalter_bank, bic: props.objekt.bic || einst.verwalter_bic };
+    const absender = zahlungsAbsender(einst, props.objekt);
     const seiten = [nkUebersicht(a, props.objekt)];
     for (const e of mieterErgebnisse) {
       // Flat fee or rent including operating costs without heating: nothing to settle, no letter.
@@ -72,6 +74,7 @@ export function NkAbrechnung(props: { objekt: Row }) {
 
   async function speichernUndBuchen(buchen: boolean) {
     if (!a) return;
+    if (buchen && pruefung?.sperrt) { fehler(new Error('Erst die rot markierten Fehler beheben, dann buchen.')); return; }
     const id = await call('abrechnungSpeichern', props.objekt.id, 'nk', von, bis, `Betriebskosten ${datum(von)} – ${datum(bis)}`, { ...a, neuVz, neuAb });
     if (buchen) {
       const n = await call('abrechnungBuchen', props.objekt.id, 'nk_ergebnis', heute(), `BK-Abrechnung ${von.slice(0, 4)}`,
@@ -103,12 +106,11 @@ export function NkAbrechnung(props: { objekt: Row }) {
           )}
           <label>CO₂-Ausstoß gesamt (kg)<input className="num" value={co2Kg} onChange={(e) => setCo2Kg(e.target.value)} placeholder="lt. Brennstoffrechnung" /></label>
           <label>CO₂-Kosten gesamt (€)<input className="num" value={co2Eur} onChange={(e) => setCo2Eur(e.target.value)} /></label>
-          <label className="breit">Leerstand bei Verteilung nach Personen
-            <select value={leerPersonen} onChange={(e) => setLeerPersonen(Number(e.target.value))}>
-              <option value={1}>leere Wohnung zählt als 1 Person – den Anteil trägt der Vermieter</option>
-              <option value={0}>leere Wohnung zählt nicht – die Mieter tragen alles</option>
-            </select>
-          </label>
+          {a?.frist?.abgelaufen && (
+            <label className="breit">Verspätung begründen (nur wenn du sie nicht zu vertreten hast)
+              <input value={grund} onChange={(e) => setGrund(e.target.value)} placeholder="z. B. Grundsteuerbescheid ging erst am 12.01. ein" />
+            </label>
+          )}
         </div>
         {heizung === 'extern' && (
           <div className="block">
@@ -194,7 +196,7 @@ export function NkAbrechnung(props: { objekt: Row }) {
             {meldung && <span className="meldung">{meldung}</span>}
             <button onClick={pdfs}>Abrechnungen als PDF</button>
             <button onClick={() => speichernUndBuchen(false)}>Speichern</button>
-            <button className="primary" onClick={async () => await bestaetigen('Ergebnisse auf die Mieterkonten buchen (Nachzahlung als Forderung, Guthaben als Gutschrift)?') && speichernUndBuchen(true)}>Speichern & buchen</button>
+            <button className="primary" onClick={async () => { if (pruefung?.sperrt) { fehler(new Error('Erst die rot markierten Fehler beheben, dann buchen.')); return; } if (await bestaetigen('Ergebnisse auf die Mieterkonten buchen (Nachzahlung als Forderung, Guthaben als Gutschrift)?')) await speichernUndBuchen(true); }}>Speichern & buchen</button>
           </div>
         </>
       )}

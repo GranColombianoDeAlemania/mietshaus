@@ -70,7 +70,7 @@ function EinheitVermietung(props: { einheit: Row; objekt: Row; reload: () => voi
     const abs = absenderAus(einst);
     const feld = (l: string) => `<tr><td style="width:45%">${l}</td><td style="border-bottom:0.4pt solid #999">&nbsp;</td></tr>`;
     await alsPdf([bericht('Mieterselbstauskunft', `${props.objekt.bezeichnung}, ${e.bezeichnung} · Rückgabe an ${abs.name}`,
-      `<p class="klein">Die Angaben sind freiwillig und dienen ausschließlich der Entscheidung über den Abschluss des Mietvertrags. Sie werden vertraulich behandelt und bei Nichtzustandekommen des Vertrags gelöscht (Art. 6 Abs. 1 lit. b DSGVO).</p>
+      `<p class="klein">Die Angaben sind freiwillig und dienen ausschließlich der Entscheidung über den Abschluss des Mietvertrags. Sie werden vertraulich behandelt und bei Nichtzustandekommen des Vertrags spätestens sechs Monate nach der Absage gelöscht (Art. 6 Abs. 1 lit. b, Art. 17 DSGVO).</p>
        <table class="t">${['Name, Vorname', 'Geburtsdatum', 'Derzeitige Anschrift', 'Telefon / E-Mail', 'Beruf / Arbeitgeber', 'Beschäftigt seit', 'Monatliches Nettoeinkommen des Haushalts',
         'Anzahl einziehender Personen (davon Kinder)', 'Haustiere', 'Gewünschter Einzugstermin', 'Derzeitiger Vermieter (Name, Telefon)'].map(feld).join('')}</table>
        <p>Gegen mich läuft kein Insolvenzverfahren, und ich habe in den letzten fünf Jahren keine Vermögensauskunft abgegeben: ☐ zutreffend</p>

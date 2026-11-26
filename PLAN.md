@@ -392,6 +392,18 @@ How the depth was found: the installer of a personal finance program the user ow
 - Private finances: „Differenz ausbuchen“ (reconciliation), payment history of a contract, price history of a security.
 - Inbox on the phone: 44 px tap areas for boxes and bin, own hint text. Tasks: delete in the embedded task sheet.
 
+### 0.29.0 – review against the literature: everything that was wrong
+
+Four textbooks (1,749 pages: Vermieterwissen 2025, Das große Verwalter-Handbuch, Handbuch für die Verwalterpraxis, Risikomanagement in der Wohnungswirtschaft) gave 1,341 testable rules; seven reviewers checked the app against them, with test scripts for every calculation error. Report and decisions: claude.ai artifact „Mietshaus Fachprüfung“. This release fixes the 27 findings „wrong“; the gaps follow area by area.
+
+- Service charges: one deadline rule (§ 556 Abs. 3: the cockpit gave 30.6. for a period ending 15.6., now 15.6.). After the deadline additional payments are blocked and not demanded – unless a reason the landlord is not responsible for is given, which the letter states; credits are paid. Heating without consumption key or readings, and let units without their own meter, block the statement (HeizkostenV, 15 % reduction otherwise). Note that heating counts by invoice date (fuel with stock: consumption, § 7 Abs. 2). The option „vacant flat does not count“ is gone. § 35a column: labour and travel only.
+- Rent: payments settle the monthly rent and advance payments first, then additional payments and fees; § 543 (termination for arrears) counts rent only – an open BK additional payment no longer looks like arrears. Business premises, garages and parking spaces get the periods of § 580a BGB (no reason, no objection) in the calculator and the letter. Objection to a termination: in text form (since 2025).
+- WEG: the Abrechnungsspitze is owed in full by the owner on the day of the resolution (Fälligkeitstheorie); the split by periods stays as information for seller and buyer. Heating between owners by the HeizkostenV (70 % consumption, 30 % area). Reserve: target and actual (paid contributions plus interest) side by side, also in the PDFs. A special levy can fill the reserve instead of paying a measure; it is refused while a unit has no owner. Costs nobody bears (consumption key without readings) are shown and asked before booking. Letters and the SEPA file name the WEG (or the payee set for the house) and its account; the mandate gets its own date.
+- Duties: a duty on a fixed date (winter service) keeps its date when done late. The calibration date of meters appears among the deadlines.
+- Documents and data protection: booked receipts, contracts and tax notices are never emptied from the recycle bin automatically; retention 8 years for receipts (since 2025). Applicants turned down are deleted six months later; a deleted person or applicant can be restored from the change log for 30 days, then their entries there are blanked.
+- Key figures: rent per m² and yields of the running year and the year of purchase are projected to twelve months (and marked); cancelled charges no longer count; vacancy starts with the purchase or the first letting. Loans: special repayments shorten the schedule and lower the balance at the end of the fixed-interest period.
+- Jago's help no longer promises what the app does not do.
+
 ### 0.28.1 – Jago floats and moves
 
 - Jago floats at the bottom right in a circle (above the phone bar), like the assistants of many apps; his window opens there (a sheet from below on the phone). The header button is gone.

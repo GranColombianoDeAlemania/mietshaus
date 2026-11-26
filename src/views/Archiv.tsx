@@ -21,7 +21,7 @@ const RECHNUNGSARTEN = ['Rechnung', 'Gutschrift', 'Mahnung', 'Angebot'];
 export async function inPapierkorb(docs: Row[]) {
   const gebucht = docs.filter((x) => x.buchung_id);
   if (gebucht.length && !await bestaetigen(`${gebucht.length === 1 ? 'Dieser Beleg gehört' : `${gebucht.length} Belege gehören`} zu einer Buchung. `
-    + 'Belege sind 10 Jahre aufzubewahren; die Buchung selbst bleibt. Trotzdem in den Papierkorb legen?', { ja: 'In den Papierkorb' })) return false;
+    + 'Buchungsbelege sind 8 Jahre aufzubewahren (ab Jahresende); die Buchung selbst bleibt, und gebuchte Belege löscht der Papierkorb nie von selbst. Trotzdem in den Papierkorb legen?', { ja: 'In den Papierkorb' })) return false;
   await window.hv.dokumentLoeschen(docs.map((x) => x.id));
   // Counters elsewhere (inbox badge in the sidebar) follow.
   window.dispatchEvent(new Event('hv-daten'));
@@ -392,7 +392,7 @@ function Papierkorb(props: { onClose: () => void }) {
               <tr key={x.id}>
                 <td><b>{x.titel}</b><div className="klein hinweis">{[x.typ, x.absender, x.betrag_ct != null ? euro(x.betrag_ct) : null, x.objekt, x.buchung_id ? 'gebucht' : null, x.geloescht_aus === 'postfach' ? 'aus dem Postfach' : 'aus dem Archiv'].filter(Boolean).join(' · ')}</div></td>
                 <td>{datum(x.geloescht?.slice(0, 10))}</td>
-                <td>{datum(x.endgueltig_am?.slice(0, 10))}</td>
+                <td>{x.endgueltig_am ? datum(x.endgueltig_am.slice(0, 10)) : 'bleibt (aufbewahren)'}</td>
                 <td className="buttons"><button onClick={() => zurueck([x.id])}>Wiederherstellen</button><button className="link danger" onClick={() => weg([x.id])}>Endgültig löschen</button></td>
               </tr>
             ))}

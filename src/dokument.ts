@@ -41,7 +41,7 @@ table.unterschriften { width: 100%; margin-top: 14mm; border-collapse: collapse;
 table.unterschriften td { width: 50%; vertical-align: bottom; font-size: 9pt; color: #333; padding-right: 8mm; }
 `;
 
-export type Absender = { name: string; strasse?: string; ort?: string; telefon?: string; email?: string; bank?: string; iban?: string; bic?: string };
+export type Absender = { name: string; strasse?: string; ort?: string; telefon?: string; email?: string; bank?: string; iban?: string; bic?: string; kontoinhaber?: string };
 
 export const absenderAus = (e: Row): Absender => ({
   name: e.verwalter_name || 'Hausverwaltung',
@@ -54,10 +54,18 @@ export const absenderAus = (e: Row): Absender => ({
   bic: e.verwalter_bic,
 });
 
+// Letters that ask for money of a house: its own account (house-money account of a WEG) and payee – the WEG's name
+// unless another payee is set for the house; the manager's account only when the house has none.
+export const zahlungsAbsender = (e: Row, objekt: Row): Absender => ({
+  ...absenderAus(e),
+  iban: objekt.iban || e.verwalter_iban, bank: objekt.bank || e.verwalter_bank, bic: objekt.bic || e.verwalter_bic,
+  kontoinhaber: objekt.zahlung_empfaenger || (objekt.iban && objekt.art === 'weg' ? objekt.bezeichnung : undefined),
+});
+
 const fuss = (a: Absender) => `<div class="fuss">
   <div>${esc(a.name)}<br>${esc(a.strasse)}<br>${esc(a.ort)}</div>
   <div>${a.telefon ? 'Tel. ' + esc(a.telefon) + '<br>' : ''}${esc(a.email)}</div>
-  <div>${a.bank ? esc(a.bank) + '<br>' : ''}${a.iban ? 'IBAN ' + esc(a.iban) : ''}${a.bic ? '<br>BIC ' + esc(a.bic) : ''}</div>
+  <div>${a.kontoinhaber ? 'Kontoinhaber ' + esc(a.kontoinhaber) + '<br>' : ''}${a.bank ? esc(a.bank) + '<br>' : ''}${a.iban ? 'IBAN ' + esc(a.iban) : ''}${a.bic ? '<br>BIC ' + esc(a.bic) : ''}</div>
 </div>`;
 
 // Recipient of a contract letter: the contract party with the second tenant or owner (mit), so legal declarations

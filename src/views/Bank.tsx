@@ -127,7 +127,8 @@ function Lastschriften(props: { objekt: Row; modus: Modus }) {
 
   async function erzeugen() {
     const xml = painLastschrift({
-      glaeubiger: einst?.verwalter_name || props.objekt.bezeichnung,
+      // Creditor: the payee set for the house; for a WEG the association itself (its account and creditor id).
+      glaeubiger: props.objekt.zahlung_empfaenger || (props.objekt.art === 'weg' ? props.objekt.bezeichnung : einst?.verwalter_name || props.objekt.bezeichnung),
       glaeubigerId: props.objekt.sepa_glaeubiger_id,
       iban: props.objekt.iban,
       bic: props.objekt.bic,
@@ -138,7 +139,7 @@ function Lastschriften(props: { objekt: Row; modus: Modus }) {
         bic: r.vertrag.bic,
         betrag_ct: r.betrag_ct,
         mandat: r.vertrag.sepa_mandat,
-        mandatDatum: r.vertrag.beginn,
+        mandatDatum: r.vertrag.sepa_mandat_datum || r.vertrag.beginn,
         zweck: `${r.typ === 'weg' ? 'Hausgeld' : 'Miete'} ${props.objekt.bezeichnung} ${r.vertrag.einheit} bis ${datum(stichtag)}`,
         e2e: `HV-${r.konto_id}-${faellig.replace(/-/g, '')}`,
       })),

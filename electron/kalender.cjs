@@ -107,4 +107,18 @@ function ordentlicheKuendigung({ zugang, durch = 'mieter', ueberlassung = null, 
   return { zum: ende, karenz_bis: karenz, rechtzeitig, frist_monate: monate, jahre };
 }
 
-module.exports = { ostern, feiertage, istFeiertag, istWerktag, werktagAb, werktagImMonat, mieteFaellig, mieteFaelligAb, naechsterWerktag, ordentlicheKuendigung, LAENDER };
+// Notice for business premises and for garages, parking spaces and other rooms that are no dwelling (§ 580a BGB),
+// the same for both sides and without a reason: business premises by the 3rd working day of a calendar quarter to the
+// end of the next quarter (Abs. 2); other rooms with monthly rent by the 3rd working day of a month to the end of the
+// month after next (Abs. 1 Nr. 3). Saturday does not count as the last day of the grace period, as for flats.
+function kuendigung580a({ zugang, gewerbe, land = null }) {
+  const [y, m] = zugang.split('-').map(Number);
+  const startMonat = gewerbe ? m - ((m - 1) % 3) : m;
+  let karenz = werktagImMonat(`${y}-${pad(startMonat)}`, 3, land, { samstag: true });
+  if (new Date(karenz + 'T00:00:00Z').getUTCDay() === 6) karenz = naechsterWerktag(karenz, land);
+  const rechtzeitig = zugang <= karenz;
+  const ende = gewerbe ? monatsende(y, startMonat + (rechtzeitig ? 5 : 8)) : monatsende(y, m + (rechtzeitig ? 2 : 3));
+  return { zum: ende, karenz_bis: karenz, rechtzeitig, frist_monate: gewerbe ? 6 : 3, jahre: null };
+}
+
+module.exports = { kuendigung580a, ostern, feiertage, istFeiertag, istWerktag, werktagAb, werktagImMonat, mieteFaellig, mieteFaelligAb, naechsterWerktag, ordentlicheKuendigung, LAENDER };

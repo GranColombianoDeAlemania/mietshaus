@@ -6,10 +6,10 @@ const z = (n: number) => zahl(Math.round(n * 1000) / 1000);
 
 function p35aTabelle(p: Row) {
   if (!p.dienstleistung && !p.handwerker) return '';
-  return `<h2>Steuerermäßigung nach § 35a EStG</h2>${tabelle(['Art', '#rIhr Anteil (inkl. Material)'], [
+  return `<h2>Steuerermäßigung nach § 35a EStG</h2>${tabelle(['Art', '#rIhr Anteil (Arbeits- und Fahrtkosten, ohne Material)'], [
     ...(p.dienstleistung ? [['Haushaltsnahe Dienstleistungen (§ 35a Abs. 2)', `#r${euro(p.dienstleistung)}`]] : []),
     ...(p.handwerker ? [['Handwerkerleistungen (§ 35a Abs. 3)', `#r${euro(p.handwerker)}`]] : []),
-  ])}<p class="klein">Bei Handwerkerleistungen ist nur der Lohnanteil begünstigt; bitte prüfen Sie die Rechnungen bei Bedarf bei uns.</p>`;
+  ])}<p class="klein">Begünstigt sind nur Arbeits- und Fahrtkosten, nicht das Material; die Beträge enthalten nur diesen Anteil. Die Rechnungen können Sie bei uns einsehen.</p>`;
 }
 
 // A tenancy whose operating costs are a flat fee or part of the rent: only heating and hot water are settled.
@@ -43,6 +43,8 @@ export function nkBrief(a: Row, e: Row, absender: Absender, objekt: Row, mieter:
       ...(e.ust_ct ? [[`Ergebnis netto`, `#r${euro(e.ergebnis_ct)}`], [`zuzüglich ${e.ust_satz} % Umsatzsteuer`, `#r${euro(e.ust_ct)}`]] : []),
     ], { summe: [e.ergebnis_ct > 0 ? 'Nachzahlung' : 'Guthaben', `#r${euro(Math.abs(e.ergebnis_ct + (e.ust_ct ?? 0)))}`] })}
     <p>${ergebnis}</p>
+    ${e.ausgeschlossen_ct > 0 ? `<p>Rechnerisch ergäbe sich eine Nachzahlung von ${euro(e.ausgeschlossen_ct)}. Da die Abrechnungsfrist abgelaufen ist, verlangen wir sie nicht (§ 556 Abs. 3 Satz 3 BGB).</p>` : ''}
+    ${a.frist?.abgelaufen && a.frist.grund && brutto > 0 ? `<p>Diese Abrechnung erreicht Sie nach Ablauf der Abrechnungsfrist. Die Verspätung haben wir nicht zu vertreten: ${esc(a.frist.grund)} (§ 556 Abs. 3 Satz 3 BGB).</p>` : ''}
     ${vzOffen > 0 ? `<p>Bitte beachten Sie: Von den Vorauszahlungen für diesen Zeitraum sind ${euro(vzOffen)} noch nicht bei uns eingegangen. Die Abrechnung berücksichtigt die vereinbarten Vorauszahlungen;
       ${brutto + vzOffen > 0 ? `insgesamt sind damit noch <b>${euro(brutto + vzOffen)}</b> zu zahlen.` : `nach Verrechnung mit den offenen Vorauszahlungen verbleibt ein Guthaben von <b>${euro(-(brutto + vzOffen))}</b>.`}</p>` : ''}
     ${a.co2 ? `<p class="klein">CO₂-Kostenaufteilung: Das Gebäude verursacht ${a.co2.kg_pro_qm.toFixed(1).replace('.', ',')} kg CO₂ je m² Wohnfläche und Jahr. Der Vermieter trägt daher ${a.co2.vermieter_prozent} % der CO₂-Kosten (${euro(a.co2.kosten_ct)} gesamt); dieser Anteil ist oben bereits abgezogen.</p>` : ''}
@@ -72,6 +74,13 @@ export function wegEinzel(a: Row, e: Row, absender: Absender, objekt: Row, eigen
   const zeilen = a.posten.map((p: Row, i: number) => [esc(p.label) + (p.umlagefaehig ? ' *' : ''), `#r${euro(p.gesamt_ct)}`, esc(p.schluessel),
     `#r${p.gesamt_einheiten ? z(p.gesamt_einheiten) : ''}`, `#r${e.anteile[i].einheiten ? z(e.anteile[i].einheiten) : ''}`, `#r${euro(e.anteile[i].ct)}`]);
   const r = a.ruecklage;
+  // Change of owner: the whole Abrechnungsspitze of the unit is owed by the owner on the day of the resolution
+  // (Fälligkeitstheorie); the other owner's share is information for the settlement between seller and buyer.
+  const sp = (a.spitzen ?? []).find((x: Row) => x.einheit.id === s.einheit.id);
+  const schuldner = !sp || !sp.wechsel || sp.schuldner.id === s.vertrag.id;
+  const spitzeText = !sp?.wechsel ? '' : schuldner
+    ? `<p>Die Einheit hat im Abrechnungsjahr den Eigentümer gewechselt. Die Abrechnungsspitze der ganzen Einheit schuldet bzw. erhält, wer am Tag des Beschlusses Eigentümer ist (Fälligkeitstheorie): <b>${sp.ergebnis_ct > 0 ? 'Nachschuss' : 'Guthaben'} ${euro(Math.abs(sp.ergebnis_ct))}</b> für das ganze Jahr. Ihr eigener Zeitraum oben dient dem Ausgleich mit dem bisherigen Eigentümer laut Kaufvertrag.</p>`
+    : `<p>Sie waren nur einen Teil des Jahres Eigentümer. Die Abrechnungsspitze der Einheit schuldet bzw. erhält, wer am Tag des Beschlusses Eigentümer ist (Fälligkeitstheorie), gegenüber der Gemeinschaft also: ${esc(sp.schuldner.name)}. Ihr Anteil oben ist eine Information für den Ausgleich laut Kaufvertrag; wir buchen ihn nicht auf Ihr Konto.</p>`;
   const inhalt = `
     <p>${esc(anrede(eigentuemer))}</p>
     <p>anbei erhalten Sie die Einzelabrechnung zur Jahresabrechnung ${a.von.slice(0, 4)} für Ihre Einheit ${esc(s.einheit.bezeichnung)}
@@ -84,10 +93,12 @@ export function wegEinzel(a: Row, e: Row, absender: Absender, objekt: Row, eigen
       ['Ihr Kostenanteil', `#r${euro(e.kosten_ct)}`],
       ['abzüglich Hausgeld-Vorschüsse lt. Wirtschaftsplan (ohne Rücklage)', `#r${euro(-e.hausgeld_soll_ct)}`],
       ...(e.sonderumlage_ct ? [['abzüglich Sonderumlagen', `#r${euro(-e.sonderumlage_ct)}`]] : []),
-    ], { summe: [e.ergebnis_ct > 0 ? 'Nachschuss (Abrechnungsspitze)' : 'Guthaben', `#r${euro(Math.abs(e.ergebnis_ct))}`] })}
+    ], { summe: [(e.ergebnis_ct > 0 ? 'Nachschuss (Abrechnungsspitze)' : 'Guthaben') + (schuldner ? '' : ' – Information'), `#r${euro(Math.abs(e.ergebnis_ct))}`] })}
+    ${spitzeText}
     <h2>Erhaltungsrücklage</h2>
     ${tabelle(['', '#rBetrag'], [['Ihre Soll-Zuführung im Abrechnungsjahr', `#r${euro(e.ruecklage_soll_ct)}`],
-      ['Stand der Rücklage der Gemeinschaft am ' + datum(a.bis), `#r${euro(r.ende_ct)}`]])}
+      ['Stand der Rücklage der Gemeinschaft am ' + datum(a.bis) + ' (Soll)', `#r${euro(r.ende_ct)}`],
+      ['Stand der Rücklage der Gemeinschaft am ' + datum(a.bis) + ' (Ist, gezahlt und mit Zinsen)', `#r${euro(r.ist_ende_ct ?? r.ende_ct)}`]])}
     ${p35aTabelle(e.p35a)}
     <p class="klein">Über die Einforderung von Nachschüssen bzw. die Anpassung der Vorschüsse beschließt die Eigentümerversammlung (§ 28 Abs. 2 WEG).</p>
     <p class="unterschrift">Mit freundlichen Grüßen<br><br>${esc(absender.name)}</p>`;
@@ -104,14 +115,19 @@ export function wegGesamt(a: Row, objekt: Row) {
   const rl = tabelle(['Erhaltungsrücklage', '#rBetrag'], [
     ['Stand zu Beginn', `#r${euro(r.anfang_ct)}`], ['Soll-Zuführungen', `#r${euro(r.zufuehrung_soll_ct)}`],
     ['Entnahmen', `#r${euro(-r.entnahmen_ct)}`], ...(r.eroeffnung_ct ? [['Eröffnung / Übernahme', `#r${euro(r.eroeffnung_ct)}`]] : []),
-  ], { summe: ['Stand am Ende', `#r${euro(r.ende_ct)}`] });
+    ['Soll-Stand am Ende', `#r${euro(r.ende_ct)}`],
+    ...(r.offen_zufuehrung_ct ? [['noch nicht gezahlte Zuführungen', `#r${euro(-r.offen_zufuehrung_ct)}`]] : []),
+    ...(r.zinsen_ct ? [['Zinserträge im Jahr', `#r${euro(r.zinsen_ct)}`]] : []),
+  ], { summe: ['Ist-Stand am Ende', `#r${euro(r.ist_ende_ct ?? r.ende_ct)}`] });
   const v = a.vermoegen;
   const verm = tabelle(['Vermögen am ' + datum(v.stichtag), '#rBetrag'], [
     ...v.geld.map((g: Row) => [esc(g.bezeichnung), `#r${euro(g.saldo_ct)}`]),
     ...v.forderungen.map((f: Row) => [`Forderung/Guthaben ${esc(f.bezeichnung)}`, `#r${euro(f.saldo_ct)}`]),
   ]);
+  const wechsel = (a.spitzen ?? []).filter((x: Row) => x.wechsel);
+  const einzelPlus = wechsel.length ? einzel + `<p class="klein">Eigentümerwechsel – die Abrechnungsspitze schuldet der Eigentümer am Tag des Beschlusses (Fälligkeitstheorie): ${wechsel.map((x: Row) => `${esc(x.einheit.bezeichnung)} ${esc(x.schuldner.name)} ${euro(x.ergebnis_ct)}`).join('; ')}. Die Zeilen je Eigentümer dienen dem Ausgleich zwischen Verkäufer und Käufer.</p>` : einzel;
   return bericht('Jahresabrechnung und Vermögensbericht', `${objekt.bezeichnung} · ${datum(a.von)} – ${datum(a.bis)}`,
-    `<h2>Gesamtkosten</h2>${kosten}<h2>Einzelergebnisse</h2>${einzel}<h2>Rücklage</h2>${rl}<h2>Vermögensbericht (§ 28 Abs. 4 WEG)</h2>${verm}`);
+    `<h2>Gesamtkosten</h2>${kosten}<h2>Einzelergebnisse</h2>${einzelPlus}<h2>Rücklage</h2>${rl}<h2>Vermögensbericht (§ 28 Abs. 4 WEG)</h2>${verm}`);
 }
 
 export function wiplEinzel(w: Row, zeile: Row, absender: Absender, objekt: Row, eigentuemer: Row, ab: string) {

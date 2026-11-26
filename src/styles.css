@@ -382,6 +382,13 @@ label.eingerueckt { margin-left: 22px; }
 .maske { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px 14px; margin-bottom: 12px; }
 .maske.zwei { grid-template-columns: 1fr 1fr; }
 .maske label.breit { grid-column: span 2; }
+/* Phones: two columns, wide fields over the whole row; a row of tabs in a form may wrap instead of running off. */
+@media (max-width: 760px) {
+  .maske { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .maske label.breit { grid-column: 1 / -1; }
+  .maske .tabs { display: flex; flex-wrap: wrap; }
+  .maske .tabs button { flex: 1 1 auto; }
+}
 textarea.brieftext { width: 100%; padding: 10px 12px; border: 1px solid var(--line-stark); border-radius: 7px; font: 14px/1.55 var(--schrift); resize: vertical; color: var(--ink); }
 
 /* ---------- Search / command palette ---------- */

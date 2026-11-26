@@ -593,8 +593,12 @@ module.exports = function kennzahlen({ all, get, PERSON_NAME, bh, aw, ab, vw, dl
     let vermietet = 0, basis = 0, leerCt = 0;
     const luecken = [];
     const stand = { vermietet: 0, selbst: 0, leer: 0, einheiten: 0 };
-    for (const e of all(`SELECT * FROM einheiten WHERE objekt_id IN (${idListe(objekte)}) ORDER BY objekt_id, nr`)) {
-      const seg = belegung(e.id, von, t);
+    for (const e of all(`SELECT e.*, o.kaufdatum FROM einheiten e JOIN objekte o ON o.id = e.objekt_id WHERE e.objekt_id IN (${idListe(objekte)}) ORDER BY e.objekt_id, e.nr`)) {
+      // Not before the purchase, and not before the unit was first let or used: that time is no vacancy.
+      const erste = get(`SELECT min(b) AS b FROM (SELECT min(beginn) AS b FROM mietverhaeltnisse WHERE einheit_id = ?1 UNION ALL SELECT min(beginn) FROM selbstnutzung WHERE einheit_id = ?1)`, e.id).b;
+      const ab = [von, e.kaufdatum, erste].filter(Boolean).reduce((a, b) => (a > b ? a : b));
+      if (ab > t) continue;
+      const seg = belegung(e.id, ab, t);
       const f = e.wohnflaeche ?? 0;
       for (const s of seg) {
         if (s.art === 'miete') vermietet += f * s.tage;
@@ -628,10 +632,14 @@ module.exports = function kennzahlen({ all, get, PERSON_NAME, bh, aw, ab, vw, dl
       konten.push({ ...n, vertrag_id: k.vertrag_id, typ, ct: summe, aeltester: Math.max(...ueber.map((x) => x.verzug)) });
       if (typ === 'miete') {
         const miete = monatlich('miete', k.vertrag_id, t);
-        const monate = ueber.filter((x) => x.monat).map((x) => x.monat).sort();
-        const folge = monate.some((m, i) => i && monatPlus(monate[i - 1], 1) === m);
-        if (miete > 0 && (summe >= 2 * miete || (folge && summe > miete)))
-          p543.push({ ...n, vertrag_id: k.vertrag_id, ct: summe, monatsmieten: summe / miete, folge });
+        // Only rent and advance payments count (§ 543 Abs. 2 Nr. 3 BGB), not BK additional payments or fees.
+        const mieten = ueber.filter((x) => x.monat);
+        const mietSumme = mieten.reduce((s, x) => s + x.offen_ct, 0);
+        const monate = mieten.map((x) => x.monat).sort();
+        const letzteZwei = mieten.filter((x) => monate.slice(-2).includes(x.monat)).reduce((s, x) => s + x.offen_ct, 0);
+        const folge = monate.length >= 2 && monatPlus(monate.at(-2), 1) === monate.at(-1);
+        if (miete > 0 && (mietSumme >= 2 * miete || (folge && letzteZwei > miete)))
+          p543.push({ ...n, vertrag_id: k.vertrag_id, ct: mietSumme, monatsmieten: mietSumme / miete, folge });
       }
     }
     konten.sort((a, b) => b.ct - a.ct);
@@ -788,6 +796,10 @@ module.exports = function kennzahlen({ all, get, PERSON_NAME, bh, aw, ab, vw, dl
         add(d, `${v.art} (${euro(v.beitrag_ct)})`, { ziel: { seite: 'versicherungen', objektId: v.objekt_id } });
       }
     }
+    // Calibration of the meters in use (MessEG: an expired meter may not be used for billing).
+    for (const z of all(`SELECT z.*, e.bezeichnung AS einheit FROM zaehler z LEFT JOIN einheiten e ON e.id = z.einheit_id
+        WHERE z.objekt_id IN (${ids}) AND z.eichung_bis IS NOT NULL AND z.eichung_bis <> '' AND (z.ausbau IS NULL OR z.ausbau = '')`))
+      add(z.eichung_bis, `Eichung Zähler ${z.nummer ?? z.art}${z.einheit ? ` (${z.einheit})` : ''} läuft ab – tauschen lassen`, { ziel: { seite: 'zaehler', objektId: z.objekt_id } });
     for (const p of all(`SELECT f.*, o.bezeichnung AS objekt FROM pflichten f JOIN objekte o ON o.id = f.objekt_id
         WHERE f.objekt_id IN (${ids}) AND f.aktiv = 1 AND f.naechste IS NOT NULL AND f.naechste <= ?
           -- With an open case the case itself is listed (calendar, cockpit); the deadline would show it twice.

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { call, datum, diesesJahr, euro, fehler, parseCent, type Row } from '../api';
 import { useLoad } from '../useLoad';
 import { L } from '../navi';
-import { absenderAus, alsPdf, bericht, esc, tabelle, empfaengerVon } from '../dokument';
+import { absenderAus, zahlungsAbsender, alsPdf, bericht, esc, tabelle, empfaengerVon } from '../dokument';
 import { wiplEinzel } from '../abrechnungDocs';
 import { Gespeichert } from './NkAbrechnung';
 import { bestaetigen } from '../frage';
@@ -40,7 +40,7 @@ export function Wirtschaftsplan(props: { objekt: Row }) {
   async function pdf() {
     if (!w) return;
     const einst = await call('einstellungen');
-    const absender = absenderAus(einst);
+    const absender = zahlungsAbsender(einst, props.objekt);
     const gesamt = bericht(`Wirtschaftsplan ${jahr}`, props.objekt.bezeichnung,
       tabelle(['Kostenart', 'Schlüssel', '#rBetrag'], w.posten.map((p: Row) => [esc(p.label), esc(p.schluessel), `#r${euro(p.gesamt_ct)}`]),
         { summe: ['Summe Kosten', '', `#r${euro(w.summe_ct)}`] }) +

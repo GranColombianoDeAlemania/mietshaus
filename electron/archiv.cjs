@@ -316,11 +316,13 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME, wl }) {
     dokumentEndgueltig: (ids) => tx(() => { for (const id of [ids].flat()) wl.zugriff('dokument', Number(id)); return endgueltig([ids].flat().map(Number)); }),
     papierkorb: () => all(`SELECT d.id, d.titel, d.typ, d.name, d.datei, d.absender, d.betrag_ct, d.geloescht, d.geloescht_aus, d.buchung_id, o.bezeichnung AS objekt
       FROM dokumente d LEFT JOIN objekte o ON o.id = d.objekt_id WHERE d.status = 'papierkorb' AND ${IN_WELT('d')} ORDER BY d.geloescht DESC`)
-      .map((d) => ({ ...d, endgueltig_am: new Date(Date.parse(d.geloescht) + PAPIERKORB_TAGE * 864e5).toISOString() })),
+      .map((d) => ({ ...d, endgueltig_am: d.buchung_id || ['Mietvertrag', 'Vertrag', 'Bescheid'].includes(d.typ) ? null : new Date(Date.parse(d.geloescht) + PAPIERKORB_TAGE * 864e5).toISOString() })),
     papierkorbAnzahl: () => get(`SELECT count(*) AS n FROM dokumente d WHERE d.status = 'papierkorb' AND ${IN_WELT('d')}`).n,
-    // Empties what has been in the bin longer than the days given; returns the files to delete.
+    // Empties what has been in the bin longer than the days given; returns the files to delete. Booked receipts,
+    // contracts and tax notices are kept (retention, § 147 AO) – only deleting them by hand removes them for good.
     papierkorbLeeren: (tage = PAPIERKORB_TAGE, jetzt = Date.now()) => tx(() => endgueltig(
-      all(`SELECT id, geloescht FROM dokumente WHERE status = 'papierkorb'`).filter((d) => !d.geloescht || Date.parse(d.geloescht) <= jetzt - tage * 864e5).map((d) => d.id))),
+      all(`SELECT id, geloescht FROM dokumente WHERE status = 'papierkorb' AND buchung_id IS NULL
+        AND coalesce(typ, '') NOT IN ('Mietvertrag', 'Vertrag', 'Bescheid')`).filter((d) => !d.geloescht || Date.parse(d.geloescht) <= jetzt - tage * 864e5).map((d) => d.id))),
 
     // A contact from the sender of a document (company), linked to the document.
     kontaktAusSteller: (dokId) => tx(() => {
