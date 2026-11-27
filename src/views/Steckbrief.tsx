@@ -177,13 +177,14 @@ export function Darlehen(props: { objekt: Row }) {
         Raten, die du im Bankimport dem Darlehenskonto zuordnest, werden automatisch in Zinsen (Werbungskosten, Anlage V) und Tilgung aufgeteilt.
         Vor dem Ende der Zinsbindung meldet sich das Cockpit.
       </p>
+      {liste?.filter((d) => d.warnung).map((d) => <p key={d.id} className="fehler">{d.bank}: {d.warnung}</p>)}
       <table>
         <thead><tr><th>Bank</th><th className="num">Betrag</th><th className="num">Zins</th><th className="num">Rate</th><th className="num">Restschuld lt. Plan</th><th className="num">Restschuld lt. Buchhaltung</th><th>Zinsbindung</th><th /></tr></thead>
         <tbody>
           {liste?.map((d) => (
             <tr key={d.id} onDoubleClick={() => setEdit(d)}>
               <td><b>{d.bank}</b><div className="klein">{d.vertragsnr}</div></td><td className="num">{euro(d.betrag_ct)}</td><td className="num">{zahl(d.zinssatz)} %</td>
-              <td className="num">{euro(d.rate_berechnet_ct)}</td><td className="num">{euro(d.rest_plan_ct)}</td>
+              <td className="num">{euro(d.rate_berechnet_ct)}{d.warnung && <div className="klein minus" title={d.warnung}>Rate unter Zins</div>}</td><td className="num">{euro(d.rest_plan_ct)}</td>
               <td className="num">{d.rest_ist_ct != null ? euro(d.rest_ist_ct) : '–'}</td><td>{datum(d.zinsbindung_bis)}</td>
               <td className="aktionen">
                 <button onClick={async () => setPlan(await call('tilgungsplan', d.id))}>Tilgungsplan</button>

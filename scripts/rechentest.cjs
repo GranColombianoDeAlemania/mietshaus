@@ -1541,7 +1541,7 @@ Stadtsparkasse München | IBAN DE02 7015 0000 0000 1234 56 | BIC SSKMDEMMXXX`;
   t.ablesung('2025-12-31', { [z1]: 130, [z2]: 190 });
   const plan = t.wirtschaftsplanBerechnen(w2, 2026, [{ konto_id: wk2[0].id, betrag_ct: 300000, schluessel_id: kw }], 0, null);
   gleich('Wirtschaftsplan: Wasser nach Verbrauch 2025 (30 : 90)', plan.zeilen.map((z) => z.anteile[0]), [75000, 225000]);
-  gleich('Wirtschaftsplan: Hinweis zur Verteilung', plan.hinweise.length, 1);
+  gleich('Wirtschaftsplan: Hinweis zur Verteilung', plan.hinweise.filter((h) => /Verbrauch/.test(h)).length, 1);
 }
 
 // ---------- 0.20: duties of a house ----------
@@ -2114,6 +2114,284 @@ Stadtsparkasse München | IBAN DE02 7015 0000 0000 1234 56 | BIC SSKMDEMMXXX`;
   const log = r2.prepare(`SELECT aktion, alt, neu FROM protokoll WHERE tabelle = 'personen' AND datensatz = ?`).all(px);
   gleich('Gelöschte Person: 30 Tage rückgängig machbar, danach getilgt', [JSON.stringify(log).includes('Geheim'), t2.protokollAnonymisieren(30, '2099-01-01') >= 3,
     JSON.stringify(r2.prepare(`SELECT alt, neu FROM protokoll WHERE tabelle = 'personen' AND datensatz = ?`).all(px)).includes('Geheim')], [true, true, false]);
+}
+
+// ---------- 0.30: service charges – gaps from the literature ----------
+{
+  const r3 = open(':memory:');
+  const t3 = api(r3);
+  t3.setzeEinstellungen({ bundesland: 'BE' });
+  const ob = t3.neuesObjekt({ bezeichnung: 'Heizhaus', art: 'miete', strasse: 'Ofenweg 1', plz: '10115', ort: 'Berlin' });
+  const w1 = t3.save('einheiten', { objekt_id: ob, nr: 1, bezeichnung: 'W1', art: 'Wohnung', wohnflaeche: 60 });
+  const w2 = t3.save('einheiten', { objekt_id: ob, nr: 2, bezeichnung: 'W2', art: 'Wohnung', wohnflaeche: 40 });
+  const pe = (n) => t3.save('personen', { anrede: 'Frau', vorname: 'A', nachname: n });
+  t3.save('mietverhaeltnisse', { einheit_id: w1, person_id: pe('Eins'), beginn: '2024-01-01', kaltmiete_ct: 60000, personen_anzahl: 2 });
+  t3.save('mietverhaeltnisse', { einheit_id: w2, person_id: pe('Zwei'), beginn: '2024-01-01', kaltmiete_ct: 40000, personen_anzahl: 1, bk_vz_ct: 10000 });
+  const kt3 = Object.fromEntries(t3.konten(ob).map((k) => [k.nr, k.id]));
+  const bank3 = t3.konten(ob).find((k) => k.klasse === 'geld').id;
+  t3.buchen({ objekt_id: ob, datum: '2025-02-01', text: 'Gas', positionen: [{ soll_id: kt3[41000], haben_id: bank3, betrag_ct: 1000000 }] });
+  t3.save('umlageschluessel', { objekt_id: ob, bezeichnung: 'Wärme', einheit: 'kWh', typ: 'zaehler', zaehler_art: 'waerme' });
+  t3.save('umlageschluessel', { objekt_id: ob, bezeichnung: 'Warmwasser', einheit: 'm³', typ: 'zaehler', zaehler_art: 'warmwasser' });
+  const z = (e, art, nr) => t3.save('zaehler', { objekt_id: ob, einheit_id: e, art, nummer: nr, einheit: art === 'waerme' ? 'kWh' : 'm³', faktor: 1, eichung_bis: '2025-06-30' });
+  const wz1 = z(w1, 'waerme', 'W1'), wz2 = z(w2, 'waerme', 'W2'), ww1 = z(w1, 'warmwasser', 'WW1'), ww2 = z(w2, 'warmwasser', 'WW2');
+  t3.ablesung('2024-12-31', { [wz1]: 0, [wz2]: 0, [ww1]: 0, [ww2]: 0 });
+  t3.ablesung('2025-12-31', { [wz1]: 6000, [wz2]: 4000, [ww1]: 30, [ww2]: 20 });
+  // § 9 HeizkostenV formula: 2.5 × 50 m³ × (60 − 10) = 6,250 kWh of 100,000 kWh → 6.25 % of the gas for hot water.
+  const nk = t3.nkAbrechnung(ob, '2025-01-01', '2025-12-31', { ww: { art: 'formel', energie_kwh: 100000, tw: 60 } });
+  gleich('Warmwasser nach § 9: Anteil und Aufteilung', [nk.heizung.ww.anteil, nk.posten.filter((p) => p.heizung).map((p) => [p.label.replace(/ \(.*?\)/g, ''), p.gesamt_ct])],
+    [0.0625, [['Heizkosten – Heizung – Grundkosten', 281250], ['Heizkosten – Heizung – Verbrauchskosten', 656250],
+      ['Heizkosten – Warmwasser – Grundkosten', 18750], ['Heizkosten – Warmwasser – Verbrauchskosten', 43750]]]);
+  gleich('§ 6a: Verbrauch je Mieter und Hausdurchschnitt', nk.ergebnisse.map((e) => e.vergleich && [Math.round(e.vergleich.jetzt), e.vergleich.haus_je_qm]), [[6000, 100], [4000, 100]]);
+  const pr = t3.nkPruefung(ob, '2025-01-01', '2025-12-31', {}).punkte.map((x) => x.text);
+  gleich('Prüfung: Eichung abgelaufen, fehlende Vorauszahlungen, nicht fernablesbar', [pr.some((x) => /Eichung abgelaufen/.test(x)), pr.some((x) => /keine Vorauszahlungen im Zeitraum/.test(x)), pr.some((x) => /nicht als fernablesbar/.test(x))], [true, true, true]);
+  // CO2: a building of business premises only splits half and half; a listed building halves the landlord's share.
+  const og = t3.neuesObjekt({ bezeichnung: 'Ladenhaus', art: 'miete', strasse: 'Markt 1', plz: '10115', ort: 'Berlin' });
+  const lg = t3.save('einheiten', { objekt_id: og, nr: 1, bezeichnung: 'Laden', art: 'Gewerbe', wohnflaeche: 100 });
+  t3.save('mietverhaeltnisse', { einheit_id: lg, person_id: pe('Laden'), beginn: '2024-01-01', kaltmiete_ct: 100000 });
+  const ktg = Object.fromEntries(t3.konten(og).map((k) => [k.nr, k.id]));
+  t3.buchen({ objekt_id: og, datum: '2025-02-01', text: 'Gas', positionen: [{ soll_id: ktg[41000], haben_id: t3.konten(og).find((k) => k.klasse === 'geld').id, betrag_ct: 200000 }] });
+  const co = (halb) => t3.nkAbrechnung(og, '2025-01-01', '2025-12-31', { heizung: 'ohne', co2_kg: 5000, co2_kosten_ct: 20000, co2_halbieren: halb }).co2.vermieter_prozent;
+  gleich('CO₂: Nichtwohngebäude 50 %, halbiert 25 %', [co(false), co(true)], [50, 25]);
+  gleich('§ 35a: keine Tabelle für Gewerbe', t3.nkAbrechnung(og, '2025-01-01', '2025-12-31', { heizung: 'ohne' }).ergebnisse.find((e) => e.segment.vertrag).p35a, { dienstleistung: 0, handwerker: 0 });
+  // Meter reading against last year: more than double asks once more.
+  kontextSetzen(r3, { rueckfrage: '1' });
+  gleich('Zählerstand: doppelt so viel wie im Vorjahr fragt nach', /mehr als doppelt so viel/.test(fehlerVon(() => t3.ablesung('2026-12-31', { [wz1]: 19000 }))), true);
+  kontextSetzen(r3, { rueckfrage: '0' });
+}
+
+// ---------- rent: gaps from the literature ----------
+{
+  const r4 = open(':memory:');
+  const t4 = api(r4);
+  t4.setzeEinstellungen({ bundesland: 'BE' });
+  const ob = t4.neuesObjekt({ bezeichnung: 'Bremshaus', art: 'miete', strasse: 'Bremsweg 1', plz: '10115', ort: 'Berlin', mietpreisbremse: 1, vergleichsmiete_ct: 1000 });
+  const w = t4.save('einheiten', { objekt_id: ob, nr: 1, bezeichnung: 'W1', art: 'Wohnung', wohnflaeche: 50 });
+  const pe = (n) => t4.save('personen', { anrede: 'Herr', vorname: 'B', nachname: n });
+  // 10 €/m² × 50 m² × 1.1 = 550 €; the previous tenant paid 600 € – so 600 € are allowed, with the notice of § 556g Abs. 1a.
+  t4.save('mietverhaeltnisse', { einheit_id: w, person_id: pe('Vor'), beginn: '2020-01-01', ende: '2026-06-30', kaltmiete_ct: 60000 });
+  const m = (ct) => t4.mietpreisbremse(w, ct, '2026-08-01');
+  gleich('Mietpreisbremse: Grenze, Vormiete, zu hoch', [m(55000).grenze_ct, m(60000).ok, m(60000).auskunft, m(65000).ok], [55000, true, 'vormiete', false]);
+  t4.save('einheiten', { id: w, mpb_ausnahme: 'neubau' });
+  gleich('Mietpreisbremse: Neubau ist ausgenommen, Auskunft nötig', [m(90000).ok, m(90000).auskunft], [true, 'neubau']);
+  kontextSetzen(r4, { rueckfrage: '1' });
+  gleich('Kaution über drei Kaltmieten fragt nach', /höher als drei Nettokaltmieten/.test(fehlerVon(() => t4.save('mietverhaeltnisse', { einheit_id: w, person_id: pe('Neu'), beginn: '2026-08-01', kaltmiete_ct: 50000, kaution_ct: 160000 }))), true);
+  kontextSetzen(r4, { rueckfrage: '0' });
+  const vn = t4.save('mietverhaeltnisse', { einheit_id: w, person_id: pe('Neu2'), beginn: '2026-08-01', kaltmiete_ct: 50000 });
+  // Modernisation: notice less than three months before the works → six months later.
+  const mod = (ank, arb) => t4.modernisierungPruefen(vn, 52000, '2027-01-01', '2026-10-05', ank, arb, 2000);
+  gleich('Modernisierung: rechtzeitig angekündigt / zu spät', [mod('2026-04-01', '2026-07-15').wirkung_frueh, mod('2026-06-01', '2026-07-15').wirkung_frueh], ['2027-01-01', '2027-07-01']);
+  gleich('Befristeter Vertrag: Hinweis im Kündigungsrechner', t4.kuendigungBerechnen({ vertrag_id: t4.save('mietverhaeltnisse', { einheit_id: w, person_id: pe('Frist'), beginn: '2026-01-01', ende: '2028-12-31', kaltmiete_ct: 50000 }), durch: 'mieter', zugang: '2026-11-03' }).hinweise.some((h) => /befristet/.test(h)), true);
+}
+
+// ---------- WEG meeting: gaps from the literature ----------
+{
+  const r5 = open(':memory:');
+  const t5 = api(r5);
+  t5.setzeEinstellungen({ bundesland: 'BE' });
+  const ob = t5.neuesObjekt({ bezeichnung: 'WEG Probe', art: 'weg', strasse: 'Probeweg 1', plz: '10115', ort: 'Berlin' });
+  const pe = (n) => t5.save('personen', { anrede: 'Frau', vorname: 'C', nachname: n });
+  const eig = [['W1', 400, 'A'], ['W2', 300, 'B'], ['W3', 300, 'C']].map(([b, mea, n], i) => {
+    const e = t5.save('einheiten', { objekt_id: ob, nr: i + 1, bezeichnung: b, art: 'Wohnung', wohnflaeche: 60, mea });
+    const p = pe(n); t5.save('eigentum', { einheit_id: e, person_id: p, beginn: '2020-01-01', hausgeld_ct: 20000 }); return p;
+  });
+  const vs = t5.save('versammlungen', { objekt_id: ob, datum: '2026-11-10', art: 'ordentlich', ort: 'Saal' });
+  const top = (mehrheit) => t5.save('tops', { versammlung_id: vs, nr: 1, titel: 'Aufzug', beschlussvorschlag: 'Einbau eines Aufzugs', abstimmungsart: 'kopf', mehrheit });
+  gleich('Keine Stimmen: kein Beschluss', fehlerVon(() => t5.topBeschliessen(top('einfach'))), 'Keine Stimmen erfasst – bitte die Stimmen der Anwesenden eintragen.');
+  // Doubly qualified: 2 of 3 heads yes (> 2/3 not reached), or with the shares: A+B yes = 700 of 1000 MEA, 2 of 2 votes cast.
+  const t1 = top('doppelt');
+  t5.topStimmenSpeichern(t1, 'kopf', [{ person_id: eig[0], wahl: 'ja' }, { person_id: eig[1], wahl: 'ja' }, { person_id: eig[2], wahl: 'nein' }]);
+  const t2 = top('doppelt');
+  t5.topStimmenSpeichern(t2, 'kopf', [{ person_id: eig[0], wahl: 'ja' }, { person_id: eig[1], wahl: 'ja' }, { person_id: eig[2], wahl: 'enthaltung' }]);
+  gleich('Doppelt qualifizierte Mehrheit: 2:1 nein, 2:0 mit 700 MEA ja', [t5.topBeschliessen(t1), t5.topBeschliessen(t2)], ['abgelehnt', 'angenommen']);
+  // A new vote gets a new number; the old entry is set aside with a note. Deleted numbers are never given again.
+  t5.topStimmenSpeichern(t1, 'kopf', [{ person_id: eig[0], wahl: 'ja' }, { person_id: eig[1], wahl: 'ja' }, { person_id: eig[2], wahl: 'ja' }]);
+  t5.topBeschliessen(t1);
+  const reg = r5.prepare('SELECT nr, status, vermerk FROM beschluesse WHERE objekt_id = ? ORDER BY nr').all(ob);
+  gleich('Neue Abstimmung: neuer Eintrag, alter aufgehoben', reg.map((x) => [x.nr, x.status, /ersetzt durch Nr\. 3/.test(x.vermerk ?? '')]), [[1, 'aufgehoben', true], [2, 'gueltig', false], [3, 'gueltig', false]]);
+  t5.remove('beschluesse', r5.prepare('SELECT id FROM beschluesse WHERE objekt_id = ? AND nr = 3').get(ob).id);
+  gleich('Gelöschte Nummer wird nicht wieder vergeben', t5.naechsteBeschlussNr(ob), 4);
+  // § 45 WEG: the period to challenge appears among the deadlines; an invitation by post three days earlier.
+  const kal = () => t5.kalender('2026-11-21', '2027-02-20').map((x) => [x.datum, x.titel]);
+  gleich('Anfechtungsfrist im Kalender', kal().some(([d, x]) => d === '2026-12-10' && /^Anfechtungsfrist Beschluss Nr\. 2/.test(x)), true);
+  t5.save('versammlungen', { objekt_id: ob, datum: '2027-01-20', art: 'ordentlich', einladung_weg: 'post' });
+  gleich('Einladung per Post: 21 + 3 Tage vorher', kal().some(([d, x]) => d === '2026-12-27' && /Einladung/.test(x)), true);
+}
+
+// ---------- WEG finances: gaps from the literature ----------
+{
+  const t6 = api(open(':memory:'));
+  t6.setzeEinstellungen({ bundesland: 'BE' });
+  const ob = t6.neuesObjekt({ bezeichnung: 'WEG Kasse', art: 'weg', strasse: 'Kassenweg 1', plz: '10115', ort: 'Berlin' });
+  const eig = [['W1', 600], ['W2', 400]].map(([b, mea], i) => {
+    const e = t6.save('einheiten', { objekt_id: ob, nr: i + 1, bezeichnung: b, art: 'Wohnung', wohnflaeche: 50, mea });
+    const p = t6.save('personen', { anrede: 'Herr', vorname: 'D', nachname: b }); return t6.save('eigentum', { einheit_id: e, person_id: p, beginn: '2020-01-01', hausgeld_ct: 10000 });
+  });
+  const kt6 = Object.fromEntries(t6.konten(ob).map((k) => [k.nr, k.id]));
+  const bank6 = t6.konten(ob).find((k) => k.klasse === 'geld' && k.kategorie !== 'ruecklage').id;
+  t6.buchen({ objekt_id: ob, datum: '2025-03-01', text: 'Versicherung', positionen: [{ soll_id: kt6[41300], haben_id: bank6, betrag_ct: 100000 }] });
+  t6.buchen({ objekt_id: ob, datum: '2025-06-30', text: 'Zinsen', positionen: [{ soll_id: bank6, haben_id: kt6[68900], betrag_ct: 10000 }] });
+  const a6 = t6.wegAbrechnung(ob, '2025-01-01', '2025-12-31');
+  // 1,000 € costs minus 100 € interest = 900 €, by MEA 540 : 360.
+  gleich('WEG-Abrechnung: Einnahmen mindern die Kosten (nach MEA)', [a6.einnahmen.length, a6.ergebnisse.map((e) => e.kosten_ct)], [1, [54000, 36000]]);
+  gleich('WEG-Abrechnung: Kontenentwicklung geht auf', a6.konten_entwicklung.every((k) => k.stimmt), true);
+  // Budget plan: 2 % shortfall on 1,000 €, an income of 120 € a year, rounded to 5 €.
+  const wp = t6.wirtschaftsplanBerechnen(ob, 2026, [{ konto_id: kt6[41300], betrag_ct: 100000 }], 0, null, { ausfall_prozent: 2, einnahmen: [{ bezeichnung: 'Stellplatz', betrag_ct: 12000 }], rundung: 1000 });
+  gleich('Wirtschaftsplan: Ausfall, Einnahme, Rundung auf 10 €', [wp.posten.map((p) => p.gesamt_ct), wp.zeilen.map((z) => z.monat_hausgeld_ct)], [[100000, 2000, -12000], [5000, 3000]]);
+}
+
+// ---------- duties and insurance: gaps from the literature ----------
+{
+  const t7 = api(open(':memory:'));
+  const ob = t7.neuesObjekt({ bezeichnung: 'Pflichthaus', art: 'miete', strasse: 'Pflichtweg 1', plz: '10115', ort: 'Berlin' });
+  const z = t7.save('zaehler', { objekt_id: ob, art: 'kaltwasser', nummer: 'K1', einbau: '2024-05-10' });
+  const zw = t7.save('zaehler', { objekt_id: ob, art: 'waerme', nummer: 'W1', einbau: '2024-05-10' });
+  gleich('Eichfrist vorgeschlagen: Kaltwasser 6, Wärme 5 Jahre', [t7.get('zaehler', z).eichung_bis, t7.get('zaehler', zw).eichung_bis], ['2030-12-31', '2029-12-31']);
+  t7.save('versicherungen', { objekt_id: ob, art: 'Wohngebäude', kuendbar_bis: '2025-09-30' });
+  gleich('Kündigungstermin läuft jährlich weiter', t7.kalender('2026-09-01', '2026-10-31').some((x) => x.datum === '2026-09-30' && /Kündigung muss/.test(x.titel)), true);
+  const pf = t7.save('pflichten', { objekt_id: ob, art: 'begehung', titel: 'Hausbegehung', intervall_monate: 12, naechste: '2026-06-01', vorlauf_tage: 30, aktiv: 1 });
+  const bg = t7.begehungNeu({ objekt_id: ob, datum: '2026-05-20' });
+  t7.begehungAbschliessen(bg, null);
+  gleich('Abgeschlossene Begehung erledigt die Pflicht', t7.get('pflichten', pf).naechste, '2027-05-20');
+}
+
+// ---------- tax and data protection: gaps from the literature ----------
+{
+  const r8 = open(':memory:');
+  const t8 = api(r8);
+  t8.setzeEinstellungen({ bundesland: 'BE' });
+  // Declining balance 5 %: 400,000 € building bought in July 2024 → 2024: 6/12 × 20,000 = 10,000; 2025: 5 % of 390,000 = 19,500.
+  const ob = t8.neuesObjekt({ bezeichnung: 'Neubau', art: 'miete', strasse: 'Neuweg 1', plz: '10115', ort: 'Berlin', kaufpreis_ct: 40000000, kaufdatum: '2024-07-01', gebaeudeanteil: 100, afa_satz: 5 });
+  const afaZeile = (j) => t8.anlageV(ob, j).werbungskosten.find(([l]) => /AfA\) Gebäude/.test(l))?.[1];
+  gleich('Degressive AfA 5 % vom Restwert', [afaZeile(2024), afaZeile(2025)], [1000000, 1950000]);
+  // 15 % rule: 70,000 € repairs in the first three years exceed 60,000 € – moved to the building's depreciation.
+  const kt8 = Object.fromEntries(t8.konten(ob).map((k) => [k.kategorie + ':' + k.klasse, k.id]));
+  const bank8 = t8.konten(ob).find((k) => k.klasse === 'geld').id;
+  t8.buchen({ objekt_id: ob, datum: '2025-03-01', text: 'Bad', positionen: [{ soll_id: kt8['instandhaltung:kosten'], haben_id: bank8, betrag_ct: 8330000 }] });
+  const av = t8.anlageV(ob, 2025);
+  gleich('15-%-Grenze: Instandhaltung wandert in die AfA', [av.anschaffungsnah_ct, av.werbungskosten.some(([l]) => /Erhaltung/.test(l))], [8330000, false]);
+  // 10-day rule: January rent paid on 28 December belongs to the new year.
+  const e8 = t8.save('einheiten', { objekt_id: ob, nr: 1, bezeichnung: 'W1', art: 'Wohnung', wohnflaeche: 80 });
+  const p8 = t8.save('personen', { anrede: 'Frau', vorname: 'E', nachname: 'Zehn' });
+  const v8 = t8.save('mietverhaeltnisse', { einheit_id: e8, person_id: p8, beginn: '2025-12-01', kaltmiete_ct: 100000 });
+  t8.sollstellung(ob, '2025-12', '2026-01');
+  const k8 = t8.kontoVon('miete', v8).id;
+  t8.buchen({ objekt_id: ob, datum: '2025-12-03', text: 'Miete 12', art: 'bank', positionen: [{ soll_id: bank8, haben_id: k8, betrag_ct: 100000 }] });
+  t8.buchen({ objekt_id: ob, datum: '2025-12-28', text: 'Miete 01', art: 'bank', positionen: [{ soll_id: bank8, haben_id: k8, betrag_ct: 100000 }] });
+  const miete = (j) => t8.anlageV(ob, j).einnahmen.find(([l]) => /^Mieteinnahmen/.test(l))?.[1];
+  gleich('10-Tage-Regel: Januarmiete vom 28.12. zählt im neuen Jahr', [miete(2025), miete(2026)], [100000, 100000]);
+  // GDPR: anonymise a person whose tenancy ended more than ten years ago.
+  const alt = t8.save('personen', { anrede: 'Herr', vorname: 'Otto', nachname: 'Alt', email: 'otto@example.de' });
+  t8.save('mietverhaeltnisse', { einheit_id: e8, person_id: alt, beginn: '2005-01-01', ende: '2012-12-31', kaltmiete_ct: 50000 });
+  t8.personAnonymisieren(alt);
+  gleich('Alte Person anonymisiert, Auskunft liefert Verträge', [t8.get('personen', alt).nachname, t8.get('personen', alt).email, t8.personDatenauskunft(alt).vertraege.length], [`Ehemalige Person Nr. ${alt}`, null, 1]);
+  gleich('Aktuelle Mieterin lässt sich nicht anonymisieren', /zehn Jahren/.test(fehlerVon(() => t8.personAnonymisieren(p8))), true);
+}
+
+// ---------- key figures and risk: early warnings (f33) ----------
+{
+  const t9 = api(open(':memory:'));
+  t9.setzeEinstellungen({ bundesland: 'BE' });
+  const ob = t9.neuesObjekt({ bezeichnung: 'Risikohaus', art: 'miete', strasse: 'Risikoweg 1', plz: '10115', ort: 'Berlin', kaufdatum: '2023-01-01', kaufpreis_ct: 40000000 });
+  const e1 = t9.save('einheiten', { objekt_id: ob, nr: 1, bezeichnung: 'W1', art: 'Wohnung', wohnflaeche: 100 });
+  const e2 = t9.save('einheiten', { objekt_id: ob, nr: 2, bezeichnung: 'W2', art: 'Wohnung', wohnflaeche: 50 });
+  const p1 = t9.save('personen', { anrede: 'Frau', vorname: 'R', nachname: 'Eins' });
+  const p2 = t9.save('personen', { anrede: 'Herr', vorname: 'R', nachname: 'Zwei' });
+  const v1 = t9.save('mietverhaeltnisse', { einheit_id: e1, person_id: p1, beginn: '2023-01-01', kaltmiete_ct: 100000 });
+  const v2 = t9.save('mietverhaeltnisse', { einheit_id: e2, person_id: p2, beginn: '2023-01-01', ende: '2025-12-31', kaltmiete_ct: 50000 });
+  t9.sollstellung(ob, '2025-12', '2026-11');
+  const bank9 = t9.konten(ob).find((k) => k.klasse === 'geld').id;
+  const k1 = t9.kontoVon('miete', v1).id, k2 = t9.kontoVon('miete', v2).id;
+  // Eleven rents paid, November 2026 is overdue; W2 paid December and is empty since 1 January.
+  for (let m = 0; m < 11; m++) {
+    const monat = new Date(Date.UTC(2025, 11 + m, 3)).toISOString().slice(0, 10);
+    t9.buchen({ objekt_id: ob, datum: monat, text: 'Miete', art: 'bank', positionen: [{ soll_id: bank9, haben_id: k1, betrag_ct: 100000 }] });
+  }
+  t9.buchen({ objekt_id: ob, datum: '2025-12-03', text: 'Miete', art: 'bank', positionen: [{ soll_id: bank9, haben_id: k2, betrag_ct: 50000 }] });
+  // 200,000 € at 3 % + 2 % repayment: 833.33 € a month; fixed interest ends in seven months.
+  const d9 = t9.darlehenSpeichern({ objekt_id: ob, bank: 'Risikobank', betrag_ct: 20000000, auszahlung: '2023-01-15', zinssatz: 3, tilgung_satz: 2, erste_rate: '2023-02-28', zinsbindung_bis: '2027-06-30' });
+  const f = t9.fruehwarnung({}, '2026-11-27');
+  const p = (art) => f.punkte.find((x) => x.art === art);
+  // 11,500 € received, no costs, 12 × 833.33 € debt service → 1.15: below the 1.2 banks expect.
+  gleich('DSCR = Überschuss / Kapitaldienst, gelb unter 1,2', [Math.round(p('dscr').wert * 100) / 100, p('dscr').ampel], [1.15, 'gelb']);
+  const tp = t9.tilgungsplan(d9);
+  gleich('Zinsbindung: Mehrkosten 2 Pkt. auf die Restschuld', [p('zinsbindung').ampel, p('zinsbindung').mehrkosten_ct], ['gelb', Math.round(tp.rest_zinsbindung_ct * 0.02)]);
+  gleich('Rückstandsquote über 3 % ist rot', [p('rueckstand').ampel, Math.round(p('rueckstand').wert * 1000)], ['rot', Math.round(100000 / 1250000 * 1000)]);
+  gleich('Leerstand über 6 Monate ist rot', [p('leerstand').titel, p('leerstand').ampel], ['Leerstand W2', 'rot']);
+  gleich('Instandhaltung unter Richtwert', p('instandhaltung').ampel, 'gelb');
+  gleich('Liquiditätsreserve wird bewertet', typeof p('liquiditaet').wert, 'number');
+  // Stress: + 2 points on today's balance, the dearest unit (W1, 1,000 €) empty three months.
+  const rest = tp.zeilen.filter((z) => z.monat <= '2026-10').at(-1).rest_ct; // the November rate falls due on the 28th
+  gleich('Stresstest: Mehrzins und Mietausfall', [f.stresstest.zins_mehr_ct, f.stresstest.ausfall_ct, f.stresstest.einheit], [Math.round(rest * 0.02), 300000, 'W1']);
+  const f2 = t9.fruehwarnung({ zins_pp: 4, leer_monate: 6 }, '2026-11-27');
+  gleich('Eigene Stresswerte', [f2.stresstest.zins_mehr_ct, f2.stresstest.ausfall_ct], [Math.round(rest * 0.04), 600000]);
+  gleich('Frühwarnung im Cockpit (rot zuerst)', t9.cockpitKennzahlen('miete', '2026-11-27').fruehwarnung.punkte[0].ampel, 'rot');
+  // Loans: first instalment in the future → nothing repaid yet; an instalment below the interest is flagged.
+  t9.darlehenSpeichern({ objekt_id: ob, bank: 'Zukunft', betrag_ct: 10000000, auszahlung: '2099-01-01', zinssatz: 3, tilgung_satz: 2, erste_rate: '2099-01-31' });
+  t9.darlehenSpeichern({ objekt_id: ob, bank: 'Zuwenig', betrag_ct: 10000000, auszahlung: '2024-01-01', zinssatz: 6, rate_ct: 40000, erste_rate: '2024-01-31' });
+  const liste = Object.fromEntries(t9.darlehenListe(ob).map((d) => [d.bank, d]));
+  gleich('Erste Rate in der Zukunft: Restschuld = Betrag', liste.Zukunft.rest_plan_ct, 10000000);
+  gleich('Rate unter dem Zins wird gemeldet', [!!liste.Zuwenig.warnung, liste.Risikobank.warnung], [true, null]);
+}
+
+// ---------- professional workflows: dunning list, bank ampel, trial run, invoice duplicates (p01–p09) ----------
+{
+  const r10 = open(':memory:');
+  const t10 = api(r10);
+  t10.setzeEinstellungen({ bundesland: 'BE' });
+  const ob = t10.neuesObjekt({ bezeichnung: 'Ablaufhaus', art: 'miete', strasse: 'Ablaufweg 1', plz: '10115', ort: 'Berlin' });
+  const einheit = (nr) => t10.save('einheiten', { objekt_id: ob, nr, bezeichnung: `W${nr}`, art: 'Wohnung', wohnflaeche: 50 });
+  const mieter = (name, iban) => t10.save('personen', { anrede: 'Frau', vorname: 'A', nachname: name, iban });
+  const vA = t10.save('mietverhaeltnisse', { einheit_id: einheit(1), person_id: mieter('Anwalt', 'DE02120300000000202051'), beginn: '2026-01-01', kaltmiete_ct: 50000 });
+  const vB = t10.save('mietverhaeltnisse', { einheit_id: einheit(2), person_id: mieter('Bitte', 'DE02100100100006820101'), beginn: '2026-01-01', kaltmiete_ct: 60000 });
+  t10.sollstellung(ob, '2026-09', '2026-11');
+  const kA = t10.kontoVon('miete', vA), kB = t10.kontoVon('miete', vB);
+  const gruppe = (k) => t10.offenePosten(ob, '2026-11-27', 'miete').find((r) => r.konto.id === k.id)?.vorrat.gruppe;
+  gleich('Arbeitsvorrat: Rückstand ohne Mahnung = jetzt mahnen', gruppe(kA), 'mahnen');
+  t10.mahnStatusSetzen(kA.id, { status: 'anwalt', notiz: 'Kanzlei X' });
+  t10.mahnStatusSetzen(kB.id, { status: 'zahlungsziel', bis: '2026-12-15' });
+  gleich('Beim Anwalt / Zahlungsziel verschoben', [gruppe(kA), gruppe(kB)], ['anwalt', 'zahlungsziel']);
+  gleich('Zurückstellen ohne Datum geht nicht', /Datum/.test(fehlerVon(() => t10.mahnStatusSetzen(kB.id, { status: 'zurueckgestellt' }))), true);
+  gleich('Nach dem Zahlungsziel wieder mahnen', t10.offenePosten(ob, '2026-12-20', 'miete').find((r) => r.konto.id === kB.id).vorrat.gruppe, 'mahnen');
+  t10.mahnStatusSetzen(kA.id, {});
+  t10.mahnen({ konto_id: kA.id, stufe: 0, frist: '2026-12-05', datum: '2026-11-25', offen_ct: 150000 });
+  gleich('Frist der letzten Mahnung läuft', gruppe(kA), 'frist');
+
+  // Bank: IBAN and amount fit = green; name only = yellow; nothing = red; the same reference again = already booked.
+  const vs = t10.bankVorschlaege(ob, [
+    { ref: 'x:1', datum: '2026-11-03', betrag_ct: 50000, name: 'A Anwalt', iban: 'DE02120300000000202051', zweck: 'Miete' },
+    { ref: 'x:2', datum: '2026-11-03', betrag_ct: 45000, name: 'A Anwalt', iban: 'DE02120300000000202051', zweck: 'Miete' },
+    { ref: 'x:3', datum: '2026-11-04', betrag_ct: 60000, name: 'Bitte', iban: '', zweck: 'Miete November' },
+    { ref: 'x:4', datum: '2026-11-05', betrag_ct: -9900, name: 'Unbekannt GmbH', iban: '', zweck: 'Rechnung 77' },
+  ]);
+  gleich('Bank-Ampel: grün, gelb (Betrag), gelb (Name), rot', vs.map((v) => v.ampel), ['gruen', 'gelb', 'gelb', 'rot']);
+  const bank10 = t10.konten(ob).find((k) => k.klasse === 'geld').id;
+  t10.bankBuchen(ob, bank10, vs.filter((v) => v.ampel === 'gruen'), false);
+  gleich('Schon gebucht wird grau', t10.bankVorschlaege(ob, [vs[0]])[0].ampel, 'grau');
+
+  // Trial run: what would be booked, the month before, and what looks odd (a raise, a contract without amounts).
+  t10.save('anpassungen', { vertrag_typ: 'miete', vertrag_id: vB, gueltig_ab: '2026-12-01', grund: 'manuell', kaltmiete_ct: 65000 });
+  const vC = t10.save('mietverhaeltnisse', { einheit_id: einheit(3), person_id: mieter('Leer'), beginn: '2026-10-01' });
+  const pr = t10.sollProbelauf(ob, '2026-12', '2026-12', ['miete']);
+  gleich('Probelauf: zwei Forderungen, nichts gebucht', [pr.anzahl, pr.summe_ct, t10.sollstellung(ob, '2026-12', '2026-12', true, ['miete']).filter((z) => !z.vorhanden).length], [2, 115000, 2]);
+  gleich('Probelauf: Erhöhung gelb, Vertrag ohne Beträge rot', [pr.auffaellig.some((a) => a.stufe === 'gelb' && a.vertrag_id === vB), pr.auffaellig.some((a) => a.stufe === 'rot' && a.vertrag_id === vC)], [true, true]);
+
+  // Invoice duplicates: same sender and amount within a week, no invoice number → asks before booking.
+  const kosten = t10.konten(ob).find((k) => k.kategorie === 'instandhaltung').id;
+  const re = (datum, nr) => t10.save('dokumente', { objekt_id: ob, titel: 'Klempner', typ: 'Rechnung', datum, betrag_ct: 23800, absender: 'Klempner Kurz', rechnungsnr: nr, status: 'eingang', datei: `k${datum}.pdf`, name: 'k.pdf' });
+  const d1 = re('2026-11-10', null), d2 = re('2026-11-13', null), d3 = re('2026-11-14', 'R-2');
+  t10.belegBuchen(d1, { kosten_konto_id: kosten, geld_konto_id: bank10, vorsteuer: false });
+  kontextSetzen(r10, { rueckfrage: '1' });
+  gleich('Vermutlich doppelte Rechnung fragt nach', /Vermutlich doppelt/.test(fehlerVon(() => t10.belegBuchen(d2, { kosten_konto_id: kosten, geld_konto_id: bank10, vorsteuer: false }))), true);
+  kontextSetzen(r10, { rueckfrage: '0' });
+  gleich('In der Rechnungsliste markiert', !!t10.rechnungen({ objekt_id: ob }).find((r) => r.id === d2).aehnlich_wie, true);
+  t10.save('dokumente', { id: d1, rechnungsnr: 'R-1' });
+  // R-2 still resembles d2 (no number), but not R-1: two different numbers are two invoices.
+  // Damage case (f26): seven steps with hints, the hints become the descriptions of the sub-cases.
+  const sch = t10.ablaeufe().find((a) => a.art === 'schaden');
+  gleich('Schadensfall: sieben Schritte, Abschlag nach 30 Tagen', [sch.schritte.length, sch.schritte.find((x) => /Abschlag/.test(x.titel)).tage, sch.schritte.every((x) => x.hinweis)], [7, 30, true]);
+  const fall = t10.ablaufStarten(sch.id, { objekt_id: ob, stichtag: '2026-11-27' });
+  gleich('Schritt trägt den Hinweis (§ 82 VVG)', /§ 82 VVG/.test(r10.prepare('SELECT beschreibung FROM vorgaenge WHERE eltern_id = ? ORDER BY id LIMIT 1').get(fall).beschreibung), true);
+  gleich('Andere Rechnungsnummer = keine Dublette', [t10.rechnungen({ objekt_id: ob }).find((r) => r.id === d3).aehnlich_wie, t10.dokumentAehnlich(d3)], [d2, null]);
 }
 
 console.log(`\nRechentest: ${ok} Prüfungen richtig, ${falsch} falsch.`);

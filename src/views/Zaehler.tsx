@@ -29,6 +29,7 @@ export function Zaehler(props: { objekt: Row }) {
     { key: 'faktor', label: 'Umrechnungsfaktor', type: 'number' },
     { key: 'einbau', label: 'Eingebaut am', type: 'date', section: 'Daten' },
     { key: 'eichung_bis', label: 'Eichung gültig bis', type: 'date' },
+    { key: 'fernablesbar', label: 'Fernablesbar (Funk)', type: 'check' },
     { key: 'ausbau', label: 'Ausgebaut am', type: 'date' },
     { key: 'notiz', label: 'Notiz', type: 'textarea' },
   ];

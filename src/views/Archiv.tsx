@@ -612,7 +612,8 @@ export function Rechnungen(props: { objekte: Row[] }) {
               <tr key={r.id} onDoubleClick={() => setOffen(r)}>
                 <td>{!r.buchung_id && <input type="checkbox" checked={!!auswahl[r.id]} onChange={(e) => setAuswahl({ ...auswahl, [r.id]: e.target.checked })} />}</td>
                 <td>{datum(r.datum)}</td><td>{r.absender}</td>
-                <td>{r.titel}{r.duplikat_von && <span className="tag fehlertext" title="Gleiche Rechnungsnummer, gleicher Betrag und Absender wie ein anderes Dokument">Duplikat?</span>}<div className="klein">{r.rechnungsnr}</div></td><td>{r.objekt_id ? <L zu={{ objekt: r.objekt_id }}>{r.objekt}</L> : ''}</td>
+                <td>{r.titel}{r.duplikat_von && <span className="tag fehlertext" title="Gleiche Rechnungsnummer, gleicher Betrag und Absender wie ein anderes Dokument">Duplikat?</span>}
+                  {!r.duplikat_von && r.aehnlich_wie && <span className="tag" title="Gleicher Absender und Betrag innerhalb einer Woche – ohne oder mit abweichend gelesener Rechnungsnummer">vermutlich doppelt</span>}<div className="klein">{r.rechnungsnr}</div></td><td>{r.objekt_id ? <L zu={{ objekt: r.objekt_id }}>{r.objekt}</L> : ''}</td>
                 <td className={s === 'überfällig' ? 'fehlertext' : ''}>{datum(r.faellig)}</td>
                 <td className="num">{betrag(r.betrag_ct)}</td>
                 <td><span className={`tag ${s === 'überfällig' ? 'fehlertext' : s === 'offen' ? '' : 'art-weg'}`}>{s}</span>{r.konto && <div className="klein"><L zu={{ konto: r.konto_id }}>{r.konto}</L></div>}</td>

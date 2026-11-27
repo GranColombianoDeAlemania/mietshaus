@@ -1,4 +1,4 @@
-// Key figure tiles: cockpit (K1–K9), tenant profile (M1–M7), unit (E1–E4, M5), self-use (N1, N4) and the house view (E5).
+// Key figure tiles: cockpit (K1–K10), tenant profile (M1–M7), unit (E1–E4, M5), self-use (N1, N4) and the house view (E5).
 import { useState, type ReactNode } from 'react';
 import * as I from 'lucide-react';
 import { call, datum, euro, heute, zahl, type Modus, type Row } from '../api';
@@ -133,6 +133,52 @@ export function CockpitRadar(props: { c: Row; children?: ReactNode }) {
         {k.summe_ct > 0 && <div className="kz-text">Umlagefähig {prozent((k.umlagefaehig_anteil ?? 0) * 100)}{k.nicht_umlagefaehig_qm_ct != null ? ` · nicht umlagefähig ${qm(k.nicht_umlagefaehig_qm_ct)} bisher` : ''}</div>}
       </Kennzahl>
       {r && props.children}
+    </div>
+  );
+}
+
+// K10: early warnings and a simple "what if" (interest + x points, dearest unit empty for y months).
+const AMPEL_TEXT: Record<string, string> = { rot: 'handeln', gelb: 'beobachten', gruen: 'in Ordnung' };
+const faktor = (x: number | null | undefined) => (x == null ? '–' : `${x.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}×`);
+export function CockpitFruehwarnung(props: { c: Row }) {
+  const [zins, setZins] = useState('2');
+  const [leer, setLeer] = useState('3');
+  const [eigen, setEigen] = useState<Row | null>(null);
+  const f: Row | null = eigen ?? props.c.fruehwarnung;
+  if (!f) return null;
+  const s = f.stresstest;
+  const rechnen = async () => setEigen(await call('fruehwarnung', { zins_pp: Number(zins.replace(',', '.')) || 0, leer_monate: Number(leer.replace(',', '.')) || 0 }));
+  const auffaellig = f.punkte.filter((p: Row) => p.ampel !== 'gruen');
+  return (
+    <div className="kz-raster">
+      <Kennzahl symbol="darlehen" titel="Frühwarnung" breite={7}>
+        <div className="kz-zeile"><span className="kz-wert">{auffaellig.length}<small>{auffaellig.length === 1 ? 'Punkt auffällig' : 'Punkte auffällig'} von {f.punkte.length}</small></span></div>
+        {f.punkte.length === 0 ? <p className="kz-text">Noch keine Zahlen: Mieten, Darlehen und Buchungen der letzten 12 Monate fehlen.</p> : (
+          <ul className="kz-liste">{f.punkte.map((p: Row, i: number) => (
+            <li key={p.art + i}>
+              <span><span className={`chip ${p.ampel}`} title={AMPEL_TEXT[p.ampel]}>{AMPEL_TEXT[p.ampel]}</span> <L zu={p.ziel}>{p.titel}</L>{p.objekt ? ` (${p.objekt})` : ''}: {p.text}</span>
+            </li>
+          ))}</ul>
+        )}
+        <div className="kz-text">Letzte 12 Monate bis {datum(f.stichtag)}; Instandhaltung im Mittel der letzten drei Jahre.</div>
+      </Kennzahl>
+      <Kennzahl symbol="rendite" titel="Was wäre wenn?" breite={5}>
+        {s && <div className="kz-zeile stress-eingabe">
+          <label>Zins + <input inputMode="decimal" value={zins} onChange={(e) => setZins(e.target.value)} aria-label="Zinsanstieg in Prozentpunkten" style={{ width: 52 }} /> Pkt.</label>
+          <label>Leerstand <input inputMode="numeric" value={leer} onChange={(e) => setLeer(e.target.value)} aria-label="Leerstand in Monaten" style={{ width: 44 }} /> Mon.</label>
+          <button className="klein" onClick={rechnen}>Rechnen</button>
+        </div>}
+        {!s ? <p className="kz-text">Noch keine Mieteingänge in den letzten 12 Monaten gebucht – ohne sie lässt sich nichts durchrechnen.</p> : <>
+        <KzListe zeilen={[
+          ['Überschuss 12 Monate', euro0(s.ueberschuss_ct)],
+          [`Mietausfall${s.einheit ? ` ${s.einheit}` : ''}, ${zahl(s.leer_monate)} Mon.`, s.ausfall_ct ? `− ${euro0(s.ausfall_ct)}` : '–'],
+          ['Kapitaldienst', `− ${euro0(s.kapitaldienst_ct)}`],
+          [`Mehrzins ${zahl(s.zins_pp)} Pkt. auf ${euro0(f.restschuld_ct)}`, s.zins_mehr_ct ? `− ${euro0(s.zins_mehr_ct)}` : '–'],
+          ['Danach übrig', <span className={s.danach_stress_ct < 0 ? 'minus' : 'plus'}>{euro0(s.danach_stress_ct)}</span>, 'summe'],
+        ]} />
+        <div className="kz-text"><span className={`chip ${s.ampel}`}>{AMPEL_TEXT[s.ampel]}</span> DSCR heute {faktor(s.dscr)}, im Stress {faktor(s.dscr_stress)}
+          {s.danach_stress_ct < 0 ? ' – Zins und Tilgung wären nicht mehr aus den Mieten gedeckt.' : ''}</div></>}
+      </Kennzahl>
     </div>
   );
 }

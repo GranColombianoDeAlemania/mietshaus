@@ -24,6 +24,14 @@ export function NkAbrechnung(props: { objekt: Row }) {
   const [co2Eur, setCo2Eur] = useState('');
   const leerPersonen = 1; // a vacant flat counts as one person: the landlord bears its share
   const [grund, setGrund] = useState('');
+  // Guided steps like the professional programs: period and kind → hot water → fuel and CO2 → calculate.
+  const [schritt, setSchritt] = useState<'zeitraum' | 'warmwasser' | 'co2' | 'berechnen'>('zeitraum');
+  const [ww, setWw] = useState({ art: 'konto', energie: '', wwKwh: '', tw: '60' });
+  const [brennstoff, setBrennstoff] = useState('');
+  const [abgaben, setAbgaben] = useState('');
+  const [co2Menge, setCo2Menge] = useState('');
+  const [co2Faktor, setCo2Faktor] = useState('');
+  const [halbieren, setHalbieren] = useState(false);
   const [extern, setExtern] = useState<Record<number, string>>({});
   const [a, setA] = useState<Row | null>(null);
   const [pruefung, setPruefung] = useState<Row | null>(null);
@@ -39,6 +47,8 @@ export function NkAbrechnung(props: { objekt: Row }) {
     try {
       const opt = {
         heizung, verbrauchsanteil: anteil, co2_kg: parseZahl(co2Kg) ?? 0, co2_kosten_ct: parseCent(co2Eur), leerstand_personen: leerPersonen, verspaetung_grund: grund,
+        ww: { art: ww.art, energie_kwh: parseZahl(ww.energie) ?? 0, ww_kwh: parseZahl(ww.wwKwh) ?? 0, tw: parseZahl(ww.tw) ?? 60 },
+        brennstoff: brennstoff.trim(), abgaben_ct: parseCent(abgaben), brennstoff_menge: co2Menge.trim(), emissionsfaktor: co2Faktor.trim(), co2_halbieren: halbieren,
         extern: Object.fromEntries(Object.entries(extern).map(([k, v]) => [k, parseCent(v)])),
       };
       const r = await call('nkAbrechnung', props.objekt.id, von, bis, opt);
@@ -91,28 +101,30 @@ export function NkAbrechnung(props: { objekt: Row }) {
     setMeldung(`Neue Vorauszahlungen für ${n} Mietverhältnisse ab ${datum(neuAb)} hinterlegt.`);
   }
 
+  type Schritt = 'zeitraum' | 'warmwasser' | 'co2' | 'berechnen';
+  const schritte: [Schritt, string][] = [['zeitraum', '1 Zeitraum & Art'], ...(heizung === 'intern' ? [['warmwasser', '2 Warmwasser'] as [Schritt, string]] : []),
+    ['co2', `${heizung === 'intern' ? 3 : 2} Brennstoff & CO₂`], ['berechnen', `${heizung === 'intern' ? 4 : 3} Berechnen`]];
+  const schrittNr = Math.max(0, schritte.findIndex(([k]) => k === schritt));
+
   return (
     <section>
       <div className="toolbar"><h1>Betriebskostenabrechnung</h1></div>
       <div className="panel">
-        <div className="maske">
-          <label>Abrechnungszeitraum von<input type="date" value={von} onChange={(e) => setVon(e.target.value)} /></label>
-          <label>bis<input type="date" value={bis} onChange={(e) => setBis(e.target.value)} /></label>
-          <label className="breit">Heizkosten
-            <Tabs tabs={[['intern', 'selbst abrechnen (HeizkostenV)'], ['extern', 'Messdienst (z. B. ista, Techem)'], ['ohne', 'wie Betriebskosten']]} value={heizung} onChange={setHeizung} />
-          </label>
-          {heizung === 'intern' && (
-            <label>Verbrauchsanteil %<input className="num" type="number" min={50} max={70} value={anteil} onChange={(e) => setAnteil(Number(e.target.value))} /></label>
-          )}
-          <label>CO₂-Ausstoß gesamt (kg)<input className="num" value={co2Kg} onChange={(e) => setCo2Kg(e.target.value)} placeholder="lt. Brennstoffrechnung" /></label>
-          <label>CO₂-Kosten gesamt (€)<input className="num" value={co2Eur} onChange={(e) => setCo2Eur(e.target.value)} /></label>
-          {a?.frist?.abgelaufen && (
-            <label className="breit">Verspätung begründen (nur wenn du sie nicht zu vertreten hast)
-              <input value={grund} onChange={(e) => setGrund(e.target.value)} placeholder="z. B. Grundsteuerbescheid ging erst am 12.01. ein" />
+        <Tabs tabs={schritte} value={schritt} onChange={setSchritt} />
+        {schritt === 'zeitraum' && (
+          <div className="maske" style={{ marginTop: 12 }}>
+            <label>Abrechnungszeitraum von<input type="date" value={von} onChange={(e) => setVon(e.target.value)} /></label>
+            <label>bis<input type="date" value={bis} onChange={(e) => setBis(e.target.value)} /></label>
+            <label className="breit">Heizkosten
+              <Tabs tabs={[['intern', 'selbst abrechnen (HeizkostenV)'], ['extern', 'Messdienst (z. B. ista, Techem)'], ['ohne', 'wie Betriebskosten']]} value={heizung} onChange={setHeizung} />
             </label>
-          )}
-        </div>
-        {heizung === 'extern' && (
+            {heizung === 'intern' && (
+              <label>Verbrauchsanteil %<input className="num" type="number" min={50} max={70} value={anteil} onChange={(e) => setAnteil(Number(e.target.value))} /></label>
+            )}
+            {heizung === 'ohne' && <p className="hinweis klein breit">Nur zulässig, wenn die HeizkostenV nicht gilt (z. B. Zweifamilienhaus, in dem du selbst wohnst) – sonst dürfen die Mieter 15 % kürzen.</p>}
+          </div>
+        )}
+        {schritt === 'zeitraum' && heizung === 'extern' && (
           <div className="block">
             <h3>Heizkosten je Mieter lt. Abrechnung des Messdienstes</h3>
             <div className="maske">
@@ -122,14 +134,63 @@ export function NkAbrechnung(props: { objekt: Row }) {
             </div>
           </div>
         )}
-        <p className="hinweis klein">
-          Berücksichtigt werden alle Kostenkonten mit „umlagefähig“ und Buchungsdatum im Zeitraum (Abflussprinzip). Kosten werden nach
-          dem Schlüssel des Kontos auf die Einheiten verteilt; ein Mieter zählt für die Mietmonate, für die er Miete zahlt (Einzug am 15. mit vollem Monat: ab dem 1.),
-          oder – im Vertrag einstellbar – nach Wohntagen. Leerstand trägt der Vermieter, ebenso die Betriebskosten bei Pauschale oder Inklusivmiete.
-          Eine selbst genutzte Wohnung nimmt an allen Schlüsseln teil (nach Personen mit deiner Haushaltsgröße); ihren Eigenanteil trägst du.
-          {heizung === 'intern' && ' Heizkosten: Grundkosten nach Wohnfläche, Verbrauchskosten nach Wärme- bzw. Warmwasserzählern (Schlüssel vom Typ „Zähler“).'}
-        </p>
-        <div className="buttons"><span className="spacer" /><button className="primary" onClick={berechnen}>Berechnen</button></div>
+        {schritt === 'warmwasser' && (
+          <>
+            <div className="maske" style={{ marginTop: 12 }}>
+              <label className="breit">Warmwasser
+                <select value={ww.art} onChange={(e) => setWw({ ...ww, art: e.target.value })}>
+                  <option value="konto">eigenes Konto „Warmwasserkosten“ (getrennte Anlage oder schon aufgeteilt)</option>
+                  <option value="gemessen">aus der Heizanlage – Wärme für Warmwasser gemessen (Wärmezähler)</option>
+                  <option value="formel">aus der Heizanlage – nach Formel aus den Warmwasserzählern</option>
+                </select>
+              </label>
+              {ww.art !== 'konto' && <label>Energie gesamt (kWh) lt. Brennstoffrechnung<input className="num" value={ww.energie} onChange={(e) => setWw({ ...ww, energie: e.target.value })} /></label>}
+              {ww.art === 'gemessen' && <label>davon Warmwasser (kWh)<input className="num" value={ww.wwKwh} onChange={(e) => setWw({ ...ww, wwKwh: e.target.value })} /></label>}
+              {ww.art === 'formel' && <label>Warmwassertemperatur (°C)<input className="num" value={ww.tw} onChange={(e) => setWw({ ...ww, tw: e.target.value })} /></label>}
+            </div>
+            <p className="hinweis klein">§ 9 HeizkostenV: Erzeugt die Heizung auch das Warmwasser, werden die Brennstoffkosten aufgeteilt – nach der gemessenen Wärmemenge oder,
+              wo sie nicht messbar ist, nach der Formel 2,5 × Warmwasser in m³ × (Temperatur − 10). Der Warmwasseranteil wird dann wie Warmwasserkosten verteilt.</p>
+          </>
+        )}
+        {schritt === 'co2' && (
+          <>
+            <div className="maske" style={{ marginTop: 12 }}>
+              <label>Energieträger<input value={brennstoff} onChange={(e) => setBrennstoff(e.target.value)} placeholder="z. B. Erdgas, Fernwärme" /></label>
+              <label>Steuern und Abgaben (€, optional)<input className="num" value={abgaben} onChange={(e) => setAbgaben(e.target.value)} /></label>
+              <label>CO₂-Ausstoß gesamt (kg)<input className="num" value={co2Kg} onChange={(e) => setCo2Kg(e.target.value)} placeholder="lt. Brennstoffrechnung" /></label>
+              <label>CO₂-Kosten gesamt (€)<input className="num" value={co2Eur} onChange={(e) => setCo2Eur(e.target.value)} /></label>
+              <label>Brennstoffmenge (optional)<input value={co2Menge} onChange={(e) => setCo2Menge(e.target.value)} placeholder="z. B. 48.000 kWh" /></label>
+              <label>Emissionsfaktor (optional)<input value={co2Faktor} onChange={(e) => setCo2Faktor(e.target.value)} placeholder="z. B. 0,201 kg CO₂/kWh" /></label>
+              <label className="check breit"><input type="checkbox" checked={halbieren} onChange={(e) => setHalbieren(e.target.checked)} /> Vermieteranteil halbieren – Denkmalschutz, Erhaltungssatzung o. Ä. verhindern die Modernisierung (§ 9 CO2KostAufG)</label>
+            </div>
+            <p className="hinweis klein">Die Angaben stehen auf der Brennstoff- bzw. Fernwärmerechnung. Fehlt die CO₂-Aufteilung, dürfen die Mieter 3 % kürzen. Reine Gewerbehäuser teilen die CO₂-Kosten je zur Hälfte.</p>
+          </>
+        )}
+        {schritt === 'berechnen' && (
+          <>
+            {a?.frist?.abgelaufen && (
+              <div className="maske" style={{ marginTop: 12 }}>
+                <label className="breit">Verspätung begründen (nur wenn du sie nicht zu vertreten hast)
+                  <input value={grund} onChange={(e) => setGrund(e.target.value)} placeholder="z. B. Grundsteuerbescheid ging erst am 12.01. ein" />
+                </label>
+              </div>
+            )}
+            <p className="hinweis klein">
+              Berücksichtigt werden alle Kostenkonten mit „umlagefähig“ und Buchungsdatum im Zeitraum. Kosten werden nach
+              dem Schlüssel des Kontos auf die Einheiten verteilt; ein Mieter zählt für die Mietmonate, für die er Miete zahlt (Einzug am 15. mit vollem Monat: ab dem 1.),
+              oder – im Vertrag einstellbar – nach Wohntagen. Leerstand trägt der Vermieter, ebenso die Betriebskosten bei Pauschale oder Inklusivmiete.
+              Eine selbst genutzte Wohnung nimmt an allen Schlüsseln teil (nach Personen mit deiner Haushaltsgröße); ihren Eigenanteil trägst du.
+              {heizung === 'intern' && ' Heizkosten: Grundkosten nach Wohnfläche, Verbrauchskosten nach Wärme- bzw. Warmwasserzählern (Schlüssel vom Typ „Zähler“).'}
+            </p>
+          </>
+        )}
+        <div className="buttons">
+          {schrittNr > 0 && <button onClick={() => setSchritt(schritte[schrittNr - 1][0])}>Zurück</button>}
+          <span className="spacer" />
+          {schrittNr < schritte.length - 1
+            ? <button className="primary" onClick={() => setSchritt(schritte[schrittNr + 1][0])}>Weiter</button>
+            : <button className="primary" onClick={berechnen}>Berechnen</button>}
+        </div>
       </div>
 
       {a && (

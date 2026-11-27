@@ -185,11 +185,14 @@ app.whenReady().then(async () => {
   }
   // Service-charge statement 2025, owners' statement, budget plan.
   await zu({ seite: 'nk', modus: 'miete', objektId: o });
+  // Guided steps: fuel and CO2 is the third step (after period and hot water), then on to „Berechnen“.
+  await klick('3 Brennstoff & CO₂'); await wait(300);
   const nkFelder = await js(`[...document.querySelectorAll('main .maske label')].map((l) => l.textContent)`);
   for (const [label, wert] of [['CO₂-Ausstoß', '18000'], ['CO₂-Kosten', '990,00']]) {
     const i = nkFelder?.findIndex((x) => x.startsWith(label));
     if (i >= 0) await js(`(() => { const inp = document.querySelectorAll('main .maske label')[${i}].querySelector('input'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(inp, ${JSON.stringify(wert)}); inp.dispatchEvent(new Event('input', { bubbles: true })); })()`);
   }
+  await klick('Weiter'); await wait(300);
   await klick('Berechnen'); await wait(800); await shot('nk-2025');
   await klick('Abrechnungen als PDF'); await wait(3500);
   await zu({ seite: 'wegabr', modus: 'weg', objektId: w });

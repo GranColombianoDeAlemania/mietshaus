@@ -3,7 +3,8 @@ import { useEffect, useState } from 'react';
 import { alleNamen, anrede, briefName, call, datum, euro, fehlerText, heute, parseCent, type Row } from '../api';
 import { useLoad } from '../useLoad';
 import { Chip, Dialog } from '../ui';
-import { absaetze, absenderAus, alsPdfAblegen, brief, esc, tabelle, empfaengerVon } from '../dokument';
+import { absaetze, absenderAus, alsPdfAblegen, brief, esc, tabelle, empfaengerVon, zahlungsAbsender } from '../dokument';
+import { girocode } from '../girocode';
 import { L } from '../navi';
 import { sollNachfrage } from './Sollstellung';
 import { bestaetigen } from '../frage';
@@ -65,6 +66,9 @@ export function Kuendigung(props: { vertrag: Row; einheit: Row; onClose: () => v
   }, [durch, art, zugang]);
 
   async function erfassen() {
+    // A landlord's notice on a flat without reasons is void (§ 573 Abs. 3 BGB): warn, but allow (e.g. reasons added by hand).
+    if (durch === 'vermieter' && art === 'ordentlich' && !nichtWohnraum && !gruende.trim()
+      && !await bestaetigen('Ohne Begründung ist die Kündigung einer Wohnung unwirksam (§ 573 Abs. 3 BGB). Im Schreiben steht dann ein Platzhalter. Trotzdem erstellen?', { ja: 'Trotzdem erstellen' })) return;
     setLaeuft(true);
     try {
       const a = durch === 'aufhebung' ? 'aufhebung' : art;
@@ -90,6 +94,7 @@ export function Kuendigung(props: { vertrag: Row; einheit: Row; onClose: () => v
             : 'Für die Vorbesichtigung und die Wohnungsübergabe melden wir uns mit Terminvorschlägen bei Ihnen.',
           'Bei der Übergabe lesen wir gemeinsam die Zählerstände ab und halten den Zustand der Wohnung in einem Übergabeprotokoll fest.',
           'Die Mietkaution rechnen wir ab, sobald alle Ansprüche aus dem Mietverhältnis feststehen. Für die noch ausstehende Betriebskostenabrechnung können wir einen angemessenen Teil vorerst einbehalten.',
+          `Einer stillschweigenden Fortsetzung des Mietverhältnisses über den ${datum(zum)} hinaus widersprechen wir (§ 545 BGB). Wird die ${nichtWohnraum ? 'Mietsache' : 'Wohnung'} nicht rechtzeitig zurückgegeben, schulden Sie für die Zeit danach eine Nutzungsentschädigung mindestens in Höhe der bisherigen Miete (§ 546a BGB).`,
           'Bitte teilen Sie uns rechtzeitig Ihre neue Anschrift und die Bankverbindung für die Rückzahlung der Kaution mit.',
         ].join('\n\n'));
       } else if (durch === 'aufhebung') {
@@ -204,6 +209,7 @@ export function Kuendigung(props: { vertrag: Row; einheit: Row; onClose: () => v
           {nichtWohnraum ? 'Das Gesetz schreibt hier keine Form vor (§ 568 gilt nur für Wohnraum); sieht der Vertrag Schriftform vor, eigenhändig unterschreiben.'
             : 'Eine Kündigung des Vermieters muss eigenhändig unterschrieben im Original zugehen (Schriftform, § 568 Abs. 1 BGB) – E-Mail oder Fax reichen nicht.'}{' '}
           Bei mehreren Mietern an alle richten. Den Zugang nachweisbar machen, etwa durch einen Boten mit Zeugen.
+          Unterschreibt eine Hausverwaltung oder ein Bevollmächtigter, die Vollmacht im Original beilegen – sonst kann der Mieter die Kündigung zurückweisen (§ 174 BGB).
         </p>
       )}
       <p className="klein hinweis">Beim Erfassen wird das Vertragsende eingetragen und ein Vorgang „Mieterwechsel“ mit den nächsten Schritten angelegt. Das Schreiben wird im Archiv bei {v.name} abgelegt.</p>
@@ -340,6 +346,7 @@ export async function dauerrechnung(v: Row, e: Row) {
       ${tab}${absaetze([`Leistungszeitraum: monatlich ab ${datum(ab)}, jeweils für den laufenden Kalendermonat. Fällig ${v.faelligkeitstag === 0 ? 'bis zum 3. Werktag' : `am ${v.faelligkeitstag}.`} eines jeden Monats.`,
         'Diese Rechnung gilt als Dauerrechnung bis zu einer Änderung der Beträge oder des Steuersatzes. Zusammen mit dem jeweiligen Zahlungsbeleg erfüllt sie die Anforderungen an eine Rechnung nach § 14 UStG. Die Vermietung erfolgt steuerpflichtig aufgrund der Option nach § 9 UStG.',
         objekt.iban ? `Bitte überweisen Sie auf IBAN ${objekt.iban}${objekt.bank ? ` (${objekt.bank})` : ''}.` : ''].filter(Boolean).join('\n\n'))}
+      ${objekt.iban ? girocode(zahlungsAbsender(einst, objekt), netto + ust, `Miete ${e.bezeichnung} Rechnung ${nr}`) : ''}
       <p class="unterschrift">Mit freundlichen Grüßen<br><br>${esc(absender.name)}</p>`,
   });
   const dok = await alsPdfAblegen([html], `Dauerrechnung ${nr} ${e.bezeichnung}`, { objekt_id: e.objekt_id, einheit_id: e.id, person_id: v.person_id, typ: 'Rechnung', titel: `Dauerrechnung ${nr} ${v.name}` });

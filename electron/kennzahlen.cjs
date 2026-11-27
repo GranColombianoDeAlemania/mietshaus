@@ -15,6 +15,12 @@ const plusJahre = (iso, n) => {
   const [y, m, d] = iso.slice(0, 10).split('-').map(Number);
   return `${y + n}-${pad(m)}-${pad(Math.min(d, new Date(Date.UTC(y + n, m, 0)).getUTCDate()))}`;
 };
+// Same day n months later; the 31st becomes the last day of a shorter month (§ 188 Abs. 2, 3 BGB).
+const plusMonateGenau = (iso, n) => {
+  const [y, m, d] = iso.slice(0, 10).split('-').map(Number);
+  const z = new Date(Date.UTC(y, m - 1 + n, 1));
+  return `${z.getUTCFullYear()}-${pad(z.getUTCMonth() + 1)}-${pad(Math.min(d, new Date(Date.UTC(z.getUTCFullYear(), z.getUTCMonth() + 1, 0)).getUTCDate()))}`;
+};
 const monatPlus = (monat, n) => new Date(Date.UTC(Number(monat.slice(0, 4)), Number(monat.slice(5, 7)) - 1 + n, 1)).toISOString().slice(0, 7);
 const monatsEnde = (monat) => `${monat}-${pad(tageImMonat(monat))}`;
 const maxD = (a, b) => (a > b ? a : b);
@@ -709,10 +715,11 @@ module.exports = function kennzahlen({ all, get, PERSON_NAME, bh, aw, ab, vw, dl
   }
 
   // K5: income, operating costs and surplus since 1 January against the same days of last year; after interest and repayment.
-  function jahresvergleich(objekte, typ, t) {
+  // Income received, operating costs, interest and repayment booked between two days.
+  function ergebnis(objekte, typ, von, bis) {
     const ids = idListe(objekte);
     const kat = typ === 'weg' ? ['hausgeld', 'ruecklage', 'sonderumlage', 'weg_ergebnis'] : ['miete', 'sonst', 'bk', 'bk_pauschale', 'hk', 'nk_ergebnis'];
-    const werte = (von, bis) => {
+    {
       let ein = 0;
       for (const k of all(`SELECT id FROM konten WHERE objekt_id IN (${ids}) AND klasse = 'person' AND vertrag_typ = ?`, typ)) {
         const z = aw.zufluss(k.id, von, bis);
@@ -724,8 +731,12 @@ module.exports = function kennzahlen({ all, get, PERSON_NAME, bh, aw, ab, vw, dl
         WHERE k.objekt_id IN (${ids}) AND k.klasse = 'kosten' AND k.kategorie = 'zinsen' AND b.datum BETWEEN ? AND ?`, von, bis).s;
       const tilgung = get(`SELECT coalesce(sum(b.betrag_ct), 0) AS s FROM buchungen b JOIN konten k ON k.id = b.soll_id JOIN konten g ON g.id = b.haben_id
         WHERE k.objekt_id IN (${ids}) AND k.klasse = 'darlehen' AND g.klasse = 'geld' AND b.datum BETWEEN ? AND ?`, von, bis).s;
-      return { ein, kosten, ueberschuss: ein - kosten, kapitaldienst: zins + tilgung, danach: ein - kosten - zins - tilgung };
-    };
+      return { ein, kosten, ueberschuss: ein - kosten, zins, tilgung, kapitaldienst: zins + tilgung, danach: ein - kosten - zins - tilgung };
+    }
+  }
+
+  function jahresvergleich(objekte, typ, t) {
+    const werte = (von, bis) => ergebnis(objekte, typ, von, bis);
     const jahr = Number(t.slice(0, 4));
     const a = werte(`${jahr}-01-01`, t), b = werte(`${jahr - 1}-01-01`, plusJahre(t, -1));
     const zeile = (label, x, y, mehrIstGut) => ({ label, ct: x, vorjahr_ct: y, aenderung: y ? (x / y - 1) * 100 : null, gut: mehrIstGut ? x >= y : x <= y });
@@ -785,11 +796,21 @@ module.exports = function kennzahlen({ all, get, PERSON_NAME, bh, aw, ab, vw, dl
     } else {
       for (const v of all(`SELECT * FROM versammlungen WHERE objekt_id IN (${ids}) AND datum > ? AND datum <= ?`, t, plusTage(bisD, 21))) {
         add(v.datum, `Eigentümerversammlung${v.ort ? ` (${v.ort})` : ''}`, { ziel: { seite: 'versammlungen', objektId: v.objekt_id } });
-        if (!v.einladung_am) add(plusTage(v.datum, -21), `Einladung zur Versammlung am ${datumDe(v.datum)} verschicken`, { wichtig: true, ziel: { seite: 'versammlungen', objektId: v.objekt_id } });
+        if (!v.einladung_am) add(plusTage(v.datum, -21 - (v.einladung_weg === 'email' || v.einladung_weg === 'hand' ? 0 : 3)), `Einladung zur Versammlung am ${datumDe(v.datum)} verschicken`, { wichtig: true, ziel: { seite: 'versammlungen', objektId: v.objekt_id } });
+      }
+      // § 45 WEG: an action against a resolution within one month, its grounds within two months.
+      for (const b of all(`SELECT * FROM beschluesse WHERE objekt_id IN (${ids}) AND datum >= ? AND status <> 'aufgehoben'`, plusTage(t, -62))) {
+        add(plusMonateGenau(b.datum, 1), `Anfechtungsfrist Beschluss Nr. ${b.nr} (${b.titel}) endet – ohne Klage wird er bestandskräftig`, { ziel: { seite: 'beschluesse', objektId: b.objekt_id } });
+        add(plusMonateGenau(b.datum, 2), `Begründungsfrist für eine Anfechtung von Beschluss Nr. ${b.nr} endet`, { ziel: { seite: 'beschluesse', objektId: b.objekt_id } });
       }
     }
     for (const v of all(`SELECT * FROM versicherungen WHERE objekt_id IN (${ids})`)) {
-      if (v.kuendbar_bis) add(v.kuendbar_bis, `${v.art}${v.gesellschaft ? ` (${v.gesellschaft})` : ''} kündbar bis`, { wichtig: tageZwischen(t, v.kuendbar_bis) <= 30, ziel: { seite: 'versicherungen', objektId: v.objekt_id } });
+      // The last day for notice comes back every year while the contract runs on (no end date): carried forward.
+      if (v.kuendbar_bis) {
+        let k = v.kuendbar_bis;
+        while (k <= t && (!v.ablauf || plusJahre(k, 1) <= v.ablauf)) k = plusJahre(k, 1);
+        add(k, `${v.art}${v.gesellschaft ? ` (${v.gesellschaft})` : ''}: Kündigung muss bis heute zugegangen sein`, { wichtig: tageZwischen(t, k) <= 30, ziel: { seite: 'versicherungen', objektId: v.objekt_id } });
+      }
       if (v.faellig && v.beitrag_ct > 0) {
         let d = v.faellig;
         while (d <= t) d = plusJahre(d, 1);
@@ -871,6 +892,118 @@ module.exports = function kennzahlen({ all, get, PERSON_NAME, bh, aw, ab, vw, dl
     return out.sort((a, b) => a.datum.localeCompare(b.datum) || String(a.uhrzeit ?? '').localeCompare(String(b.uhrzeit ?? '')));
   }
 
+  // K10: early warnings for rented houses – debt service cover, end of fixed interest, arrears ratio, long vacancy,
+  // cash reserve, maintenance per m² – and a simple stress test (interest + x points on the whole loan balance,
+  // the dearest unit empty for y months). Each point has an ampel: rot (act), gelb (watch), gruen (fine).
+  const INSTANDHALTUNG_RICHTWERT_CT = 1000; // € 10 per m² and year: a rough guide for older rented houses
+  function fruehwarnung(objekte, t, stress = {}) {
+    const ids = idListe(objekte);
+    const zinsPlus = Math.max(0, Number(stress.zins_pp ?? 2));
+    const leerMonate = Math.max(0, Number(stress.leer_monate ?? 3));
+    const von = plusTage(plusJahre(t, -1), 1);
+    const punkte = [];
+    const add = (p) => punkte.push(p);
+
+    // Debt service: the contractual instalments of the last 12 months (booked interest and repayment when no loan is entered).
+    const e = ergebnis(objekte, 'miete', von, t);
+    const darlehen = all(`SELECT d.*, o.bezeichnung AS objekt FROM darlehen d JOIN objekte o ON o.id = d.objekt_id WHERE d.objekt_id IN (${ids})`);
+    let kd = 0, restHeute = 0;
+    const plaene = new Map();
+    for (const d of darlehen) {
+      const tp = dl.tilgungsplan(d.id);
+      plaene.set(d.id, tp);
+      // Instalments by their due day (the day of the first one), so a window of 12 months holds exactly 12.
+      const tag = Number(d.erste_rate.slice(8, 10));
+      const am = (z) => `${z.monat}-${pad(Math.min(tag, tageImMonat(z.monat)))}`;
+      kd += tp.zeilen.filter((z) => am(z) >= von && am(z) <= t).reduce((s, z) => s + z.rate_ct, 0);
+      const bisher = tp.zeilen.filter((z) => am(z) <= t).at(-1);
+      restHeute += bisher ? bisher.rest_ct : d.erste_rate > t ? d.betrag_ct : 0;
+    }
+    if (!darlehen.length) kd = e.kapitaldienst;
+    const dscr = kd > 0 ? e.ueberschuss / kd : null;
+    const dscrAmpel = (x) => (x == null ? 'gruen' : x < 1 ? 'rot' : x < 1.2 ? 'gelb' : 'gruen');
+    if (dscr != null) add({ art: 'dscr', titel: 'Schuldendienstdeckung (DSCR)', wert: dscr, ampel: dscrAmpel(dscr), ziel: { seite: 'darlehen' },
+      text: `Überschuss ${euro(e.ueberschuss)} deckt den Kapitaldienst ${euro(kd)} der letzten 12 Monate ${prozentDe(dscr, 2)}-fach`
+        + (dscr < 1 ? ' – Zins und Tilgung werden nicht aus den Mieten bezahlt.' : dscr < 1.2 ? ' – wenig Puffer, Banken erwarten meist mindestens 1,2.' : '.') });
+
+    // Fixed interest ends within 24 months (or has ended): balance then, and the extra cost per year at + x points.
+    for (const d of darlehen) {
+      if (!d.zinsbindung_bis || d.zinsbindung_bis > plusJahre(t, 2)) continue;
+      const tp = plaene.get(d.id);
+      const rest = tp.rest_zinsbindung_ct ?? restHeute;
+      if (!rest) continue;
+      const mehr = Math.round(rest * zinsPlus / 100);
+      const vorbei = d.zinsbindung_bis < t;
+      add({ art: 'zinsbindung', titel: `Zinsbindung ${d.bank}`, wert: d.zinsbindung_bis, ampel: vorbei || d.zinsbindung_bis <= plusMonateGenau(t, 6) ? 'rot' : 'gelb',
+        objekt: d.objekt, ziel: { seite: 'darlehen', objektId: d.objekt_id }, mehrkosten_ct: mehr, rest_ct: rest,
+        text: `${vorbei ? 'Endete' : 'Endet'} am ${datumDe(d.zinsbindung_bis)}, Restschuld dann ${euro(rest)}. Bei ${prozentDe(zinsPlus, 1)} Prozentpunkten mehr Zins kostet das rund ${euro(mehr)} im Jahr mehr`
+          + (vorbei ? ' – neuen Zinssatz eintragen.' : ' – Anschlussfinanzierung rechtzeitig vergleichen.') });
+    }
+
+    // Arrears against the charges of the last 12 months.
+    const r = rueckstaende(objekte, 'miete', t);
+    const sollJahr = get(`SELECT coalesce(sum(CASE WHEN b.soll_id = k.id THEN b.betrag_ct ELSE -b.betrag_ct END), 0) AS s FROM buchungen b JOIN konten k ON k.id IN (b.soll_id, b.haben_id)
+      WHERE k.objekt_id IN (${ids}) AND k.klasse = 'person' AND k.vertrag_typ = 'miete' AND b.art IN ('soll', 'storno') AND b.datum BETWEEN ? AND ?`, von, t).s;
+    if (sollJahr > 0) {
+      const q = r.summe_ct / sollJahr;
+      add({ art: 'rueckstand', titel: 'Rückstandsquote', wert: q, ampel: q > 0.03 ? 'rot' : q > 0.01 ? 'gelb' : 'gruen', ziel: { seite: 'op' },
+        text: `${euro(r.summe_ct)} überfällig bei ${euro(sollJahr)} Soll in 12 Monaten (${prozentDe(q * 100, 1)} %)` + (q > 0.01 ? ' – mehr als 1 %, Mahnungen prüfen.' : '.') });
+    }
+
+    // Units empty for more than three months now.
+    const v = vermietung(objekte, t);
+    for (const l of v.luecken.filter((x) => x.bis === t && x.tage > 90)) {
+      add({ art: 'leerstand', titel: `Leerstand ${l.einheit}`, wert: l.tage, ampel: l.tage > 180 ? 'rot' : 'gelb', ziel: { einheit: l.einheit_id },
+        text: `Seit ${datumDe(l.von)} leer (${l.tage} Tage)${l.ct ? `, entgangene Kaltmiete ${euro(l.ct)}` : ''} – Preis, Zustand und Inserat prüfen.` });
+    }
+
+    // Cash reserve: the lowest expected balance of the next 90 days in months of cold rent.
+    const mieten = all(`SELECT m.id, e.bezeichnung FROM mietverhaeltnisse m JOIN einheiten e ON e.id = m.einheit_id WHERE e.objekt_id IN (${ids})
+      AND m.beginn <= ?1 AND (m.ende IS NULL OR m.ende = '' OR m.ende >= ?1)`, t).map((m) => ({ ...m, kalt: bh.betraege('miete', m.id, t).kaltmiete_ct ?? 0 }));
+    const kaltMonat = mieten.reduce((s, m) => s + m.kalt, 0);
+    // Without any bank posting the balance says nothing (the bank is not kept in the app).
+    const mitBank = get(`SELECT count(*) AS n FROM buchungen b JOIN konten g ON g.id IN (b.soll_id, b.haben_id) AND g.klasse = 'geld' WHERE g.objekt_id IN (${ids})`).n > 0;
+    if (kaltMonat > 0 && mitBank) {
+      const tief = vorschau(objekte, 'miete', t).tief;
+      const monate = tief.ct / kaltMonat;
+      add({ art: 'liquiditaet', titel: 'Liquiditätsreserve', wert: monate, ampel: monate < 1 ? 'rot' : monate < 3 ? 'gelb' : 'gruen', ziel: { seite: 'bank' },
+        text: `Tiefster erwarteter Kontostand in 90 Tagen ${euro(tief.ct)} (${datumDe(tief.datum)}) = ${prozentDe(Math.max(0, monate), 1)} Monatskaltmieten`
+          + (monate < 3 ? ' – empfohlen sind mindestens 3.' : '.') });
+    }
+
+    // Maintenance per m² and year over the last three years (since purchase when later).
+    for (const o of objekte) {
+      const flaeche = get(`SELECT coalesce(sum(wohnflaeche), 0) AS f FROM einheiten WHERE objekt_id = ?`, o.id).f;
+      if (!flaeche) continue;
+      const ab = maxD(plusTage(plusJahre(t, -3), 1), o.kaufdatum ?? '0000-01-01');
+      const jahre = tageZwischen(ab, t) / 365;
+      if (jahre < 1) continue;
+      const ct = get(`SELECT coalesce(sum(CASE WHEN k.id = b.soll_id THEN b.betrag_ct ELSE -b.betrag_ct END), 0) AS s FROM buchungen b JOIN konten k ON k.id IN (b.soll_id, b.haben_id)
+        WHERE k.objekt_id = ? AND k.klasse = 'kosten' AND k.kategorie = 'instandhaltung' AND b.datum BETWEEN ? AND ?`, o.id, ab, t).s;
+      const jeQm = ct / jahre / flaeche;
+      add({ art: 'instandhaltung', titel: `Instandhaltung ${o.bezeichnung}`, wert: jeQm, ampel: jeQm < INSTANDHALTUNG_RICHTWERT_CT ? 'gelb' : 'gruen', ziel: { seite: 'buchen', objektId: o.id },
+        text: `${euro(Math.round(jeQm))} je m² und Jahr (Ø ${prozentDe(jahre, 1)} Jahre) bei Richtwert ${euro(INSTANDHALTUNG_RICHTWERT_CT)}`
+          + (jeQm < INSTANDHALTUNG_RICHTWERT_CT ? ' – Rücklage bilden, Instandhaltungsstau vermeiden.' : '.') });
+    }
+
+    // Stress test.
+    const teuerste = mieten.reduce((m, x) => (x.kalt > (m?.kalt ?? -1) ? x : m), null);
+    const zinsMehr = Math.round(restHeute * zinsPlus / 100);
+    const ausfall = Math.round((teuerste?.kalt ?? 0) * leerMonate);
+    const ueberschussS = e.ueberschuss - ausfall, kdS = kd + zinsMehr;
+    const dscrS = kdS > 0 ? ueberschussS / kdS : null;
+    // Without income received in the last 12 months there is nothing to stress.
+    const stresstest = e.ein <= 0 ? null : {
+      zins_pp: zinsPlus, leer_monate: leerMonate, einheit: teuerste?.bezeichnung ?? null,
+      ueberschuss_ct: e.ueberschuss, kapitaldienst_ct: kd, danach_ct: e.ueberschuss - kd, dscr,
+      zins_mehr_ct: zinsMehr, ausfall_ct: ausfall, ueberschuss_stress_ct: ueberschussS, kapitaldienst_stress_ct: kdS,
+      danach_stress_ct: ueberschussS - kdS, dscr_stress: dscrS, ampel: ueberschussS - kdS < 0 ? 'rot' : dscrAmpel(dscrS),
+    };
+    const rang = { rot: 0, gelb: 1, gruen: 2 };
+    punkte.sort((a, b) => rang[a.ampel] - rang[b.ampel]);
+    return { stichtag: t, von, punkte, stresstest, restschuld_ct: restHeute, kaltmiete_monat_ct: kaltMonat };
+  }
+
   function cockpitKennzahlen(modus = 'miete', stichtag = heute()) {
     const typ = modus === 'weg' ? 'weg' : 'miete';
     const objekte = objekteFuer(modus);
@@ -882,6 +1015,7 @@ module.exports = function kennzahlen({ all, get, PERSON_NAME, bh, aw, ab, vw, dl
       vorschau: vorschau(objekte, typ, stichtag),
       vergleich: jahresvergleich(objekte, typ, stichtag),
       radar: typ === 'miete' ? radar(objekte, stichtag) : null,
+      fruehwarnung: typ === 'miete' ? fruehwarnung(objekte, stichtag) : null,
       fristen: fristen(objekte, typ, stichtag),
       // Everything of the calendar in the next 14 days (all objects).
       bald: kalender(stichtag, plusTage(stichtag, 14)),
@@ -924,5 +1058,7 @@ module.exports = function kennzahlen({ all, get, PERSON_NAME, bh, aw, ab, vw, dl
     return out;
   }
 
-  return { zahlungsverhalten, kontoverlauf, mieterKennzahlen, einheitKennzahlen, hausansicht, cockpitKennzahlen, listenKennzahlen, selbstKosten, verbrauchSpruenge, belegung, kalender };
+  return { zahlungsverhalten, kontoverlauf, mieterKennzahlen, einheitKennzahlen, hausansicht, cockpitKennzahlen, listenKennzahlen,
+    // What-if for the early warnings with own stress values (rented houses only).
+    fruehwarnung: (stress = {}, stichtag = heute()) => fruehwarnung(objekteFuer('miete'), stichtag, stress), selbstKosten, verbrauchSpruenge, belegung, kalender };
 };

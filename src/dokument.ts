@@ -37,6 +37,8 @@ table.t tr.zwischen td { font-weight: bold; background: #f6f6f6; }
 .klein { font-size: 8pt; color: #444; }
 .hervor { background: #f2f2f2; padding: 2.5mm 4mm; margin: 3mm 0; font-weight: bold; }
 .unterschrift { margin-top: 8mm; page-break-inside: avoid; }
+.girocode { display: flex; gap: 4mm; align-items: center; margin: 5mm 0 0; font-size: 8pt; color: #333; page-break-inside: avoid; }
+.girocode svg { width: 26mm; height: 26mm; flex: none; }
 table.unterschriften { width: 100%; margin-top: 14mm; border-collapse: collapse; page-break-inside: avoid; }
 table.unterschriften td { width: 50%; vertical-align: bottom; font-size: 9pt; color: #333; padding-right: 8mm; }
 `;

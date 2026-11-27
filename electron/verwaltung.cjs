@@ -34,14 +34,25 @@ module.exports = function verwaltung({ db, all, get, tx, PERSON_NAME, bh }) {
     FROM kautionsbewegungen WHERE kaution_id = ? AND datum <= ?`, kautionId, bis).s;
 
   // Votes per owner for a resolution: per head (one vote per owner), per co-ownership share, or per unit.
+  // Running numbers of the register are never reused, also after an entry was deleted (counter per house).
+  function beschlussNr(objektId, vergeben = true) {
+    const key = `beschluss_nr_${objektId}`;
+    const zaehler = Number(get('SELECT wert FROM einstellungen WHERE schluessel = ?', key)?.wert ?? 0);
+    const nr = Math.max(zaehler, get('SELECT max(nr) AS n FROM beschluesse WHERE objekt_id = ?', objektId).n ?? 0) + 1;
+    if (vergeben) db.prepare('INSERT INTO einstellungen (schluessel, wert) VALUES (?, ?) ON CONFLICT (schluessel) DO UPDATE SET wert = excluded.wert').run(key, String(nr));
+    return nr;
+  }
   function stimmen(objektId, art, stichtag) {
-    const rows = all(`SELECT g.person_id, ${PERSON_NAME} AS name, e.mea, e.bezeichnung FROM eigentum g
+    const rows = all(`SELECT g.person_id, g.person2_id, ${PERSON_NAME} AS name, e.mea, e.bezeichnung FROM eigentum g
       JOIN einheiten e ON e.id = g.einheit_id JOIN personen p ON p.id = g.person_id
       WHERE e.objekt_id = ? AND g.beginn <= ? AND (g.ende IS NULL OR g.ende = '' OR g.ende >= ?)`, objektId, stichtag, stichtag);
     const map = new Map();
     for (const r of rows) {
-      const m = map.get(r.person_id) ?? { person_id: r.person_id, name: r.name, einheiten: [], stimmen: 0 };
+      // Co-owners of a unit vote together (§ 25 Abs. 2 S. 2 WEG) but are each invited.
+      const m = map.get(r.person_id) ?? { person_id: r.person_id, name: r.name, einheiten: [], stimmen: 0, mea: 0, mit: [] };
       m.einheiten.push(r.bezeichnung);
+      m.mea += r.mea ?? 0;
+      if (r.person2_id && !m.mit.includes(r.person2_id)) m.mit.push(r.person2_id);
       m.stimmen = art === 'kopf' ? 1 : art === 'mea' ? m.stimmen + (r.mea ?? 0) : m.stimmen + 1;
       map.set(r.person_id, m);
     }
@@ -153,7 +164,10 @@ module.exports = function verwaltung({ db, all, get, tx, PERSON_NAME, bh }) {
       const alt = bh.betraege('miete', vertragId, vortag(ab)).kaltmiete_ct;
       // Integer arithmetic: 50000 × 1.15 would give 57499.99….
       const grenze = Math.floor(basis * (100 + k) / 100) + zuschlaege;
-      const modell = get('SELECT art FROM mietmodelle WHERE vertrag_id = ?', vertragId)?.art ?? null;
+      let modell = get('SELECT art FROM mietmodelle WHERE vertrag_id = ?', vertragId)?.art ?? null;
+      // A graduated rent whose last step has passed no longer blocks § 558 (§ 557a Abs. 2 applies only while it runs).
+      const staffelAbgelaufen = modell === 'staffel' && !get(`SELECT 1 FROM anpassungen WHERE vertrag_typ = 'miete' AND vertrag_id = ? AND grund = 'staffel' AND gueltig_ab >= ?`, vertragId, ab);
+      if (staffelAbgelaufen) modell = null;
       const wirkungFrueh = plusMonate(z, 3);
       const qm = e?.wohnflaeche || null;
       return {
@@ -162,7 +176,8 @@ module.exports = function verwaltung({ db, all, get, tx, PERSON_NAME, bh }) {
         verlangen_ab: plusMonateGenau(letzte, 12), jahresfrist_ok: z >= plusMonateGenau(letzte, 12),
         zugang: z, wirkung_frueh: wirkungFrueh, wirkung_ok: ab >= wirkungFrueh, zustimmung_bis: vortag(wirkungFrueh),
         frueheste_wirkung: [wirkungFrueh, monatsbeginn(plusMonateGenau(letzte, 15))].sort().pop(),
-        modell, modell_ok: modell !== 'staffel' && modell !== 'index',
+        modell, modell_ok: modell !== 'staffel' && modell !== 'index', staffel_abgelaufen: staffelAbgelaufen,
+        kappung_festgelegt: kappung != null || e?.kappungsgrenze != null, bk_art: v.bk_art ?? 'vorauszahlung',
         // Increase within the three years against the cap, modernisation surcharges excluded.
         alt_ct: alt, erhoehung_ct: neueMieteCt - alt, erhoehung_prozent: basis ? ((neueMieteCt - zuschlaege) / basis - 1) * 100 : 0,
         qm, alt_qm: qm ? alt / 100 / qm : null, neu_qm: qm ? neueMieteCt / 100 / qm : null,
@@ -171,7 +186,10 @@ module.exports = function verwaltung({ db, all, get, tx, PERSON_NAME, bh }) {
 
     // § 559 Abs. 3a BGB: within six years at most 3 €/m² more (2 €/m² when the rent was below 7 €/m²); earlier modernisation increases count.
     // The increase applies from the start of the third month after receipt (§ 559b Abs. 2).
-    modernisierungPruefen: (vertragId, neueMieteCt, ab, zugang = null) => {
+    // ankuendigung/arbeitenAb/angekuendigtCt: the notice of the works (§ 555c: three months before, with the expected increase).
+    // Without a notice in time, or with an increase more than 10 % above the announced one, the increase applies six months
+    // later (§ 559b Abs. 2 Satz 2). Graduated rent: no § 559 increase; indexed rent: only for works the landlord did not choose.
+    modernisierungPruefen: (vertragId, neueMieteCt, ab, zugang = null, ankuendigung = null, arbeitenAb = null, angekuendigtCt = null) => {
       const v = get('SELECT * FROM mietverhaeltnisse WHERE id = ?', vertragId);
       const qm = get('SELECT wohnflaeche FROM einheiten WHERE id = ?', v.einheit_id)?.wohnflaeche || null;
       const alt = bh.betraege('miete', vertragId, vortag(ab)).kaltmiete_ct;
@@ -181,8 +199,14 @@ module.exports = function verwaltung({ db, all, get, tx, PERSON_NAME, bh }) {
       const satz = qm && alt / 100 / qm < 7 ? 2 : 3;
       const grenze = qm ? Math.round(satz * qm * 100) - frueher : null;
       const z = zugang ?? ortszeit.heute();
+      const modell = get('SELECT art FROM mietmodelle WHERE vertrag_id = ?', vertragId)?.art ?? null;
+      const ankuendigungFrist = !ankuendigung ? false : !arbeitenAb || ankuendigung <= plusMonateGenau(arbeitenAb, -3);
+      const mehrAlsAngekuendigt = angekuendigtCt > 0 && neueMieteCt - alt > angekuendigtCt * 1.1;
+      const verlaengert = !ankuendigungFrist || mehrAlsAngekuendigt;
+      const frueh = verlaengert ? plusMonate(plusMonate(z, 3), 6) : plusMonate(z, 3);
       return { qm, alt_ct: alt, erhoehung_ct: neueMieteCt - alt, frueher_ct: frueher, satz, grenze_ct: grenze,
-        kappung_ok: grenze == null || neueMieteCt - alt <= grenze, zugang: z, wirkung_frueh: plusMonate(z, 3), wirkung_ok: ab >= plusMonate(z, 3) };
+        kappung_ok: grenze == null || neueMieteCt - alt <= grenze, zugang: z, wirkung_frueh: frueh, wirkung_ok: ab >= frueh,
+        modell, ankuendigung_frist_ok: ankuendigungFrist, mehr_als_angekuendigt: mehrAlsAngekuendigt, verlaengert };
     },
 
     // ---------- owners' association ----------
@@ -191,24 +215,70 @@ module.exports = function verwaltung({ db, all, get, tx, PERSON_NAME, bh }) {
       const v = get('SELECT * FROM versammlungen WHERE id = ?', id);
       return v ? { ...v, tops: all('SELECT * FROM tops WHERE versammlung_id = ? ORDER BY nr', id) } : null;
     },
-    // Records the vote on an agenda item and enters an adopted or rejected resolution in the register.
+    // Records the vote on an agenda item and enters an adopted or rejected resolution in the register. Majorities:
+    // einfach – more yes than no (§ 25 Abs. 1); doppelt – more than two thirds of the votes cast and more than half of all
+    // co-ownership shares (§ 21 Abs. 2 Nr. 1, costs of a structural change for all); dreiviertel – three quarters of the votes
+    // cast (§ 23 Abs. 1a, meetings online only); allstimmig – every owner yes. Abstentions are no votes cast.
+    // The register is a record: a new vote never overwrites an entry – it gets a new number and the old one a note.
     topBeschliessen: (topId) => tx(() => {
-      const t = get('SELECT t.*, v.objekt_id, v.datum FROM tops t JOIN versammlungen v ON v.id = t.versammlung_id WHERE t.id = ?', topId);
-      const ergebnis = (t.ja ?? 0) > (t.nein ?? 0) ? 'angenommen' : 'abgelehnt';
-      const text = `${t.beschlussvorschlag ?? ''}\n\nAbstimmung (${t.abstimmungsart === 'kopf' ? 'nach Köpfen' : t.abstimmungsart === 'mea' ? 'nach Miteigentumsanteilen' : 'nach Einheiten'}): ` +
-        `Ja ${t.ja ?? 0}, Nein ${t.nein ?? 0}, Enthaltung ${t.enthaltung ?? 0}.`;
-      if (t.beschluss_id) {
-        db.prepare('UPDATE beschluesse SET titel = ?, text = ?, ergebnis = ?, datum = ? WHERE id = ?').run(t.titel, text.trim(), ergebnis, t.datum, t.beschluss_id);
-      } else {
-        const nr = (get('SELECT max(nr) AS n FROM beschluesse WHERE objekt_id = ?', t.objekt_id).n ?? 0) + 1;
-        const bid = Number(db.prepare(`INSERT INTO beschluesse (objekt_id, nr, datum, art, titel, text, ergebnis) VALUES (?, ?, ?, 'versammlung', ?, ?, ?)`)
-          .run(t.objekt_id, nr, t.datum, t.titel, text.trim(), ergebnis).lastInsertRowid);
-        db.prepare('UPDATE tops SET beschluss_id = ? WHERE id = ?').run(bid, topId);
+      const t = get('SELECT t.*, v.objekt_id, v.datum, v.ort FROM tops t JOIN versammlungen v ON v.id = t.versammlung_id WHERE t.id = ?', topId);
+      const ja = t.ja ?? 0, nein = t.nein ?? 0, enth = t.enthaltung ?? 0;
+      if (!ja && !nein && !enth) throw new Error('Keine Stimmen erfasst – bitte die Stimmen der Anwesenden eintragen.');
+      const einzel = all('SELECT * FROM top_stimmen WHERE top_id = ?', topId);
+      const mehrheit = t.mehrheit ?? 'einfach';
+      let ergebnis, grund = '';
+      if (mehrheit === 'doppelt' || mehrheit === 'allstimmig') {
+        if (!einzel.length) throw new Error('Für diese Mehrheit die Stimme jedes Eigentümers erfassen (Abstimmung je Eigentümer).');
       }
-      db.prepare('UPDATE tops SET ergebnis = ? WHERE id = ?').run(ergebnis, topId);
+      if (mehrheit === 'doppelt') {
+        const meaGesamt = get('SELECT coalesce(sum(mea), 0) AS m FROM einheiten WHERE objekt_id = ?', t.objekt_id).m;
+        const meaJa = einzel.filter((x) => x.wahl === 'ja').reduce((a, x) => a + x.mea, 0);
+        const zweiDrittel = ja * 3 > (ja + nein) * 2, haelfte = meaJa * 2 > meaGesamt;
+        ergebnis = zweiDrittel && haelfte ? 'angenommen' : 'abgelehnt';
+        grund = ` Doppelt qualifizierte Mehrheit (§ 21 Abs. 2 Nr. 1 WEG): mehr als zwei Drittel der abgegebenen Stimmen ${zweiDrittel ? 'erreicht' : 'nicht erreicht'}, mehr als die Hälfte der Miteigentumsanteile (${meaJa} von ${meaGesamt}) ${haelfte ? 'erreicht' : 'nicht erreicht'}.`;
+      } else if (mehrheit === 'dreiviertel') {
+        ergebnis = ja * 4 >= (ja + nein) * 3 ? 'angenommen' : 'abgelehnt';
+        grund = ' Erforderlich: drei Viertel der abgegebenen Stimmen (§ 23 Abs. 1a WEG).';
+      } else if (mehrheit === 'allstimmig') {
+        const alle = stimmen(t.objekt_id, 'kopf', t.datum).length;
+        const jaKoepfe = einzel.filter((x) => x.wahl === 'ja').length;
+        ergebnis = jaKoepfe === alle ? 'angenommen' : 'abgelehnt';
+        grund = ` Erforderlich: Zustimmung aller Eigentümer (${jaKoepfe} von ${alle}).`;
+      } else ergebnis = ja > nein ? 'angenommen' : 'abgelehnt';
+      const text = `${t.beschlussvorschlag ?? ''}\n\nAbstimmung (${t.abstimmungsart === 'kopf' ? 'nach Köpfen' : t.abstimmungsart === 'mea' ? 'nach Miteigentumsanteilen' : 'nach Einheiten'}): ` +
+        `Ja ${ja}, Nein ${nein}, Enthaltung ${enth}.${grund} Das Ergebnis wurde vom Versammlungsleiter festgestellt und verkündet.`;
+      const alt = t.beschluss_id ? get('SELECT * FROM beschluesse WHERE id = ?', t.beschluss_id) : null;
+      if (alt?.status === 'angefochten') throw new Error(`Beschluss Nr. ${alt.nr} ist angefochten – das Ergebnis lässt sich nicht mehr ändern.`);
+      const nr = beschlussNr(t.objekt_id);
+      const bid = Number(db.prepare(`INSERT INTO beschluesse (objekt_id, nr, datum, art, titel, text, ergebnis, ort) VALUES (?, ?, ?, 'versammlung', ?, ?, ?, ?)`)
+        .run(t.objekt_id, nr, t.datum, t.titel, text.trim(), ergebnis, t.ort ?? null).lastInsertRowid);
+      if (alt) db.prepare(`UPDATE beschluesse SET status = 'aufgehoben', vermerk = trim(coalesce(vermerk, '') || ' ' || ?) WHERE id = ?`)
+        .run(`Ergebnis berichtigt am ${ortszeit.heute().split('-').reverse().join('.')}: ersetzt durch Nr. ${nr}.`, alt.id);
+      db.prepare('UPDATE tops SET beschluss_id = ?, ergebnis = ? WHERE id = ?').run(bid, ergebnis, topId);
       return ergebnis;
     }),
-    naechsteBeschlussNr: (objektId) => (get('SELECT max(nr) AS n FROM beschluesse WHERE objekt_id = ?', objektId).n ?? 0) + 1,
+    // Vote per owner: stores each owner's vote (with votes and shares), the totals, and enters the resolution.
+    topStimmenSpeichern: (topId, art, liste) => tx(() => {
+      const t = get('SELECT t.*, v.objekt_id, v.datum FROM tops t JOIN versammlungen v ON v.id = t.versammlung_id WHERE t.id = ?', topId);
+      const st = new Map(stimmen(t.objekt_id, art, t.datum).map((x) => [x.person_id, x]));
+      db.prepare('DELETE FROM top_stimmen WHERE top_id = ?').run(topId);
+      const sum = { ja: 0, nein: 0, enthaltung: 0 };
+      for (const { person_id, wahl } of liste ?? []) {
+        const x = st.get(person_id);
+        if (!x || !sum.hasOwnProperty(wahl)) continue;
+        db.prepare('INSERT INTO top_stimmen (top_id, person_id, wahl, stimmen, mea) VALUES (?, ?, ?, ?, ?)').run(topId, person_id, wahl, x.stimmen, x.mea);
+        sum[wahl] += x.stimmen;
+      }
+      db.prepare('UPDATE tops SET abstimmungsart = ?, ja = ?, nein = ?, enthaltung = ? WHERE id = ?').run(art, sum.ja, sum.nein, sum.enthaltung, topId);
+    }),
+    topStimmen: (topId) => all('SELECT * FROM top_stimmen WHERE top_id = ?', topId),
+    anwesenheit: (versammlungId) => all('SELECT * FROM versammlung_anwesend WHERE versammlung_id = ?', versammlungId),
+    anwesenheitSpeichern: (versammlungId, liste) => tx(() => {
+      db.prepare('DELETE FROM versammlung_anwesend WHERE versammlung_id = ?').run(versammlungId);
+      for (const x of liste ?? []) if (x.status === 'anwesend' || x.status === 'vertreten')
+        db.prepare('INSERT INTO versammlung_anwesend (versammlung_id, person_id, status, vertreter) VALUES (?, ?, ?, ?)').run(versammlungId, x.person_id, x.status, x.vertreter || null);
+    }),
+    naechsteBeschlussNr: (objektId) => beschlussNr(objektId, false),
 
     rollenListe: (objektId) => all(`SELECT r.*, ${PERSON_NAME} AS name, p.telefon, p.mobil, p.email FROM rollen r
       JOIN personen p ON p.id = r.person_id WHERE r.objekt_id = ? ORDER BY r.rolle, p.nachname`, objektId),

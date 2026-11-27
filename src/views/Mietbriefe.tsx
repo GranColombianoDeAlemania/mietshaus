@@ -66,8 +66,8 @@ export function AnpassungBrief(props: { v: Row; a: Row; objekt: Row; anpassungen
     return { alt, einheit, p, einst, gesamt_qm: (einheiten as Row[]).reduce((s, e) => s + (e.wohnflaeche ?? 0), 0) };
   }, [v.id, a.gueltig_ab]);
   const [pr] = useLoad<Row | null>(() => (art === 'erhoehung' && a.kaltmiete_ct ? call('mieterhoehungPruefen', v.id, a.kaltmiete_ct, a.gueltig_ab, null, zugang)
-    : art === 'modernisierung' && a.kaltmiete_ct ? call('modernisierungPruefen', v.id, a.kaltmiete_ct, a.gueltig_ab, zugang) : Promise.resolve(null)),
-  [art, zugang, a.kaltmiete_ct, a.gueltig_ab]);
+    : art === 'modernisierung' && a.kaltmiete_ct ? call('modernisierungPruefen', v.id, a.kaltmiete_ct, a.gueltig_ab, zugang, f.ankuendigung || null, f.arbeiten_ab || null, parseCent(f.angekuendigt) || null) : Promise.resolve(null)),
+  [art, zugang, a.kaltmiete_ct, a.gueltig_ab, f.ankuendigung, f.arbeiten_ab, f.angekuendigt]);
 
   if (!d) return null;
   const alt = d.alt;
@@ -103,7 +103,10 @@ export function AnpassungBrief(props: { v: Row; a: Row; objekt: Row; anpassungen
   let index: Row | null = null;
   if (gewerbe) punkte.push({ ok: false, text: 'Gewerberaum: §§ 557–561 BGB gelten hier nicht, maßgeblich ist allein der Mietvertrag (bei Indexklauseln das Preisklauselgesetz).' });
   if (art === 'erhoehung' && pr) {
-    punkte.push({ ok: pr.modell_ok, hart: true, text: pr.modell_ok ? 'Keine Staffel- oder Indexmiete vereinbart.' : `Bei ${pr.modell === 'index' ? 'Indexmiete' : 'Staffelmiete'} ist eine Erhöhung nach § 558 ausgeschlossen (§ ${pr.modell === 'index' ? '557b' : '557a'} Abs. 2 BGB).` });
+    if (!pr.kappung_festgelegt) punkte.push({ ok: false, text: 'Beim Haus ist keine Kappungsgrenze festgelegt – gerechnet wird mit 20 %. Liegt die Gemeinde in einem Gebiet mit Kappungsgrenzen-Verordnung, gelten 15 % (Objekte → Bearbeiten → Mietrecht).' });
+    if (pr.bk_art !== 'vorauszahlung') punkte.push({ ok: !!parseZahl(f.bk_anteil), text: 'Brutto- bzw. Inklusivmiete: Der Mietspiegel nennt Nettokaltmieten. Im Schreiben muss der in der Miete enthaltene Betriebskostenanteil herausgerechnet werden (BGH VIII ZR 41/05) – Feld „Betriebskostenanteil je m²“ ausfüllen.' });
+    if (pr.staffel_abgelaufen) punkte.push({ ok: true, text: 'Die Staffelmiete ist ausgelaufen; eine Erhöhung nach § 558 ist wieder möglich. Die Mietart beim Vertrag auf „normal“ stellen.' });
+    punkte.push({ ok: pr.modell_ok, hart: true, text: pr.modell_ok ? 'Keine laufende Staffel- oder Indexmiete.' : `Bei ${pr.modell === 'index' ? 'Indexmiete' : 'Staffelmiete'} ist eine Erhöhung nach § 558 ausgeschlossen (§ ${pr.modell === 'index' ? '557b' : '557a'} Abs. 2 BGB).` });
     punkte.push({ ok: pr.jahresfrist_ok, hart: true, text: pr.jahresfrist_ok ? `Jahresfrist eingehalten: Verlangen ab ${datum(pr.verlangen_ab)} möglich.`
       : `Das Verlangen darf frühestens am ${datum(pr.verlangen_ab)} zugehen (ein Jahr nach der letzten Erhöhung, § 558 Abs. 1 Satz 2 BGB) – ein früheres Verlangen ist unwirksam.` });
     punkte.push({ ok: pr.frist_ok, hart: true, text: `Miete unverändert seit ${datum(pr.letzte_aenderung)}: ${pr.frist_ok ? 'zum Erhöhungszeitpunkt 15 Monate erreicht' : `15 Monate erst erreicht – frühestens ab ${datum(pr.frueheste_wirkung)}`} (§ 558 Abs. 1 BGB).`,
@@ -113,8 +116,9 @@ export function AnpassungBrief(props: { v: Row; a: Row; objekt: Row; anpassungen
     punkte.push({ ok: pr.kappung_ok, hart: true, text: <>Kappungsgrenze {pr.kappung} %: Miete am {datum(pr.basis_datum)} {euro(pr.basis_ct)}, höchstens {euro(pr.grenze_ct)}{pr.zuschlaege_ct ? ` (inkl. Modernisierungszuschlägen ${euro(pr.zuschlaege_ct)})` : ''} – verlangt {euro(a.kaltmiete_ct)} (+{komma(pr.erhoehung_prozent, 1)} %).</> });
     const bis = parseZahl(f.bis) ?? parseZahl(f.wert);
     const mittel = parseZahl(f.mittelwert);
-    if (pr.neu_qm != null && bis != null) punkte.push({ ok: pr.neu_qm <= bis + 0.005, hart: true, text: `Neue Miete ${qm2(pr.neu_qm)} – ortsübliche Vergleichsmiete ${f.mittel === 'mietspiegel' ? `bis ${qm2(bis)}` : qm2(bis)}.` });
-    if (pr.neu_qm != null && mittel != null && pr.neu_qm > mittel + 0.005) punkte.push({ ok: false, text: `Die neue Miete liegt über dem Mittelwert ${qm2(mittel)}: Die Einordnung in die obere Spanne bitte mit Merkmalen der Wohnung begründen.` });
+    const bkQm = pr.bk_art !== 'vorauszahlung' ? parseZahl(f.bk_anteil) ?? 0 : 0;
+    if (pr.neu_qm != null && bis != null) punkte.push({ ok: pr.neu_qm - bkQm <= bis + 0.005, hart: true, text: `Neue Miete ${qm2(pr.neu_qm - bkQm)}${bkQm ? ' (ohne Betriebskostenanteil)' : ''} – ortsübliche Vergleichsmiete ${f.mittel === 'mietspiegel' ? `bis ${qm2(bis)}` : qm2(bis)}.` });
+    if (pr.neu_qm != null && mittel != null && pr.neu_qm - bkQm > mittel + 0.005) punkte.push({ ok: false, text: `Die neue Miete liegt über dem Mittelwert ${qm2(mittel)}: Die Einordnung in die obere Spanne bitte mit Merkmalen der Wohnung begründen.` });
     if (!qm) punkte.push({ ok: false, text: 'Für die Einheit ist keine Wohnfläche erfasst – sie gehört in die Begründung.' });
   }
   if (art === 'index') {
@@ -152,11 +156,14 @@ export function AnpassungBrief(props: { v: Row; a: Row; objekt: Row; anpassungen
     if (kosten > 0 && gqm > 0) punkte.push({ ok: Math.abs(modern.monatlich - diff) <= 1, text: `8 % von ${euro(modern.anteil)} = ${euro(jaehrlich)} im Jahr = ${euro(modern.monatlich)} im Monat${Math.abs(modern.monatlich - diff) <= 1 ? '' : ` – eingetragen sind ${euro(diff)}`}.`,
       aktion: Math.abs(modern.monatlich - diff) > 1 && <button onClick={() => betragSetzen(alt.kaltmiete_ct + modern!.monatlich)}>{euro(alt.kaltmiete_ct + modern.monatlich)} übernehmen</button> });
     if (pr) {
+      if (pr.modell === 'staffel') punkte.push({ ok: false, hart: true, text: 'Bei Staffelmiete ist eine Mieterhöhung wegen Modernisierung ausgeschlossen (§ 557a Abs. 2 BGB).' });
+      if (pr.modell === 'index') punkte.push({ ok: false, text: 'Indexmiete: Eine Erhöhung wegen Modernisierung ist nur für bauliche Maßnahmen zulässig, die der Vermieter nicht zu vertreten hat, z. B. gesetzlich vorgeschriebene (§ 557b Abs. 2 BGB).' });
+      if (f.ankuendigung && !pr.ankuendigung_frist_ok) punkte.push({ ok: false, text: 'Die Ankündigung lag weniger als drei Monate vor Beginn der Arbeiten (§ 555c Abs. 1 BGB) – die Erhöhung gilt deshalb sechs Monate später.' });
+      if (pr.mehr_als_angekuendigt) punkte.push({ ok: false, text: 'Die Erhöhung liegt mehr als 10 % über der angekündigten – sie gilt deshalb sechs Monate später (§ 559b Abs. 2 Satz 2 BGB).' });
       punkte.push({ ok: pr.kappung_ok, hart: true, text: pr.grenze_ct == null ? 'Ohne Wohnfläche lässt sich die Kappung (§ 559 Abs. 3a) nicht prüfen.'
         : `Kappung: höchstens ${pr.satz} €/m² in sechs Jahren = ${euro(pr.grenze_ct + pr.frueher_ct)}${pr.frueher_ct ? `, davon bereits ${euro(pr.frueher_ct)} genutzt` : ''} – Erhöhung ${euro(pr.erhoehung_ct)} (§ 559 Abs. 3a BGB).` });
-      const verspaetet = !f.ankuendigung;
-      const ab = verspaetet ? plusMonate(pr.wirkung_frueh, 6) : pr.wirkung_frueh;
-      punkte.push({ ok: a.gueltig_ab >= ab, hart: true, text: `Bei Zugang am ${datum(zugang)} gilt die Erhöhung ab ${datum(ab)} (Beginn des dritten Monats, § 559b Abs. 2 BGB${verspaetet ? '; ohne Modernisierungsankündigung sechs Monate später' : ''}).`, aktion: a.gueltig_ab < ab && knopfAb(ab) });
+      const ab = pr.wirkung_frueh;
+      punkte.push({ ok: a.gueltig_ab >= ab, hart: true, text: `Bei Zugang am ${datum(zugang)} gilt die Erhöhung ab ${datum(ab)} (Beginn des dritten Monats, § 559b Abs. 2 BGB${pr.verlaengert ? (!f.ankuendigung ? '; ohne Modernisierungsankündigung sechs Monate später' : '; sechs Monate später, siehe oben') : ''}).`, aktion: a.gueltig_ab < ab && knopfAb(ab) });
     }
   }
   if (art === 'nk_anpassung') {
@@ -191,7 +198,7 @@ export function AnpassungBrief(props: { v: Row; a: Row; objekt: Row; anpassungen
       const begruendung = f.mittel === 'mietspiegel'
         ? `Zur Begründung beziehen wir uns auf den ${f.qualifiziert ? 'qualifizierten ' : ''}Mietspiegel „${f.bezeichnung || '[Bezeichnung]'}“${f.qualifiziert ? ' (§ 558d BGB)' : ''}. ` +
           `${f.feld ? `Einordnung Ihrer Wohnung: ${f.feld.replace(/\.$/, '')}. ` : ''}Die Spanne reicht dort von ${sp('von')} bis ${sp('bis')}${f.mittelwert ? `, der Mittelwert beträgt ${sp('mittelwert')}` : ''}. ` +
-          `Die verlangte Miete von ${qm2(pr.neu_qm)} liegt innerhalb dieser Spanne.${f.einordnung ? `\n\nZur Einordnung innerhalb der Spanne: ${f.einordnung}` : ''}` +
+          `${pr.bk_art !== 'vorauszahlung' && parseZahl(f.bk_anteil) ? `In der Miete sind Betriebskosten von ${qm2(parseZahl(f.bk_anteil))} enthalten; ohne sie beträgt die verlangte Miete ${qm2(pr.neu_qm - (parseZahl(f.bk_anteil) ?? 0))} und` : `Die verlangte Miete von ${qm2(pr.neu_qm)}`} liegt innerhalb dieser Spanne.${f.einordnung ? `\n\nZur Einordnung innerhalb der Spanne: ${f.einordnung}` : ''}` +
           `${f.erhaeltlich ? `\n\nDer Mietspiegel ist ${f.erhaeltlich}.` : '\n\nDer Mietspiegel liegt diesem Schreiben bei.'}`
         : f.mittel === 'vergleich'
           ? `Zur Begründung benennen wir drei vergleichbare Wohnungen (§ 558a Abs. 2 Nr. 4 BGB), für die folgende Nettokaltmieten gezahlt werden:\n${(f.vergleich ?? '').trim() || '[Anschrift, Geschoss, Lage, Wohnfläche, Miete je m²]'}`
@@ -263,6 +270,15 @@ export function AnpassungBrief(props: { v: Row; a: Row; objekt: Row; anpassungen
       const dok = await alsPdfAblegen(seiten, `${titel} ${v.einheit} ${heute()}`,
         { objekt_id: props.objekt.id, einheit_id: v.einheit_id, person_id: v.person_id, typ: 'Brief', titel: `${titel} ${v.name}` });
       await window.hv.dokumentOeffnen(dok.datei);
+      // § 558b BGB: consent is due by the end of the second month after receipt; then three months to sue.
+      if (art === 'erhoehung' && pr?.zustimmung_bis) {
+        const klage = plusMonate(pr.zustimmung_bis, 3);
+        for (const [titel, faellig, text] of [
+          [`Zustimmung zur Mieterhöhung prüfen – ${v.name}`, pr.zustimmung_bis, `Die Zustimmungsfrist endet am ${datum(pr.zustimmung_bis)}. Liegt keine Zustimmung vor, bleibt bis ${datum(klage)} Zeit für die Klage auf Zustimmung (§ 558b Abs. 2 BGB).`],
+          [`Klagefrist Mieterhöhung läuft ab – ${v.name}`, klage, 'Ohne Zustimmung und ohne Klage bis heute ist das Erhöhungsverlangen erledigt; ein neues ist frühestens ein Jahr nach dem letzten möglich.'],
+        ] as [string, string, string][])
+          await call('save', 'vorgaenge', { objekt_id: props.objekt.id, einheit_id: v.einheit_id, person_id: v.person_id, titel, kategorie: 'Mieterhöhung', status: 'offen', prioritaet: 1, faellig, beschreibung: text });
+      }
       props.onClose();
     } catch (e) {
       setMeldung(fehlerText(e));
@@ -298,6 +314,7 @@ export function AnpassungBrief(props: { v: Row; a: Row; objekt: Row; anpassungen
                 <textarea rows={4} value={f.vergleich ?? ''} onChange={setze('vergleich')} placeholder={'Musterweg 3, 2. OG links, 68 m², 9,40 €/m²\n…'} /></label>
             )}
             {(f.mittel === 'gutachten' || f.mittel === 'datenbank') && <>{feld('bezeichnung', f.mittel === 'gutachten' ? 'Sachverständige(r)' : 'Mietdatenbank', { breit: true })}{feld('wert', 'Ortsübliche Vergleichsmiete (€/m²)')}</>}
+            {pr?.bk_art && pr.bk_art !== 'vorauszahlung' && feld('bk_anteil', 'Betriebskostenanteil in der Miete (€/m²)')}
             {f.mittel !== 'mietspiegel' && <p className="klein hinweis breit">Gibt es für die Gemeinde einen qualifizierten Mietspiegel, müssen seine Werte im Schreiben trotzdem genannt werden (§ 558a Abs. 3 BGB).</p>}
           </>
         )}
@@ -305,7 +322,7 @@ export function AnpassungBrief(props: { v: Row; a: Row; objekt: Row; anpassungen
         {art === 'modernisierung' && (
           <>
             <label className="breit">Durchgeführte Maßnahme<textarea rows={2} value={f.massnahme ?? ''} onChange={setze('massnahme')} placeholder="z. B. Dämmung der Fassade (WDVS 14 cm) und Austausch der Fenster" /></label>
-            {feld('ankuendigung', 'Modernisierungsankündigung vom', { typ: 'date' })}
+            {feld('ankuendigung', 'Modernisierungsankündigung vom', { typ: 'date' })}{feld('arbeiten_ab', 'Beginn der Arbeiten', { typ: 'date' })}{feld('angekuendigt', 'angekündigte Erhöhung (€ im Monat)')}
             {feld('kosten', 'Kosten der Maßnahme (€)')}{feld('erhaltung', 'davon ersparte Instandsetzung (€)')}{feld('foerderung', 'Fördermittel / Zuschüsse (€)')}
             {feld('wohnung_qm', `Wohnfläche der Wohnung (m²)`, { platz: qm ? String(qm).replace('.', ',') : '' })}{feld('gesamt_qm', 'Wohnfläche aller Wohnungen (m²)', { platz: d.gesamt_qm ? String(d.gesamt_qm).replace('.', ',') : '' })}
           </>

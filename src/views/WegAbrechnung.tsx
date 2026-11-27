@@ -112,6 +112,22 @@ export function WegAbrechnung(props: { objekt: Row }) {
               </tbody>
             </table>
           </div>
+          {a.vergleich?.length > 0 && (
+            <p className="hinweis">Gegenüber dem Vorjahr deutlich verändert: {a.vergleich.map((x: Row) => `${x.bezeichnung} ${euro(x.vorjahr_ct)} → ${euro(x.jetzt_ct)}`).join('; ')}. Bitte vor dem Versand prüfen.</p>
+          )}
+          <div className="block">
+            <h3>Abstimmung: Konten, Rücklage und Vermögen</h3>
+            <table>
+              <thead><tr><th>Konto</th><th className="num">Anfang</th><th className="num">Eingänge</th><th className="num">Ausgänge</th><th className="num">Ende</th><th /></tr></thead>
+              <tbody>{(a.konten_entwicklung ?? []).map((k: Row) => (
+                <tr key={k.id}><td>{k.bezeichnung}</td><td className="num">{euro(k.anfang_ct)}</td><td className="num">{euro(k.ein_ct)}</td><td className="num">{euro(-k.aus_ct)}</td><td className="num">{euro(k.ende_ct)}</td>
+                  <td>{k.stimmt ? <span className="tag art-weg">stimmt</span> : <span className="tag">Differenz</span>}</td></tr>
+              ))}</tbody>
+            </table>
+            <p className="klein hinweis">Rücklage Soll {euro(r.ende_ct)} · Ist {euro(r.ist_ende_ct)}{r.bankkonto_ct != null ? ` · Rücklagenkonto ${euro(r.bankkonto_ct)}${Math.abs(r.bankkonto_ct - r.ist_ende_ct) > 100 ? ' – weicht vom Ist ab, Buchungen prüfen' : ''}` : ''}.
+              {(a.vermoegen.forderungen_nach_art ?? []).length > 0 && ` Offene Forderungen: ${a.vermoegen.forderungen_nach_art.map((x: Row) => `${x.art} ${euro(x.ct)}`).join(', ')}.`}
+              {(a.vermoegen.verbindlichkeiten ?? []).length > 0 && ` Noch nicht gebuchte Rechnungen: ${euro(a.vermoegen.verbindlichkeiten.reduce((s2: number, x: Row) => s2 + x.betrag_ct, 0))}.`}</p>
+          </div>
           <div className="kacheln">
             <div className="kachel"><div className="wert">{euro(r.anfang_ct)}</div><div className="label">Rücklage am {datum(von)}</div></div>
             <div className="kachel"><div className="wert">{euro(r.zufuehrung_soll_ct)}</div><div className="label">Soll-Zuführungen</div></div>

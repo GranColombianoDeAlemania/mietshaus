@@ -87,7 +87,7 @@ export function vertragFelder(modus: Modus, einheiten: Row[], personen: Row[], f
     { key: 'einheit_id', label: 'Einheit', type: 'select', required: true, options: einheiten.map((e) => [e.id, `${e.nr} – ${e.bezeichnung}`]) },
     { key: 'person_id', label: a.person, type: 'select', required: true, options: personOpts, neu: neu('person_id') },
     { key: 'person2_id', label: `Weiterer ${a.person}`, type: 'select', options: personOpts, neu: neu('person2_id') },
-    { key: 'beginn', label: 'Beginn', type: 'date', required: true },
+    { key: 'beginn', label: modus === 'weg' ? 'Beginn (bei Kauf: Eintragung im Grundbuch, nicht Notartermin)' : 'Beginn', type: 'date', required: true },
     { key: 'ende', label: 'Ende', type: 'date' },
     ...a.felder(f),
     { key: 'lastschrift', label: 'Zahlt per SEPA-Lastschrift', type: 'check', section: 'Zahlungsweg' },

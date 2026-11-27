@@ -1,6 +1,7 @@
 // PDF layouts for statements and budget plans.
 import { anrede, datum, euro, zahl, type Row } from './api';
 import { absaetze, bericht, brief, esc, tabelle, type Absender } from './dokument';
+import { girocode } from './girocode';
 
 const z = (n: number) => zahl(Math.round(n * 1000) / 1000);
 
@@ -47,7 +48,8 @@ export function nkBrief(a: Row, e: Row, absender: Absender, objekt: Row, mieter:
     ${a.frist?.abgelaufen && a.frist.grund && brutto > 0 ? `<p>Diese Abrechnung erreicht Sie nach Ablauf der Abrechnungsfrist. Die Verspätung haben wir nicht zu vertreten: ${esc(a.frist.grund)} (§ 556 Abs. 3 Satz 3 BGB).</p>` : ''}
     ${vzOffen > 0 ? `<p>Bitte beachten Sie: Von den Vorauszahlungen für diesen Zeitraum sind ${euro(vzOffen)} noch nicht bei uns eingegangen. Die Abrechnung berücksichtigt die vereinbarten Vorauszahlungen;
       ${brutto + vzOffen > 0 ? `insgesamt sind damit noch <b>${euro(brutto + vzOffen)}</b> zu zahlen.` : `nach Verrechnung mit den offenen Vorauszahlungen verbleibt ein Guthaben von <b>${euro(-(brutto + vzOffen))}</b>.`}</p>` : ''}
-    ${a.co2 ? `<p class="klein">CO₂-Kostenaufteilung: Das Gebäude verursacht ${a.co2.kg_pro_qm.toFixed(1).replace('.', ',')} kg CO₂ je m² Wohnfläche und Jahr. Der Vermieter trägt daher ${a.co2.vermieter_prozent} % der CO₂-Kosten (${euro(a.co2.kosten_ct)} gesamt); dieser Anteil ist oben bereits abgezogen.</p>` : ''}
+    ${girocode(absender, brutto + vzOffen, `${nurHz ? 'Heizkostenabrechnung' : 'Betriebskostenabrechnung'} ${a.von.slice(0, 4)} ${s.einheit.bezeichnung} ${objekt.bezeichnung}`)}
+    ${heizAngaben(a, e)}
     ${neu ? (neu.bk == null || nurHz ? `<p>Ab dem ${datum(neu.ab)} beträgt Ihre monatliche Vorauszahlung für Heizkosten <b>${euro(neu.hk)}</b>.</p>`
       : `<p>Ab dem ${datum(neu.ab)} betragen Ihre monatlichen Vorauszahlungen für Betriebskosten <b>${euro(neu.bk)}</b> und für Heizkosten <b>${euro(neu.hk)}</b>.</p>`) : ''}
     ${p35aTabelle(e.p35a)}
@@ -55,6 +57,30 @@ export function nkBrief(a: Row, e: Row, absender: Absender, objekt: Row, mieter:
     <p class="unterschrift">Mit freundlichen Grüßen<br><br>${esc(absender.name)}</p>`;
   return brief({ absender, empfaenger: mieter, betreff: `${nurHz ? 'Heizkostenabrechnung' : 'Betriebskostenabrechnung'} ${a.von.slice(0, 4)} – ${objekt.bezeichnung}, ${s.einheit.bezeichnung}`,
     info: [['Objekt', objekt.bezeichnung], ['Einheit', s.einheit.bezeichnung]], inhalt });
+}
+
+// Information a heating statement must give: the CO2 split (§ 7 CO2KostAufG) and, when the landlord bills heating himself,
+// fuel, taxes, comparison with last year and with the house, contacts (§ 6a Abs. 3 HeizkostenV) – else 3 % reduction each.
+function heizAngaben(a: Row, e: Row) {
+  const k = (x: number) => x.toFixed(1).replace('.', ',');
+  const teile: string[] = [];
+  if (a.co2) {
+    const c = a.co2;
+    const grundlage = [c.brennstoff && `Brennstoff ${esc(c.brennstoff)}`, c.menge && `Menge ${esc(c.menge)}`, c.faktor && `Emissionsfaktor ${esc(c.faktor)}`].filter(Boolean).join(', ');
+    teile.push(`<b>CO₂-Kosten (CO2KostAufG):</b> Das Gebäude hat im Abrechnungszeitraum ${Math.round(c.kg).toLocaleString('de-DE')} kg CO₂ ausgestoßen${c.nichtwohn ? '' : `, das sind ${k(c.kg_pro_qm)} kg je m² Wohnfläche und Jahr`}${grundlage ? ` (${grundlage})` : ''}. `
+      + `CO₂-Kosten des Gebäudes: ${euro(c.kosten_ct)}. ${c.nichtwohn ? 'Für Nichtwohngebäude tragen Vermieter und Mieter je die Hälfte' : `Nach dem Stufenmodell trägt der Vermieter ${String(c.stufe_prozent).replace('.', ',')} %`}`
+      + `${c.halbiert ? `, wegen öffentlich-rechtlicher Vorgaben halbiert auf ${String(c.vermieter_prozent).replace('.', ',')} %` : ''}.`
+      + (e.co2 ? ` Auf Sie entfallen CO₂-Kosten von ${euro(e.co2.brutto_ct)}; davon trägt der Vermieter ${euro(e.co2.vermieter_ct)} (oben abgezogen), Sie tragen ${euro(e.co2.mieter_ct)}.` : ''));
+  }
+  if (a.heizung?.modus === 'intern' && e.heiz_ct) {
+    const v = e.vergleich;
+    const verbrauch = v ? `Ihr Verbrauch: ${Math.round(v.jetzt).toLocaleString('de-DE')} ${esc(v.einheit)}${v.vorher != null ? ` (Vorjahr ${Math.round(v.vorher).toLocaleString('de-DE')} ${esc(v.einheit)})` : ' (kein Vorjahreswert)'}`
+      + `${v.je_qm != null && v.haus_je_qm != null ? `; je m² ${k(v.je_qm)}, Durchschnitt des Hauses ${k(v.haus_je_qm)} ${esc(v.einheit)}` : ''}. `.replace(/\.\. $/, '. ') : '';
+    teile.push(`<b>Angaben nach § 6a HeizkostenV:</b> ${verbrauch}Energieträger: ${esc(a.optionen?.brennstoff || 'siehe Brennstoffrechnung')}. `
+      + `Im Preis enthalten sind Energiesteuer, CO₂-Preis nach dem Brennstoffemissionshandelsgesetz und Umsatzsteuer${a.optionen?.abgaben_ct ? ` (zusammen ${euro(a.optionen.abgaben_ct)})` : ''}. `
+      + 'Beratung und Informationen zum Energiesparen: Verbraucherzentrale (verbraucherzentrale.de), Deutsche Energie-Agentur (dena.de), Energieberatung der Verbraucherzentralen (verbraucherzentrale-energieberatung.de).');
+  }
+  return teile.length ? `<div class="klein">${teile.map((t) => `<p>${t}</p>`).join('')}</div>` : '';
 }
 
 export function nkUebersicht(a: Row, objekt: Row) {
@@ -88,15 +114,16 @@ export function wegEinzel(a: Row, e: Row, absender: Absender, objekt: Row, eigen
     <h2>Kosten und Erträge der Gemeinschaft</h2>
     ${tabelle(['Kostenart', '#rGesamt', 'Verteilung nach', '#rGesamteinheiten', '#rIhre Einheiten', '#rIhr Anteil'], zeilen,
       { summe: ['Summe', `#r${euro(a.summe_ct)}`, '', '', '', `#r${euro(e.kosten_ct)}`] })}
-    <p class="klein">* auf Mieter umlegbare Betriebskosten: ${euro(e.umlagefaehig_ct)}</p>
+    <p class="klein">* auf Mieter umlegbare Betriebskosten: ${euro(e.umlagefaehig_ct)} – Zuordnung ohne Gewähr; für die Abrechnung mit Ihrem Mieter sind die Kosten nach dem Verbrauchszeitraum abzugrenzen.</p>
     ${tabelle(['Abrechnung', '#rBetrag'], [
       ['Ihr Kostenanteil', `#r${euro(e.kosten_ct)}`],
       ['abzüglich Hausgeld-Vorschüsse lt. Wirtschaftsplan (ohne Rücklage)', `#r${euro(-e.hausgeld_soll_ct)}`],
       ...(e.sonderumlage_ct ? [['abzüglich Sonderumlagen', `#r${euro(-e.sonderumlage_ct)}`]] : []),
     ], { summe: [(e.ergebnis_ct > 0 ? 'Nachschuss (Abrechnungsspitze)' : 'Guthaben') + (schuldner ? '' : ' – Information'), `#r${euro(Math.abs(e.ergebnis_ct))}`] })}
     ${spitzeText}
+    ${e.gezahlt_ct != null ? tabelle(['Ihr Hausgeldkonto', '#rBetrag'], [['Im Abrechnungszeitraum gezahlt', `#r${euro(e.gezahlt_ct)}`], ['Rückstand bzw. Guthaben am ' + datum(s.bis), `#r${euro(e.rueckstand_ct ?? 0)}`]]) : ''}
     <h2>Erhaltungsrücklage</h2>
-    ${tabelle(['', '#rBetrag'], [['Ihre Soll-Zuführung im Abrechnungsjahr', `#r${euro(e.ruecklage_soll_ct)}`],
+    ${tabelle(['', '#rBetrag'], [['Ihre Soll-Zuführung im Abrechnungsjahr', `#r${euro(e.ruecklage_soll_ct)}`], ...(e.ruecklage_ist_ct != null ? [['davon gezahlt', `#r${euro(e.ruecklage_ist_ct)}`]] : []),
       ['Stand der Rücklage der Gemeinschaft am ' + datum(a.bis) + ' (Soll)', `#r${euro(r.ende_ct)}`],
       ['Stand der Rücklage der Gemeinschaft am ' + datum(a.bis) + ' (Ist, gezahlt und mit Zinsen)', `#r${euro(r.ist_ende_ct ?? r.ende_ct)}`]])}
     ${p35aTabelle(e.p35a)}
@@ -109,7 +136,7 @@ export function wegEinzel(a: Row, e: Row, absender: Absender, objekt: Row, eigen
 export function wegGesamt(a: Row, objekt: Row) {
   const r = a.ruecklage;
   const kosten = tabelle(['Kostenart', 'Verteilerschlüssel', '#rBetrag'], a.posten.map((p: Row) => [esc(p.label), esc(p.schluessel), `#r${euro(p.gesamt_ct)}`]),
-    { summe: ['Summe Kosten', '', `#r${euro(a.summe_ct)}`] });
+    { summe: ['Summe Kosten abzüglich Einnahmen', '', `#r${euro(a.summe_ct)}`] });
   const einzel = tabelle(['Einheit', 'Eigentümer', '#rKosten', '#rHausgeld-Soll', '#rErgebnis'],
     a.ergebnisse.map((e: Row) => [esc(e.segment.einheit.bezeichnung), esc(e.segment.vertrag.name), `#r${euro(e.kosten_ct)}`, `#r${euro(e.hausgeld_soll_ct)}`, `#r${euro(e.ergebnis_ct)}`]));
   const rl = tabelle(['Erhaltungsrücklage', '#rBetrag'], [
@@ -123,24 +150,32 @@ export function wegGesamt(a: Row, objekt: Row) {
   const verm = tabelle(['Vermögen am ' + datum(v.stichtag), '#rBetrag'], [
     ...v.geld.map((g: Row) => [esc(g.bezeichnung), `#r${euro(g.saldo_ct)}`]),
     ...v.forderungen.map((f: Row) => [`Forderung/Guthaben ${esc(f.bezeichnung)}`, `#r${euro(f.saldo_ct)}`]),
+    ...(v.forderungen_nach_art ?? []).map((x: Row) => [`davon offen: ${esc(x.art)}`, `#r${euro(x.ct)}`]),
+    ...(v.verbindlichkeiten ?? []).map((x: Row) => [`Verbindlichkeit: ${esc(x.titel || x.absender || 'Rechnung')}${x.datum ? ` vom ${datum(x.datum)}` : ''}`, `#r${euro(-x.betrag_ct)}`]),
+    ['Erhaltungsrücklage (Ist)', `#r${euro(r.ist_ende_ct ?? r.ende_ct)}`],
   ]);
+  const kontenEntw = (a.konten_entwicklung ?? []).length ? tabelle(['Konto', '#rAnfang', '#rEingänge', '#rAusgänge', '#rEnde'],
+    a.konten_entwicklung.map((k: Row) => [esc(k.bezeichnung), `#r${euro(k.anfang_ct)}`, `#r${euro(k.ein_ct)}`, `#r${euro(-k.aus_ct)}`, `#r${euro(k.ende_ct)}`])) : '';
   const wechsel = (a.spitzen ?? []).filter((x: Row) => x.wechsel);
   const einzelPlus = wechsel.length ? einzel + `<p class="klein">Eigentümerwechsel – die Abrechnungsspitze schuldet der Eigentümer am Tag des Beschlusses (Fälligkeitstheorie): ${wechsel.map((x: Row) => `${esc(x.einheit.bezeichnung)} ${esc(x.schuldner.name)} ${euro(x.ergebnis_ct)}`).join('; ')}. Die Zeilen je Eigentümer dienen dem Ausgleich zwischen Verkäufer und Käufer.</p>` : einzel;
   return bericht('Jahresabrechnung und Vermögensbericht', `${objekt.bezeichnung} · ${datum(a.von)} – ${datum(a.bis)}`,
-    `<h2>Gesamtkosten</h2>${kosten}<h2>Einzelergebnisse</h2>${einzelPlus}<h2>Rücklage</h2>${rl}<h2>Vermögensbericht (§ 28 Abs. 4 WEG)</h2>${verm}`);
+    `<h2>Gesamtkosten und Einnahmen</h2>${kosten}<h2>Kontenentwicklung</h2>${kontenEntw}<h2>Einzelergebnisse</h2>${einzelPlus}<h2>Rücklage</h2>${rl}<h2>Vermögensbericht (§ 28 Abs. 4 WEG)</h2>${verm}`);
 }
 
 export function wiplEinzel(w: Row, zeile: Row, absender: Absender, objekt: Row, eigentuemer: Row, ab: string) {
-  const posten = tabelle(['Kostenart', '#rGesamt', 'Schlüssel', '#rIhr Anteil'],
-    w.posten.map((p: Row, i: number) => [esc(p.label), `#r${euro(p.gesamt_ct)}`, esc(p.schluessel), `#r${euro(zeile.anteile[i])}`]),
-    { summe: ['Summe Kosten', `#r${euro(w.summe_ct)}`, '', `#r${euro(zeile.kosten_ct)}`] });
+  const posten = tabelle(['Kostenart', '#rGesamt', 'Schlüssel', '#rGesamteinheiten', '#rIhre Einheiten', '#rIhr Anteil'],
+    w.posten.map((p: Row, i: number) => [esc(p.label), `#r${euro(p.gesamt_ct)}`, esc(p.schluessel),
+      `#r${p.gesamt_einheiten ? z(p.gesamt_einheiten) : ''}`, `#r${zeile.einheiten_je_posten?.[i] ? z(zeile.einheiten_je_posten[i]) : ''}`, `#r${euro(zeile.anteile[i])}`]),
+    { summe: ['Summe', `#r${euro(w.summe_ct)}`, '', '', '', `#r${euro(zeile.kosten_ct)}`] });
+  const tag = zeile.eigentum?.faelligkeitstag || 3;
+  const konto = absender.iban ? ` auf das Konto ${absender.kontoinhaber ? `${esc(absender.kontoinhaber)}, ` : ''}IBAN ${esc(absender.iban)}` : '';
   const inhalt = `<p>${esc(anrede(eigentuemer))}</p>
     <p>anbei erhalten Sie den Wirtschaftsplan ${w.jahr} für Ihre Einheit ${esc(zeile.einheit.bezeichnung)}.</p>
     ${posten}
     ${tabelle(['Jahresbetrag', '#rBetrag'], [['Kostenanteil', `#r${euro(zeile.kosten_ct)}`], ['Zuführung Erhaltungsrücklage', `#r${euro(zeile.ruecklage_ct)}`]],
       { summe: ['Summe', `#r${euro(zeile.kosten_ct + zeile.ruecklage_ct)}`] })}
-    <p class="hervor">Monatliches Hausgeld ab ${datum(ab)}: ${euro(zeile.monat_hausgeld_ct)} (davon Rücklage ${euro(zeile.monat_ruecklage_ct)})</p>
-    ${absaetze('Der Wirtschaftsplan wird mit Beschluss der Eigentümerversammlung verbindlich.')}
+    <p class="hervor">Monatlicher Vorschuss (Hausgeld) ab ${datum(ab)}: ${euro(zeile.monat_hausgeld_ct)} (davon Rücklage ${euro(zeile.monat_ruecklage_ct)}), fällig jeweils bis zum ${tag}. eines Monats${konto}.</p>
+    ${absaetze('Beschlossen werden die Vorschüsse nach diesem Plan (§ 28 Abs. 1 WEG); sie gelten ab dem Beschluss der Eigentümerversammlung. Die Monatsbeträge sind aufgerundet – Unterschiede gleicht die Jahresabrechnung aus.')}
     <p class="unterschrift">Mit freundlichen Grüßen<br><br>${esc(absender.name)}</p>`;
   return brief({ absender, empfaenger: eigentuemer, betreff: `Wirtschaftsplan ${w.jahr} – ${objekt.bezeichnung}`,
     info: [['Objekt', objekt.bezeichnung], ['Einheit', zeile.einheit.bezeichnung]], inhalt });

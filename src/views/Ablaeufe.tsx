@@ -76,7 +76,9 @@ export function AblaufVorlagen(props: { onClose: () => void }) {
           fields={[{ key: 'titel', label: 'Name', required: true, wide: true }, { key: 'anlass', label: 'Stichtag heißt (z. B. „Auszug am“)', wide: true },
             { key: 'text', label: 'Schritte – je Zeile Tage und Text, z. B. „-30 Vorabnahme“', type: 'textarea', required: true, wide: true }]}
           onSave={async (r) => {
-            const schritte = ausText(r.text ?? '');
+            // Hints of steps kept by their text are not lost when the steps are edited as lines.
+            const alt = new Map(((edit.schritte ?? []) as Row[]).map((s) => [s.titel, s.hinweis]));
+            const schritte = ausText(r.text ?? '').map((s) => (alt.get(s.titel) ? { ...s, hinweis: alt.get(s.titel) } : s));
             if (!schritte.length) throw new Error('Bitte mindestens einen Schritt eintragen, z. B. „0 Termin“.');
             return call('save', 'ablaeufe', { id: r.id, titel: r.titel, anlass: r.anlass, schritte: JSON.stringify(schritte) });
           }}

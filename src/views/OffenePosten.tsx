@@ -4,8 +4,15 @@ import { useLoad } from '../useLoad';
 import { Betrag, Dialog } from '../ui';
 import { absaetze, absenderAus, alsPdf, brief, esc, tabelle, empfaengerVon } from '../dokument';
 import { L } from '../navi';
+import { girocode } from '../girocode';
 
 const STUFEN = ['Zahlungserinnerung', '1. Mahnung', '2. Mahnung', 'Letzte Mahnung'];
+// Dunning work list: where each account with arrears stands.
+const GRUPPEN: [string, string, string][] = [
+  ['mahnen', 'Jetzt mahnen', 'rot'], ['frist', 'Frist läuft', 'gelb'], ['ratenplan', 'Ratenplan', 'akzent'],
+  ['zahlungsziel', 'Zahlungsziel verschoben', 'akzent'], ['zurueckgestellt', 'Zurückgestellt', ''], ['anwalt', 'Beim Anwalt', ''],
+];
+const GRUPPE_CHIP = Object.fromEntries(GRUPPEN.map(([g, , c]) => [g, c]));
 const plusTage = (iso: string, n: number) => {
   const d = new Date(iso + 'T00:00:00Z');
   d.setUTCDate(d.getUTCDate() + n);
@@ -18,10 +25,15 @@ export function OffenePosten(props: { objekt: Row; modus: Modus }) {
   const [detail, setDetail] = useState<Row | null>(null);
   const [mahnen, setMahnen] = useState<Row[] | null>(null);
   const [minVerzug, setMinVerzug] = useState(14);
+  const [gruppe, setGruppe] = useState<string | null>(null);
+  const [status, setStatus] = useState<Row | null>(null);
 
   const rueckstand = (rows ?? []).filter((r) => r.summe_ct > 0);
   const guthaben = (rows ?? []).filter((r) => r.summe_ct < 0);
-  const faellig = rueckstand.filter((r) => r.offen.some((o: Row) => o.verzug >= minVerzug));
+  // Only accounts due for a reminder go into the run: not with the lawyer, set aside, on a plan or within the last deadline.
+  const faellig = rueckstand.filter((r) => r.vorrat?.gruppe === 'mahnen' && r.offen.some((o: Row) => o.verzug >= minVerzug));
+  const zahl = (g: string) => rueckstand.filter((r) => r.vorrat?.gruppe === g).length;
+  const sichtbar = gruppe ? rueckstand.filter((r) => r.vorrat?.gruppe === gruppe) : rueckstand;
 
   return (
     <section>
@@ -40,24 +52,34 @@ export function OffenePosten(props: { objekt: Row; modus: Modus }) {
         <label>Mahnen ab <input className="kurz num" type="number" value={minVerzug} onChange={(e) => setMinVerzug(Number(e.target.value))} /> Tagen Verzug</label>
         <button className="primary" disabled={!faellig.length} onClick={() => setMahnen(faellig)}>Mahnlauf ({faellig.length})</button>
       </div>
+      {rueckstand.length > 0 && (
+        <div className="chips vorrat" role="group" aria-label="Arbeitsvorrat">
+          <button className={`chip ${gruppe === null ? 'akzent' : ''}`} aria-pressed={gruppe === null} onClick={() => setGruppe(null)}>Alle ({rueckstand.length})</button>
+          {GRUPPEN.filter(([g]) => zahl(g)).map(([g, label]) => (
+            <button key={g} className={`chip ${gruppe === g ? 'akzent' : ''}`} aria-pressed={gruppe === g} onClick={() => setGruppe(gruppe === g ? null : g)}>{label} ({zahl(g)})</button>
+          ))}
+        </div>
+      )}
       <table>
-        <thead><tr><th>Konto</th><th>Name</th><th>Offene Monate</th><th className="num">Ältester Verzug</th><th>Letzte Mahnung</th><th className="num">Rückstand</th><th /></tr></thead>
+        <thead><tr><th>Konto</th><th>Name</th><th>Offene Monate</th><th className="num">Ältester Verzug</th><th>Letzte Mahnung</th><th>Stand</th><th className="num">Rückstand</th><th /></tr></thead>
         <tbody>
-          {rueckstand.map((r) => (
+          {sichtbar.map((r) => (
             <tr key={r.konto.id} onDoubleClick={() => setDetail(r)} data-ziel={r.konto.vertrag_id ? `vertrag:${r.konto.vertrag_typ}:${r.konto.vertrag_id}` : `konto:${r.konto.id}`}>
               <td className="num"><L zu={{ konto: r.konto.id }}>{r.konto.nr}</L></td>
               <td>{r.konto.vertrag_id ? <L zu={{ vertrag: r.konto.vertrag_id, typ: r.konto.vertrag_typ }}>{r.konto.bezeichnung}</L> : r.konto.bezeichnung}</td>
               <td className="klein">{r.offen.map((o: Row) => (o.monat ? `${o.monat.slice(5)}/${o.monat.slice(2, 4)}${o.status === 'teilweise bezahlt' ? ' (teilw.)' : ''}` : o.text)).join(', ')}</td>
               <td className="num">{Math.max(0, ...r.offen.map((o: Row) => o.verzug))} Tage</td>
-              <td>{r.konto.mahnstufe ? `${STUFEN[Math.min(r.konto.mahnstufe, 3)]} am ${datum(r.konto.letzte_mahnung)}` : '–'}</td>
+              <td>{r.konto.mahnstufe != null ? `${STUFEN[Math.min(r.konto.mahnstufe, 3)]} am ${datum(r.konto.letzte_mahnung)}` : '–'}</td>
+              <td><span className={`chip ${GRUPPE_CHIP[r.vorrat?.gruppe] ?? ''}`} title={r.konto.mahn_notiz ?? undefined}>{r.vorrat?.text}</span></td>
               <td className="num"><b>{euro(r.summe_ct)}</b></td>
               <td className="aktionen">
                 <button onClick={() => setDetail(r)}>Details</button>
+                <button onClick={() => setStatus(r)}>Stand ändern</button>
                 <button onClick={() => setMahnen([r])}>Mahnen</button>
               </td>
             </tr>
           ))}
-          {!rueckstand.length && <tr><td colSpan={7} className="hinweis">Keine Rückstände.</td></tr>}
+          {!rueckstand.length && <tr><td colSpan={8} className="hinweis">Keine Rückstände.</td></tr>}
         </tbody>
       </table>
       {guthaben.length > 0 && (
@@ -97,6 +119,7 @@ export function OffenePosten(props: { objekt: Row; modus: Modus }) {
         </Dialog>
       )}
       {mahnen && <Mahnlauf objekt={props.objekt} faelle={mahnen} stichtag={stichtag} onClose={() => { setMahnen(null); reload(); }} />}
+      {status && <MahnStatus fall={status} onClose={() => { setStatus(null); reload(); }} />}
     </section>
   );
 }
@@ -135,12 +158,15 @@ function Mahnlauf(props: { objekt: Row; faelle: Row[]; stichtag: string; onClose
         a.stufe >= 3 ? 'Sollte der Betrag bis dahin nicht eingehen, werden wir ohne weitere Ankündigung rechtliche Schritte einleiten.' : '',
         'Sollten Sie die Zahlung inzwischen geleistet haben, betrachten Sie dieses Schreiben bitte als gegenstandslos.',
       ].filter(Boolean).join('\n\n');
+      const zahlAn = { ...absender, iban: props.objekt.iban || absender.iban, bank: props.objekt.bank || absender.bank, bic: props.objekt.bic || absender.bic,
+        kontoinhaber: props.objekt.zahlung_empfaenger || absender.kontoinhaber };
+      const qr = girocode(zahlAn, f.summe_ct + geb, `Konto ${f.konto.nr} ${STUFEN[a.stufe]} ${props.objekt.bezeichnung}`);
       seiten.push(brief({
-        absender: { ...absender, iban: props.objekt.iban || absender.iban, bank: props.objekt.bank || absender.bank, bic: props.objekt.bic || absender.bic },
+        absender: zahlAn,
         empfaenger: an,
         betreff: `${STUFEN[a.stufe]} – ${props.objekt.bezeichnung}`,
         info: [['Objekt', props.objekt.bezeichnung], ['Konto', String(f.konto.nr)]],
-        inhalt: `<p>${esc(anrede(an))}</p>${absaetze(text.join('\n\n'))}${posten}${absaetze(nach)}<p class="unterschrift">Mit freundlichen Grüßen<br><br>${esc(absender.name)}</p>`,
+        inhalt: `<p>${esc(anrede(an))}</p>${absaetze(text.join('\n\n'))}${posten}${absaetze(nach)}${qr}<p class="unterschrift">Mit freundlichen Grüßen<br><br>${esc(absender.name)}</p>`,
       }));
       await call('mahnen', { konto_id: f.konto.id, stufe: a.stufe, gebuehr_ct: geb, frist, datum: heute(), offen_ct: f.summe_ct });
     }
@@ -179,6 +205,39 @@ function Mahnlauf(props: { objekt: Row; faelle: Row[]; stichtag: string; onClose
           })}
         </tbody>
       </table>
+    </Dialog>
+  );
+}
+
+// Sets where an account stands: with the lawyer, set aside until a day, or a later payment date agreed with the tenant.
+function MahnStatus(props: { fall: Row; onClose: () => void }) {
+  const k = props.fall.konto;
+  const [status, setStatus] = useState<string>(k.mahn_status ?? '');
+  const [bis, setBis] = useState<string>(k.mahn_bis ?? plusTage(heute(), 30));
+  const [notiz, setNotiz] = useState<string>(k.mahn_notiz ?? '');
+  const [fehler, setFehler] = useState('');
+  const speichern = async () => {
+    try { await call('mahnStatusSetzen', k.id, { status: status || null, bis: status && status !== 'anwalt' ? bis : null, notiz: notiz || null }); props.onClose(); }
+    catch (e) { setFehler((e as Error).message); }
+  };
+  return (
+    <Dialog titel={`Stand im Mahnwesen – ${k.bezeichnung}`} onClose={props.onClose} aktionen={<button className="primary" onClick={speichern}>Speichern</button>}>
+      <div className="maske">
+        <label>Stand
+          <select value={status} onChange={(e) => setStatus(e.target.value)}>
+            <option value="">normal mahnen</option>
+            <option value="zahlungsziel">Zahlungsziel verschieben</option>
+            <option value="zurueckgestellt">Zurückstellen</option>
+            <option value="anwalt">Beim Anwalt</option>
+          </select>
+        </label>
+        {status && status !== 'anwalt' && <label>bis<input type="date" value={bis} onChange={(e) => setBis(e.target.value)} /></label>}
+        {status && <label className="breit">Notiz<input value={notiz} onChange={(e) => setNotiz(e.target.value)} placeholder={status === 'anwalt' ? 'z. B. Kanzlei, Aktenzeichen' : 'z. B. Zusage per Telefon am …'} /></label>}
+      </div>
+      <p className="hinweis klein">{status === 'anwalt' ? 'Das Konto bleibt aus dem Mahnlauf und aus den Hinweisen im Cockpit, bis du den Stand wieder auf „normal mahnen“ setzt.'
+        : status ? 'Bis zu diesem Tag wird nicht gemahnt und das Cockpit meldet den Rückstand nicht; danach erscheint das Konto wieder unter „Jetzt mahnen“. Verzugszinsen laufen trotzdem.'
+          : 'Das Konto kommt in den nächsten Mahnlauf, sobald die Frist der letzten Mahnung abgelaufen ist.'}</p>
+      {fehler && <p className="fehler">{fehler}</p>}
     </Dialog>
   );
 }

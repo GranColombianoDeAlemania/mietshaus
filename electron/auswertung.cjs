@@ -14,6 +14,7 @@ const WK_GRUPPEN = [
 const { tageZwischen, einheitVonSql } = require('./buchhaltung.cjs');
 const { afaPosten, vorsteuerAbzug } = require('./inventar.cjs');
 const ortszeit = require('./zeit.cjs');
+const plusTageIso = (iso, n) => new Date(Date.parse(`${iso}T12:00:00Z`) + n * 864e5).toISOString().slice(0, 10);
 const maxD = (a, b) => (a > b ? a : b);
 const minD = (a, b) => (a < b ? a : b);
 const monatsEnde = (monat) => new Date(Date.UTC(Number(monat.slice(0, 4)), Number(monat.slice(5, 7)), 0)).toISOString().slice(0, 10);
@@ -84,7 +85,18 @@ module.exports = function auswertung({ db, all, get, tx, bh, ab }) {
         coalesce((SELECT sum(b.betrag_ct) FROM buchungen b JOIN konten g ON g.id = b.soll_id WHERE b.haben_id = ?1 AND g.klasse = 'geld' AND b.datum <= ?2), 0) -
         coalesce((SELECT sum(b.betrag_ct) FROM buchungen b JOIN konten g ON g.id = b.haben_id WHERE b.soll_id = ?1 AND g.klasse = 'geld' AND b.datum <= ?2), 0) AS s`,
     kontoId, bisDatum).s;
-    const p0 = zahlung(vorTag(von)), p1 = zahlung(bis);
+    // 10-day rule (§ 11 Abs. 1 S. 2 EStG): a payment in the last ten days of a year for a charge due in the first ten days of
+    // the next (January rent paid before New Year) belongs to the year it is for.
+    const faellig = (d) => get(`SELECT coalesce(sum(b.betrag_ct), 0) AS s FROM buchungen b JOIN konten e ON e.id = b.haben_id WHERE b.soll_id = ? AND e.klasse = 'einnahme' AND b.datum <= ?`, kontoId, d).s;
+    const zehnTage = (ende) => {
+      const p = zahlung(ende), soll = faellig(ende);
+      if (p <= soll) return p;
+      const vorher = zahlung(plusTageIso(ende, -10));
+      const jan = faellig(plusTageIso(ende, 10)) - soll;
+      return p - Math.min(p - Math.max(soll, vorher), jan);
+    };
+    const istJahresende = (d) => d.slice(5) === '12-31';
+    const p0 = istJahresende(vorTag(von)) ? zehnTage(vorTag(von)) : zahlung(vorTag(von)), p1 = istJahresende(bis) ? zehnTage(bis) : zahlung(bis);
     // VAT charged on commercial rents counts as received VAT ('ust').
     const posten = all(`SELECT b.datum, b.id, e.kategorie, CASE WHEN b.soll_id = ?1 THEN b.betrag_ct ELSE -b.betrag_ct END AS ct
       FROM buchungen b JOIN konten e ON e.id = CASE WHEN b.soll_id = ?1 THEN b.haben_id ELSE b.soll_id END
@@ -113,9 +125,21 @@ module.exports = function auswertung({ db, all, get, tx, bh, ab }) {
       coalesce((SELECT sum(betrag_ct) FROM buchungen WHERE haben_id = k.id AND datum BETWEEN ?2 AND ?3), 0) AS betrag_ct
     FROM konten k WHERE k.objekt_id = ?1 AND k.klasse = 'kosten' AND k.aus_ruecklage = 0 ORDER BY k.nr`, objektId, von, bis).filter((k) => k.betrag_ct);
 
-  function afa(o, jahr) {
+  function afa(o, jahr, zusatzBasis = 0) {
     if (!o.kaufpreis_ct || !o.afa_satz) return 0;
-    const basis = (o.kaufpreis_ct + (o.kaufnebenkosten_ct ?? 0)) * (o.gebaeudeanteil ?? 100) / 100;
+    const basis = (o.kaufpreis_ct + (o.kaufnebenkosten_ct ?? 0)) * (o.gebaeudeanteil ?? 100) / 100 + zusatzBasis;
+    // Declining balance (§ 7 Abs. 5a EStG, new flats begun 10/2023–9/2029): 5 % of the remaining value every year, in the
+    // first year by months. Shown in the app as the rate 5.
+    if (Number(o.afa_satz) === 5 && o.kaufdatum) {
+      const kaufjahr = Number(o.kaufdatum.slice(0, 4));
+      if (kaufjahr > jahr) return 0;
+      let rest = basis, betrag = 0;
+      for (let j = kaufjahr; j <= jahr; j++) {
+        betrag = Math.round(rest * 0.05 * (j === kaufjahr ? (13 - Number(o.kaufdatum.slice(5, 7))) / 12 : 1));
+        rest -= betrag;
+      }
+      return betrag;
+    }
     const voll = Math.round(basis * o.afa_satz / 100);
     // Without a purchase date neither the first year nor the end can be told: the full rate, and the Anlage V asks for the date.
     if (!o.kaufdatum) return voll;
@@ -179,7 +203,31 @@ module.exports = function auswertung({ db, all, get, tx, bh, ab }) {
     // [label, total, deductible, rule]; the rule is only shown when part of the house is self-used.
     const flaeche = 'nach Fläche';
     const zinsRegel = manuell.zins_anteil != null ? `eigener Satz ${String(manuell.zins_anteil).replace('.', ',')} %` : 'nach Fläche, änderbar';
-    const afaGesamt = afa(o, jahr);
+    // 15 % rule (§ 6 Abs. 1 Nr. 1a EStG): once the repairs of the first three years exceed 15 % of the building's cost, they
+    // are acquisition costs – taken out of the maintenance of their year and written off with the building.
+    const an = anschaffungsnah(objektId, true)[0];
+    let zusatz = 0;
+    if (an && an.summe_netto_ct > an.grenze_ct) {
+      const ja = (y) => get(`SELECT coalesce(sum(CASE WHEN k.id = b.soll_id THEN b.betrag_ct ELSE -b.betrag_ct END), 0) AS s FROM buchungen b JOIN konten k ON k.id IN (b.soll_id, b.haben_id)
+        WHERE k.objekt_id = ? AND k.kategorie = 'instandhaltung' AND b.datum BETWEEN ? AND ?`, objektId, [`${y}-01-01`, an.kaufdatum].sort().pop(), [`${y}-12-31`, an.frist].sort()[0]).s;
+      for (let y = Number(an.kaufdatum.slice(0, 4)); y <= Math.min(jahr, Number(an.frist.slice(0, 4))); y++) zusatz += ja(y);
+      const diesesJahr = jahr <= Number(an.frist.slice(0, 4)) ? ja(jahr) : 0;
+      if (diesesJahr) korrektur('erhaltung', -diesesJahr, 'abzüglich anschaffungsnahe Herstellungskosten – 15-%-Grenze überschritten, über die AfA (§ 6 Abs. 1 Nr. 1a EStG)');
+    }
+    const afaGesamt = afa(o, jahr, zusatz);
+    // Letting below 66 % of the local rent (§ 21 Abs. 2 EStG): from 50 % on the costs count fully only with a positive
+    // overall forecast, below 50 % only in proportion.
+    const verbilligt = [];
+    for (const v of all(`SELECT m.*, e.wohnflaeche, e.bezeichnung AS einheit FROM mietverhaeltnisse m JOIN einheiten e ON e.id = m.einheit_id
+        WHERE e.objekt_id = ? AND coalesce(e.art, 'Wohnung') = 'Wohnung' AND m.beginn <= ? AND (m.ende IS NULL OR m.ende = '' OR m.ende >= ?)`, objektId, bis, von)) {
+      const vgl = vergleichsmieteQm(v.einheit_id, bis);
+      if (!vgl?.ct || !v.wohnflaeche) continue;
+      const b = bh.betraege('miete', v.id, [bis, v.ende || bis].sort()[0]);
+      const ist = (b.kaltmiete_ct ?? 0) + (b.bk_vz_ct ?? 0) + (b.hk_vz_ct ?? 0);
+      const orts = Math.round(vgl.ct * v.wohnflaeche) + (b.bk_vz_ct ?? 0) + (b.hk_vz_ct ?? 0);
+      const quote = orts ? ist / orts : 1;
+      if (quote < 0.66) verbilligt.push({ einheit: v.einheit, quote, vertrag_id: v.id });
+    }
     // Inventory: items of a unit count for the days it was let (or vacant), the house's own items by the rented share.
     const mitVorsteuer = vorsteuerAbzug(o.vorsteuer_quote);
     const T = tageZwischen(von, bis) + 1;
@@ -220,6 +268,7 @@ module.exports = function auswertung({ db, all, get, tx, bh, ab }) {
       // Booked as purchases but not (fully) entered in the inventory: nothing of it is deducted yet.
       anschaffung_ohne_inventar_ct: Math.max(0, anschaffungGebucht - inventarGekauft),
       gemischt: o.art === 'gemischt',
+      anschaffungsnah_ct: zusatz, verbilligt,
     };
   }
 
@@ -319,7 +368,7 @@ module.exports = function auswertung({ db, all, get, tx, bh, ab }) {
 
   // 15 % rule (§ 6 Abs. 1 Nr. 1a EStG): repairs and modernisation within three years after purchase that exceed 15 %
   // of the building's purchase cost (net, without VAT) become acquisition costs and can only be depreciated.
-  function anschaffungsnah(objektId = null) {
+  function anschaffungsnah(objektId = null, alle = false) {
     const t = ortszeit.heute();
     return all(`SELECT * FROM objekte WHERE kaufdatum IS NOT NULL AND kaufpreis_ct > 0 AND (?1 IS NULL OR id = ?1)`, objektId).map((o) => {
       const [y, m, d] = o.kaufdatum.split('-').map(Number);
@@ -355,7 +404,7 @@ module.exports = function auswertung({ db, all, get, tx, bh, ab }) {
       return { objekt_id: o.id, objekt: o.bezeichnung, kaufdatum: o.kaufdatum, frist, laeuft: t <= frist, gebaeude_ct: gebaeude, grenze_ct: grenze,
         vermietet_anteil: va.selbst.length ? va.anteil : null, gebaeude_ganz_ct: gebaeudeGanz,
         summe_brutto_ct: brutto, summe_netto_ct: netto, anteil: grenze ? netto / grenze : 0, rest_ct: Math.max(0, grenze - netto) };
-    }).filter((w) => w.laeuft || w.frist >= `${Number(t.slice(0, 4)) - 1}-01-01`);
+    }).filter((w) => alle || w.laeuft || w.frist >= `${Number(t.slice(0, 4)) - 1}-01-01`);
   }
 
   // Files for the tax adviser: journal, balance list and account sheets as CSV, plus the receipts of the year.

@@ -71,6 +71,13 @@ const GLEICHE_RECHNUNG = (x, d) => `${x}.id <> ${d}.id AND ${x}.status <> 'papie
   AND (${x}.datum IS NULL OR ${d}.datum IS NULL OR ${x}.datum = ${d}.datum)
   AND (coalesce(${x}.absender, '') = coalesce(${d}.absender, '') OR (${x}.person_id IS NOT NULL AND ${x}.person_id = ${d}.person_id)
     OR (json_extract(${x}.steller, '$.ust_id') IS NOT NULL AND json_extract(${x}.steller, '$.ust_id') = json_extract(${d}.steller, '$.ust_id')))`;
+// SQL: document x is probably the same invoice as d although the exact match fails – no or a misread invoice number:
+// same sender and amount, dated within seven days, and not two different invoice numbers.
+const AEHNLICHE_RECHNUNG = (x, d) => `${x}.id <> ${d}.id AND ${x}.status <> 'papierkorb' AND ${x}.typ = ${d}.typ AND ${x}.betrag_ct IS NOT NULL AND ${x}.betrag_ct = ${d}.betrag_ct
+  AND ${x}.datum IS NOT NULL AND ${d}.datum IS NOT NULL AND abs(julianday(${x}.datum) - julianday(${d}.datum)) <= 7
+  AND NOT (${x}.rechnungsnr IS NOT NULL AND ${d}.rechnungsnr IS NOT NULL AND lower(replace(${x}.rechnungsnr, ' ', '')) <> lower(replace(${d}.rechnungsnr, ' ', '')))
+  AND (lower(coalesce(${x}.absender, '#')) = lower(coalesce(${d}.absender, '##')) OR (${x}.person_id IS NOT NULL AND ${x}.person_id = ${d}.person_id)
+    OR (json_extract(${x}.steller, '$.ust_id') IS NOT NULL AND json_extract(${x}.steller, '$.ust_id') = json_extract(${d}.steller, '$.ust_id')))`;
 const PAPIERKORB_TAGE = 30;
 const mitJson = (d) => d && { ...d, steller: json(d.steller), steuer: json(d.steuer), positionen: json(d.positionen) };
 
@@ -158,6 +165,11 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME, wl }) {
     return get(`SELECT x.id, x.titel, x.datum, x.status, x.buchung_id, (SELECT b.datum FROM buchungen b WHERE b.id = x.buchung_id) AS gebucht_am
       FROM dokumente d JOIN dokumente x ON ${GLEICHE_RECHNUNG('x', 'd')} WHERE d.id = ? ${abgelegt ? "AND (x.status = 'abgelegt' OR x.buchung_id IS NOT NULL)" : ''}
       ORDER BY x.buchung_id IS NOT NULL DESC, x.status = 'abgelegt' DESC, x.id LIMIT 1`, id) ?? null;
+  }
+  // A probable copy (see AEHNLICHE_RECHNUNG) that is filed or booked already: asked about before booking, never blocked.
+  function aehnlich(id) {
+    return get(`SELECT x.id, x.titel, x.datum, x.betrag_ct, x.absender, x.rechnungsnr, x.buchung_id FROM dokumente d JOIN dokumente x ON ${AEHNLICHE_RECHNUNG('x', 'd')}
+      WHERE d.id = ? AND (x.status = 'abgelegt' OR x.buchung_id IS NOT NULL) AND NOT (${GLEICHE_RECHNUNG('x', 'd')}) ORDER BY x.buchung_id IS NOT NULL DESC, x.id LIMIT 1`, id) ?? null;
   }
   const mitDuplikat = (d) => d && { ...d, duplikat: d.status === 'papierkorb' ? null : duplikat(d.id) };
   function duplikatSperre(id) {
@@ -334,6 +346,7 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME, wl }) {
     kontaktSicherstellen,
     objektBeiStandort,
     dokumentDuplikat: (id, opt) => duplikat(id, opt),
+    dokumentAehnlich: (id) => aehnlich(id),
     dokumentTypen: () => TYPEN,
 
     // Stores recognised text and fills empty fields from the rule-based extraction.
@@ -527,7 +540,8 @@ module.exports = function archiv({ db, all, get, tx, PERSON_NAME, wl }) {
     // Invoices with their booking and payment state.
     rechnungen: ({ objekt_id = null, jahr = null } = {}) => all(`SELECT d.id, d.titel, d.datum, d.faellig, d.betrag_ct, d.absender, d.rechnungsnr,
         d.iban, d.buchung_id, d.datei, d.status, d.objekt_id, o.bezeichnung AS objekt, b.datum AS gebucht_am, k.id AS konto_id, k.bezeichnung AS konto, g.klasse AS gegen_klasse,
-        (SELECT min(x.id) FROM dokumente x WHERE ${GLEICHE_RECHNUNG('x', 'd')}) AS duplikat_von
+        (SELECT min(x.id) FROM dokumente x WHERE ${GLEICHE_RECHNUNG('x', 'd')}) AS duplikat_von,
+        (SELECT min(x.id) FROM dokumente x WHERE ${AEHNLICHE_RECHNUNG('x', 'd')}) AS aehnlich_wie
       FROM dokumente d LEFT JOIN objekte o ON o.id = d.objekt_id LEFT JOIN buchungen b ON b.id = d.buchung_id
       LEFT JOIN konten k ON k.id = b.soll_id LEFT JOIN konten g ON g.id = b.haben_id
       WHERE d.typ IN ('Rechnung', 'Gutschrift', 'Mahnung') AND d.status <> 'papierkorb' AND ${IN_WELT('d')} AND (?1 IS NULL OR d.objekt_id = ?1)

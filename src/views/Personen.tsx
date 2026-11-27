@@ -1,5 +1,7 @@
 import { useState } from 'react';
-import { call, personName, type Row } from '../api';
+import { call, datum, euro, fehler, personName, type Row } from '../api';
+import { alsPdf, bericht, esc, tabelle } from '../dokument';
+import { bestaetigen, hinweis } from '../frage';
 import { FormDialog, type Field } from '../Form';
 import { useLoad } from '../useLoad';
 import { useAktion } from '../aktion';
@@ -28,6 +30,24 @@ export const PERSON_FELDER: Field[] = [
   { key: 'web', label: 'Website', wide: true },
   { key: 'notiz', label: 'Notiz', type: 'textarea', section: 'Sonstiges' },
 ];
+
+// GDPR, Art. 15: a copy of everything the app holds about the person.
+async function datenauskunft(id: number) {
+  try {
+    const d = await call('personDatenauskunft', id);
+    const p = d.person;
+    const stamm = tabelle(['Angabe', 'Wert'], [['Name', esc(personName(p))], ['Anschrift', esc([p.strasse, [p.plz, p.ort].filter(Boolean).join(' ')].filter(Boolean).join(', '))],
+      ['Telefon', esc(p.telefon || p.mobil || '')], ['E-Mail', esc(p.email ?? '')], ['Geburtsdatum', datum(p.geburtsdatum)], ['IBAN', esc(p.iban ?? '')], ['Notiz', esc(p.notiz ?? '')]]);
+    const vt = d.vertraege.length ? tabelle(['Art', 'Objekt', 'Einheit', 'Beginn', 'Ende'], d.vertraege.map((v: Row) => [v.art, esc(v.objekt), esc(v.einheit), datum(v.beginn), datum(v.ende)])) : '<p>keine</p>';
+    const bu = d.buchungen.length ? tabelle(['Datum', 'Text', '#rBetrag'], d.buchungen.map((b: Row) => [datum(b.datum), esc(b.text ?? ''), `#r${euro(b.betrag_ct)}`])) : '<p>keine</p>';
+    const dok = d.dokumente.length ? tabelle(['Datum', 'Art', 'Titel'], d.dokumente.map((x: Row) => [datum(x.datum), esc(x.typ ?? ''), esc(x.titel ?? '')])) : '<p>keine</p>';
+    const it = d.interessent.length ? tabelle(['Einheit', 'Status', 'Personen', 'Einkommen', 'Beruf'], d.interessent.map((x: Row) => [esc(x.einheit), esc(x.status), x.personen ?? '', x.einkommen_ct ? euro(x.einkommen_ct) : '', esc(x.beruf ?? '')])) : '<p>keine</p>';
+    await alsPdf([bericht('Auskunft über gespeicherte Daten (Art. 15 DSGVO)', `${personName(p)} · Stand ${datum(d.erstellt)}`,
+      `<h2>Stammdaten</h2>${stamm}<h2>Verträge</h2>${vt}<h2>Buchungen auf Ihren Konten</h2>${bu}<h2>Dokumente</h2>${dok}<h2>Bewerbungen</h2>${it}
+      <p class="klein">Zweck: Verwaltung der Miet- bzw. Eigentumsverhältnisse (Art. 6 Abs. 1 lit. b und c DSGVO). Empfänger: keine, außer Behörden oder Dienstleistern, soweit das Gesetz es verlangt. Speicherdauer: für die Dauer des Vertrags, danach bis zum Ende der gesetzlichen Aufbewahrungsfristen (bis zu zehn Jahre). Sie haben das Recht auf Berichtigung, Löschung, Einschränkung und Beschwerde bei einer Aufsichtsbehörde.</p>`)],
+      `Datenauskunft ${personName(p)}`);
+  } catch (e) { fehler(e); }
+}
 
 export function Personen() {
   const navi = useNavi();
@@ -72,7 +92,11 @@ export function Personen() {
                 {p.anz_miete > 0 && <Chip art="miete">Mieter</Chip>}{' '}
                 {p.anz_eigentum > 0 && <Chip art="weg">Eigentümer</Chip>}
               </td>
-              <td className="aktionen"><button onClick={(e) => { e.stopPropagation(); setEdit(p); }}>Bearbeiten</button></td>
+              <td className="aktionen">
+                <button onClick={(e) => { e.stopPropagation(); datenauskunft(p.id); }} title="Auskunft über die gespeicherten Daten (Art. 15 DSGVO)">Auskunft</button>
+                {!!p.anonymisierbar && <button onClick={async (e) => { e.stopPropagation(); if (await bestaetigen(`Alle Verträge von ${personName(p)} sind seit über zehn Jahren beendet. Name und Kontaktdaten jetzt löschen (anonymisieren)? Die Buchungen bleiben, ohne Namen. Das lässt sich nicht rückgängig machen.`, { ja: 'Anonymisieren' })) { await call('personAnonymisieren', p.id); hinweis('Die Person wurde anonymisiert.'); reload(); } }}>Anonymisieren</button>}
+                <button onClick={(e) => { e.stopPropagation(); setEdit(p); }}>Bearbeiten</button>
+              </td>
             </tr>
           ))}
         </tbody>

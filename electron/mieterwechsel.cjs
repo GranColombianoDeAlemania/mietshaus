@@ -47,6 +47,9 @@ module.exports = function mieterwechsel({ db, all, get, tx, PERSON_NAME }) {
         if (v.ende && v.ende < r.zum) hinweise.push(`Der Vertrag endet bereits am ${datumDe(v.ende)}.`);
         return { ...r, art, durch, hinweise, wohnraum: false };
       }
+      // An end entered when the contract was made (no notice recorded yet) means a fixed term (§ 575 BGB).
+      if (v.ende && v.ende > zugang && !get('SELECT 1 FROM mieterwechsel WHERE vertrag_id = ?', vertrag_id))
+        hinweise.push(`Der Vertrag ist bis ${datumDe(v.ende)} befristet. Ordentlich kündbar ist er nur, wenn der Vertrag das vorsieht; sonst endet er zum vereinbarten Datum (oder durch außerordentliche Kündigung).`);
       const r = kalender.ordentlicheKuendigung({ zugang, durch, ueberlassung: v.beginn, land: land() });
       if (!r.rechtzeitig) hinweise.push(`Die Kündigung ist nach dem 3. Werktag (${datumDe(r.karenz_bis)}) zugegangen und wirkt deshalb erst zum ${datumDe(r.zum)}.`);
       else hinweise.push(`Zugegangen bis zum 3. Werktag (${datumDe(r.karenz_bis)}): Der laufende Monat zählt mit.`);

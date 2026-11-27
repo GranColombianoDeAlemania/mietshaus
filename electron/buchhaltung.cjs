@@ -30,8 +30,8 @@ const STANDARDKONTEN = [
   [40300, 'Entwässerung', 'kosten', 'bk03', 'beide', { umlagefaehig: 1, schluessel: 'personen' }],
   [41000, 'Heizkosten (Brennstoff, Wartung)', 'kosten', 'bk04', 'beide', { umlagefaehig: 1, heizkosten: 1 }],
   [41100, 'Warmwasserkosten', 'kosten', 'bk05', 'beide', { umlagefaehig: 1, heizkosten: 1 }],
-  [40400, 'Aufzug', 'kosten', 'bk07', 'beide', { umlagefaehig: 1 }],
-  [40500, 'Straßenreinigung', 'kosten', 'bk08', 'beide', { umlagefaehig: 1 }],
+  [40400, 'Aufzug', 'kosten', 'bk07', 'beide', { umlagefaehig: 1, p35a: 'handwerker' }],
+  [40500, 'Straßenreinigung', 'kosten', 'bk08', 'beide', { umlagefaehig: 1, p35a: 'dienstleistung' }],
   [40600, 'Müllbeseitigung', 'kosten', 'bk08', 'beide', { umlagefaehig: 1, schluessel: 'personen' }],
   [40700, 'Gebäudereinigung', 'kosten', 'bk09', 'beide', { umlagefaehig: 1, p35a: 'dienstleistung' }],
   [40800, 'Gartenpflege', 'kosten', 'bk10', 'beide', { umlagefaehig: 1, p35a: 'dienstleistung' }],
@@ -285,6 +285,18 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
   // Only charges due on or before the reference date count; a charge not paid on its due date is open in full.
   // Payments settle the oldest due month first. Money paid back to the tenant/owner (e.g. a returned direct
   // debit) reduces the payments, so the affected month becomes open again.
+  // Where an account with arrears stands in the dunning work: with the lawyer, set aside or a later payment date
+  // (until the day given), on an instalment plan, waiting for the deadline of the last reminder, or due for a reminder.
+  // k needs mahn_status, mahn_bis and – for the last two – mahn_frist and ratenplan from the open-items query.
+  function mahnVorrat(k, stichtag) {
+    if (k.mahn_status === 'anwalt') return { gruppe: 'anwalt', text: 'beim Anwalt' };
+    if (k.mahn_status && k.mahn_bis && k.mahn_bis >= stichtag)
+      return { gruppe: k.mahn_status, bis: k.mahn_bis, text: `${k.mahn_status === 'zahlungsziel' ? 'Zahlungsziel verschoben' : 'zurückgestellt'} bis ${k.mahn_bis.split('-').reverse().join('.')}` };
+    if (k.ratenplan) return { gruppe: 'ratenplan', text: 'Ratenplan läuft' };
+    if (k.mahn_frist && k.mahn_frist >= stichtag) return { gruppe: 'frist', bis: k.mahn_frist, text: `Frist der letzten Mahnung bis ${k.mahn_frist.split('-').reverse().join('.')}` };
+    return { gruppe: 'mahnen', text: k.mahn_status ? 'wieder mahnen – Zurückstellung abgelaufen' : 'mahnen' };
+  }
+
   function offenePostenKonto(kontoId, stichtag = ortszeit.heute()) {
     const lasten = all(`SELECT b.id, b.datum, b.monat, b.text, b.betrag_ct, g.kategorie FROM buchungen b JOIN konten g ON g.id = b.haben_id
       WHERE b.soll_id = ? AND g.klasse <> 'geld' AND b.datum <= ? ORDER BY b.datum, b.id`, kontoId, stichtag);
@@ -653,6 +665,22 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
     return Math.max(0, (b - a) * (z.faktor ?? 1));
   }
 
+  // The charges of all contracts of an object for some months, as the booking would make them (nothing is written).
+  function sollVorschau(objektId, vonMonat, bisMonat, typen) {
+    const zeilen = [];
+    for (const typ of typen) {
+      const vertraege = all(`SELECT v.*, e.bezeichnung AS einheit, ${PERSON_NAME} AS name FROM ${vertragTabelle(typ)} v
+        JOIN einheiten e ON e.id = v.einheit_id JOIN personen p ON p.id = v.person_id WHERE e.objekt_id = ?`, objektId);
+      for (const v of vertraege)
+        for (const monat of monatsliste(vonMonat, bisMonat)) zeilen.push(...sollZeilenVertrag(typ, v, monat));
+    }
+    for (const z of zeilen) z.abweichend = z.vorhanden && z.vorhanden_ct !== z.betrag_ct;
+    // Months in a closed (locked) period are not charged automatically any more.
+    const gesperrt = gesperrtBis();
+    for (const z of zeilen) if (z.datum <= gesperrt) z.vorhanden = true;
+    return zeilen;
+  }
+
   return {
     syncKonten,
     ustKontenAnlegen,
@@ -752,20 +780,54 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
     // A line whose booked amount differs from the contract is marked `abweichend` (see sollAbgleich).
     // The charges are worked out inside the transaction that books them: what is already booked cannot change in between.
     sollstellung: (objektId, vonMonat, bisMonat, nurVorschau = false, typen = ['miete', 'weg']) => (nurVorschau ? (f) => f() : tx)(() => {
-      const zeilen = [];
-      for (const typ of typen) {
-        const vertraege = all(`SELECT v.*, e.bezeichnung AS einheit, ${PERSON_NAME} AS name FROM ${vertragTabelle(typ)} v
-          JOIN einheiten e ON e.id = v.einheit_id JOIN personen p ON p.id = v.person_id WHERE e.objekt_id = ?`, objektId);
-        for (const v of vertraege)
-          for (const monat of monatsliste(vonMonat, bisMonat)) zeilen.push(...sollZeilenVertrag(typ, v, monat));
-      }
-      for (const z of zeilen) z.abweichend = z.vorhanden && z.vorhanden_ct !== z.betrag_ct;
-      // Months in a closed (locked) period are not charged automatically any more.
-      const gesperrt = gesperrtBis();
-      for (const z of zeilen) if (z.datum <= gesperrt) z.vorhanden = true;
+      const zeilen = sollVorschau(objektId, vonMonat, bisMonat, typen);
       if (!nurVorschau) for (const z of zeilen.filter((z) => !z.vorhanden)) sollEinfuegen(objektId, z);
       return zeilen;
     }),
+
+    // Trial run before the charges are booked: what would be booked, the total against the month before, and what
+    // looks odd – an amount that changes against the month before, a contract that starts or ends, a current
+    // contract that would get no charge at all, or an amount of zero or less.
+    sollProbelauf: (objektId, vonMonat, bisMonat, typen = ['miete', 'weg']) => {
+      const zeilen = sollVorschau(objektId, vonMonat, bisMonat, typen);
+      const neu = zeilen.filter((z) => !z.vorhanden);
+      const eur = (ct) => `${(ct / 100).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
+      const auffaellig = [];
+      const gruppen = new Map();
+      for (const z of neu) {
+        const key = `${z.typ}:${z.vertrag_id}:${z.monat}`;
+        if (!gruppen.has(key)) gruppen.set(key, { ...z, summe: 0 });
+        gruppen.get(key).summe += z.betrag_ct;
+        if (z.betrag_ct <= 0) auffaellig.push({ stufe: 'rot', vertrag_id: z.vertrag_id, typ: z.typ, monat: z.monat, text: `${z.name}: ${z.posten} über ${eur(z.betrag_ct)}` });
+      }
+      for (const g of gruppen.values()) {
+        const vor = monatPlus(g.monat, -1);
+        const vorher = get(`SELECT coalesce(sum(betrag_ct), 0) AS s FROM buchungen WHERE art = 'soll' AND soll_id = ? AND monat = ?`, g.konto_id, vor).s;
+        const v = get(`SELECT beginn, ende FROM ${vertragTabelle(g.typ)} WHERE id = ?`, g.vertrag_id);
+        if (v.beginn?.slice(0, 7) === g.monat) auffaellig.push({ stufe: 'info', vertrag_id: g.vertrag_id, typ: g.typ, monat: g.monat, text: `${g.name}: Einzug im ${g.monat.slice(5)}/${g.monat.slice(0, 4)} – erste Forderung ${eur(g.summe)}` });
+        else if (vorher && vorher !== g.summe) auffaellig.push({ stufe: 'gelb', vertrag_id: g.vertrag_id, typ: g.typ, monat: g.monat, text: `${g.name}: ${eur(vorher)} im Vormonat, jetzt ${eur(g.summe)}` });
+        if (v.ende && v.ende.slice(0, 7) === g.monat) auffaellig.push({ stufe: 'info', vertrag_id: g.vertrag_id, typ: g.typ, monat: g.monat, text: `${g.name}: Vertrag endet am ${v.ende.split('-').reverse().join('.')} – letzte Forderung` });
+      }
+      // Current contracts that would get nothing in a month (no amounts entered).
+      for (const typ of typen) {
+        for (const monat of monatsliste(vonMonat, bisMonat)) {
+          // The month of moving in may rightly have no charge (first charge in the following month).
+          for (const v of all(`SELECT v.id, ${PERSON_NAME} AS name FROM ${vertragTabelle(typ)} v JOIN einheiten e ON e.id = v.einheit_id JOIN personen p ON p.id = v.person_id
+              WHERE e.objekt_id = ? AND v.beginn < ? AND (v.ende IS NULL OR v.ende = '' OR v.ende >= ?)`, objektId, `${monat}-01`, `${monat}-01`)) {
+            if (!zeilen.some((z) => z.typ === typ && z.vertrag_id === v.id && z.monat === monat))
+              auffaellig.push({ stufe: 'rot', vertrag_id: v.id, typ, monat, text: `${v.name}: keine Forderung für ${monat.slice(5)}/${monat.slice(0, 4)} – Beträge im Vertrag fehlen?` });
+          }
+        }
+      }
+      const summe = neu.reduce((x, z) => x + z.betrag_ct, 0);
+      const vorMonat = monatPlus(vonMonat, -1);
+      const vormonat = get(`SELECT coalesce(sum(b.betrag_ct), 0) AS s FROM buchungen b JOIN konten k ON k.id = b.soll_id
+        WHERE k.objekt_id = ? AND k.klasse = 'person' AND k.vertrag_typ IN (${typen.map(() => '?').join(',')}) AND b.art = 'soll' AND b.monat = ?`, objektId, ...typen, vorMonat).s;
+      const rang = { rot: 0, gelb: 1, info: 2 };
+      auffaellig.sort((a, b) => rang[a.stufe] - rang[b.stufe] || a.monat.localeCompare(b.monat));
+      return { anzahl: neu.length, summe_ct: summe, vertraege: new Set(neu.map((z) => `${z.typ}:${z.vertrag_id}`)).size,
+        monate: monatsliste(vonMonat, bisMonat).length, vormonat_ct: vormonat, abweichend: zeilen.filter((z) => z.abweichend).length, auffaellig };
+    },
 
     sollAbgleich: (typ, vertragId, opt) => sollAbgleich(typ, vertragId, opt),
     sollAutomatisch,
@@ -791,12 +853,14 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
 
     offenePosten: (objektId, stichtag = ortszeit.heute(), typ = null) => {
       const konten = all(`SELECT k.*, (SELECT max(stufe) FROM mahnungen m WHERE m.konto_id = k.id) AS mahnstufe,
-          (SELECT max(datum) FROM mahnungen m WHERE m.konto_id = k.id) AS letzte_mahnung
+          (SELECT max(datum) FROM mahnungen m WHERE m.konto_id = k.id) AS letzte_mahnung,
+          (SELECT frist FROM mahnungen m WHERE m.konto_id = k.id ORDER BY datum DESC, id DESC LIMIT 1) AS mahn_frist,
+          (SELECT count(*) FROM ratenplaene r WHERE r.konto_id = k.id AND coalesce(r.status, 'aktiv') = 'aktiv') AS ratenplan
         FROM konten k WHERE k.objekt_id = ? AND k.klasse = 'person' AND (?2 IS NULL OR k.vertrag_typ = ?2) ORDER BY k.nr`, objektId, typ);
       return konten.map((k) => {
         const op = offenePostenKonto(k.id, stichtag);
         const v = get(`SELECT v.*, p.* , v.id AS vertrag_id FROM ${vertragTabelle(k.vertrag_typ)} v JOIN personen p ON p.id = v.person_id WHERE v.id = ?`, k.vertrag_id);
-        return { konto: k, person: v, ...op };
+        return { konto: k, person: v, ...op, vorrat: mahnVorrat(k, stichtag) };
       }).filter((x) => x.summe_ct !== 0 || x.offen.length);
     },
 
@@ -828,6 +892,17 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
     }),
 
     mahnungen: (kontoId) => all('SELECT * FROM mahnungen WHERE konto_id = ? ORDER BY datum DESC', kontoId),
+
+    // Dunning work list: an account can be with the lawyer, set aside until a day, or get a later payment date. Such
+    // accounts stay out of the dunning run and out of the cockpit's arrears hints until that day (the lawyer: until
+    // the status is cleared).
+    mahnStatusSetzen: (kontoId, { status = null, bis = null, notiz = null } = {}) => {
+      if (status && !['anwalt', 'zurueckgestellt', 'zahlungsziel'].includes(status)) throw new Error('Unbekannter Mahnstatus.');
+      if ((status === 'zurueckgestellt' || status === 'zahlungsziel') && !bis) throw new Error('Bitte das Datum angeben, bis wann.');
+      const k = get('SELECT id FROM konten WHERE id = ? AND klasse = ?', kontoId, 'person');
+      if (!k) throw new Error('Das Konto gibt es nicht.');
+      db.prepare('UPDATE konten SET mahn_status = ?, mahn_bis = ?, mahn_notiz = ? WHERE id = ?').run(status, status === 'anwalt' ? null : bis, status ? notiz : null, kontoId);
+    },
 
     anpassungen: (typ, vertragId) => all('SELECT * FROM anpassungen WHERE vertrag_typ = ? AND vertrag_id = ? ORDER BY gueltig_ab', typ, vertragId),
 
@@ -871,6 +946,13 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
           WHERE b.objekt_id = ? AND b.art = 'bank' AND g.klasse = 'geld' AND b.betrag_ct = ? AND b.import_ref IS NOT NULL
             AND b.datum BETWEEN date(?, '-2 days') AND date(?, '+2 days') ORDER BY abs(julianday(b.datum) - julianday(?))`,
         objektId, Math.abs(u.betrag_ct), u.datum, u.datum, u.datum).find((b) => quelle(b.import_ref) !== quelle(u.ref) && !vergeben.has(b.id));
+      // Traffic light for each line: green = sure (IBAN or a learned rule and the amount fit, or a recognised invoice),
+      // yellow = a proposal to check, red = nothing found or probably a duplicate. Only green lines are booked in one go.
+      const ampel = (r, farbe, grund) => {
+        if (r.doppelt) return { ...r, ampel: 'grau', grund: 'bereits gebucht' };
+        if (r.vermutlich_doppelt) return { ...r, ampel: 'rot', grund: r.vermutlich_doppelt };
+        return { ...r, ampel: farbe, grund };
+      };
       return umsaetze.map((u) => {
         const doppelt = schonGebucht(u.ref);
         const gleich = doppelt ? null : aehnlich(u);
@@ -885,7 +967,7 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
           r.ruecklast = true;
           r.konto_id = k?.id ?? null;
           r.hinweis = k ? `Rücklastschrift – wird ${k.bezeichnung} wieder belastet` : 'Rücklastschrift – Person bitte wählen';
-          return r;
+          return ampel(r, k ? 'gelb' : 'rot', 'Rücklastschrift – immer selbst prüfen');
         }
         if (u.betrag_ct < 0) {
           const betrag = -u.betrag_ct;
@@ -905,10 +987,25 @@ module.exports = function buchhaltung({ db, all, get, tx, save, aktuell, PERSON_
             }
           }
         }
-        if (!r.konto_id) r.konto_id = regeln.find((x) => text.includes(x.muster.toLowerCase()))?.konto_id ?? null;
-        if (!r.konto_id && u.iban) r.konto_id = personKonten.find((k) => norm(k.iban) && norm(k.iban) === norm(u.iban))?.id ?? null;
-        if (!r.konto_id && u.name) r.konto_id = personKonten.find((k) => k.nachname && u.betrag_ct > 0 && text.includes(k.nachname.toLowerCase()))?.id ?? null;
-        return r;
+        const regel = regeln.find((x) => text.includes(x.muster.toLowerCase()));
+        if (r.dokument_id || r.projektposten_id) {
+          r.konto_id ??= regel?.konto_id ?? null;
+          return ampel(r, r.konto_id ? 'gruen' : 'gelb', r.konto_id ? 'Rechnung mit Betrag erkannt' : 'Rechnung erkannt, Kostenart fehlt');
+        }
+        const perIban = u.iban ? personKonten.find((k) => norm(k.iban) && norm(k.iban) === norm(u.iban)) : null;
+        const perName = u.name && u.betrag_ct > 0 ? personKonten.find((k) => k.nachname && text.includes(k.nachname.toLowerCase())) : null;
+        r.konto_id = regel?.konto_id ?? perIban?.id ?? perName?.id ?? null;
+        if (!r.konto_id) return ampel(r, 'rot', 'Kein Gegenkonto erkannt');
+        const k = personKonten.find((x) => x.id === r.konto_id);
+        if (!k) return ampel(r, 'gruen', `Gelernte Zuordnung „${regel.muster}“`);
+        // A tenant's or owner's payment is sure when it matches what they owe: the monthly amount or the open amount.
+        const b = betraege(k.vertrag_typ, k.vertrag_id, u.datum);
+        const monat = k.vertrag_typ === 'weg' ? (b.hausgeld_ct ?? 0) + (b.ruecklage_ct ?? 0) : (b.kaltmiete_ct ?? 0) + (b.bk_vz_ct ?? 0) + (b.hk_vz_ct ?? 0) + (b.sonstiges_ct ?? 0);
+        const offen = Math.max(0, offenePostenKonto(k.id, u.datum).summe_ct);
+        const passt = u.betrag_ct > 0 && (u.betrag_ct === monat || u.betrag_ct === offen);
+        const wer = perIban?.id === k.id ? 'IBAN' : regel?.konto_id === k.id ? 'gelernte Zuordnung' : 'Name';
+        if (wer !== 'Name' && passt) return ampel(r, 'gruen', `${wer} und Betrag passen`);
+        return ampel(r, 'gelb', wer === 'Name' ? 'Nur über den Namen erkannt – bitte prüfen' : `${wer} passt, Betrag weicht ab (fällig ${(monat / 100).toFixed(2).replace('.', ',')} €)`);
       });
     },
 

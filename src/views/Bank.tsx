@@ -6,7 +6,8 @@ import { KontoSelect, Tabs } from '../ui';
 import { ibanGueltig, leseKontoauszug, painLastschrift, type Umsatz } from '../bankformate';
 import { BankAbruf } from './Bankzugang';
 
-type Zeile = Umsatz & { konto_id: number | '' | null; doppelt: boolean; vermutlich_doppelt?: string | null; an: boolean; lernen: boolean };
+type Zeile = Umsatz & { konto_id: number | '' | null; doppelt: boolean; vermutlich_doppelt?: string | null; an: boolean; lernen: boolean; ampel?: string; grund?: string };
+const AMPEL_LABEL: Record<string, string> = { gruen: 'sicher', gelb: 'prüfen', rot: 'offen', grau: 'gebucht' };
 
 export function Bank(props: { objekt: Row; modus: Modus }) {
   const [tab, setTab] = useState<'import' | 'lastschrift' | 'regeln'>('import');
@@ -36,9 +37,11 @@ function Import(props: { objekt: Row }) {
   // Transactions from a file or from the bank (FinTS) go the same way: proposals, already booked ones marked.
   async function vorschlagen(umsaetze: Umsatz[], quelle: string) {
     const v: Row[] = await call('bankVorschlaege', props.objekt.id, umsaetze);
-    setZeilen(v.map((u) => ({ ...(u as Zeile), an: !u.doppelt && !u.vermutlich_doppelt && !!u.konto_id, lernen: true })));
+    // Only sure (green) lines are ticked; yellow ones wait for a look.
+    setZeilen(v.map((u) => ({ ...(u as Zeile), an: u.ampel === 'gruen', lernen: true })));
     setDatei(quelle);
-    setMeldung(`${umsaetze.length} Umsätze gelesen, ${v.filter((u) => u.doppelt).length} davon bereits gebucht${v.some((u) => u.vermutlich_doppelt) ? `, ${v.filter((u) => u.vermutlich_doppelt).length} vermutlich schon über einen anderen Import (nicht angekreuzt)` : ''}.`);
+    const n = (a: string) => v.filter((u) => u.ampel === a).length;
+    setMeldung(`${umsaetze.length} Umsätze gelesen: ${n('gruen')} sicher, ${n('gelb')} prüfen, ${n('rot')} offen${n('grau') ? `, ${n('grau')} bereits gebucht` : ''}${v.some((u) => u.vermutlich_doppelt) ? ` (${v.filter((u) => u.vermutlich_doppelt).length} vermutlich doppelt)` : ''}.`);
   }
 
   async function laden() {
@@ -51,9 +54,9 @@ function Import(props: { objekt: Row }) {
     }
   }
 
-  async function buchen() {
+  async function buchen(nurGruen = false) {
     try {
-      const auswahl = zeilen.filter((z) => z.an && z.konto_id && !z.doppelt).map((z) => ({ ...z, muster: z.lernen ? musterVon(z) : null }));
+      const auswahl = zeilen.filter((z) => (nurGruen ? z.ampel === 'gruen' : z.an) && z.konto_id && !z.doppelt).map((z) => ({ ...z, muster: z.lernen ? musterVon(z) : null }));
       const n = await call('bankBuchen', props.objekt.id, giro, auswahl, true);
       setMeldung(`${n} Umsätze gebucht.`);
       const v: Row[] = await call('bankVorschlaege', props.objekt.id, zeilen);
@@ -66,6 +69,7 @@ function Import(props: { objekt: Row }) {
 
   const set = (i: number, z: Partial<Zeile>) => setZeilen(zeilen.map((x, j) => (j === i ? { ...x, ...z } : x)));
   const anzahl = zeilen.filter((z) => z.an && z.konto_id && !z.doppelt).length;
+  const gruen = zeilen.filter((z) => z.ampel === 'gruen' && z.konto_id && !z.doppelt).length;
 
   return (
     <>
@@ -80,22 +84,25 @@ function Import(props: { objekt: Row }) {
         {datei && <span className="hinweis">{datei}</span>}
         <span className="spacer" />
         {meldung && <span className="meldung">{meldung}</span>}
-        <button className="primary" disabled={!anzahl || !giro} onClick={buchen}>{anzahl} Umsätze buchen</button>
+        {gruen > 0 && <button disabled={!giro} onClick={() => buchen(true)} title="Bucht alle Zeilen, bei denen IBAN oder gelernte Zuordnung und Betrag passen">Alle sicheren buchen ({gruen})</button>}
+        <button className="primary" disabled={!anzahl || !giro} onClick={() => buchen()}>{anzahl} Umsätze buchen</button>
       </div>
       {zeilen.length > 0 && konten && (
         <table>
-          <thead><tr><th /><th>Datum</th><th>Name / Verwendungszweck</th><th className="num">Betrag</th><th>Gegenkonto</th><th title="Zuordnung für künftige Auszüge merken">merken</th></tr></thead>
+          <thead><tr><th /><th>Stand</th><th>Datum</th><th>Name / Verwendungszweck</th><th className="num">Betrag</th><th>Gegenkonto</th><th title="Zuordnung für künftige Auszüge merken">merken</th></tr></thead>
           <tbody>
             {zeilen.map((z, i) => (
               <tr key={z.ref} className={z.doppelt ? 'inaktiv' : ''}>
                 <td><input type="checkbox" disabled={z.doppelt} checked={z.an} onChange={(e) => set(i, { an: e.target.checked })} /></td>
+                <td>{z.ampel && <span className={`chip ${z.ampel === 'grau' ? '' : z.ampel}`} title={z.grund}>{AMPEL_LABEL[z.ampel]}</span>}</td>
                 <td>{datum(z.datum)}</td>
                 <td><b>{z.name}</b><div className="klein">{z.zweck}</div>{z.doppelt && <span className="tag">bereits gebucht</span>}{z.vermutlich_doppelt && <span className="tag" title="Nur ankreuzen, wenn es wirklich eine zweite Zahlung ist.">{z.vermutlich_doppelt}</span>}
-                  {(z as Row).hinweis && <div className={`klein ${(z as Row).ruecklast ? 'fehlertext' : 'meldung'}`}>{(z as Row).hinweis}</div>}</td>
+                  {(z as Row).hinweis && <div className={`klein ${(z as Row).ruecklast ? 'fehlertext' : 'meldung'}`}>{(z as Row).hinweis}</div>}
+                  {(z.ampel === 'gelb' || (z.ampel === 'rot' && !z.vermutlich_doppelt)) && !(z as Row).hinweis && <div className="klein hinweis">{z.grund}</div>}</td>
                 <td className="num"><span className={z.betrag_ct < 0 ? 'negativ' : ''}>{betrag(z.betrag_ct)}</span></td>
                 <td>
                   <KontoSelect konten={konten} klassen={z.betrag_ct > 0 ? ['person', 'einnahme', 'geld', 'kosten', 'darlehen'] : ['kosten', 'darlehen', 'person', 'geld', 'ruecklage']}
-                    value={z.konto_id ?? ''} onChange={(id) => set(i, { konto_id: id, an: !!id })} leer="– nicht buchen –" />
+                    value={z.konto_id ?? ''} onChange={(id) => set(i, { konto_id: id, an: !!id, ...(z.ampel === 'rot' && !z.vermutlich_doppelt && id ? { ampel: 'gelb', grund: 'Von Hand zugeordnet' } : {}) })} leer="– nicht buchen –" />
                 </td>
                 <td><input type="checkbox" checked={z.lernen} onChange={(e) => set(i, { lernen: e.target.checked })} /></td>
               </tr>

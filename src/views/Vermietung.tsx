@@ -49,8 +49,19 @@ function EinheitVermietung(props: { einheit: Row; objekt: Row; reload: () => voi
   const angebot = () => ({ kaltmiete_ct: parseCent(a.kaltmiete), bk_vz_ct: parseCent(a.bk), hk_vz_ct: parseCent(a.hk), kaution_ct: parseCent(a.kaution),
     frei_ab: a.frei_ab, titel: a.titel, beschreibung: a.beschreibung, ausstattung: a.ausstattung, energie: a.energie });
   const speichern = () => call('angebotSpeichern', e.id, angebot());
+  // Mietpreisbremse: checked against the asked cold rent whenever it changes.
+  const [mpb, setMpb] = useState<Row | null>(null);
+  useEffect(() => { call('mietpreisbremse', e.id, parseCent(a.kaltmiete)).then(setMpb).catch(() => setMpb(null)); }, [e.id, a.kaltmiete]);
+  const auskunftText = () => !mpb?.auskunft ? '' : mpb.auskunft === 'neubau'
+    ? 'Die Wohnung wurde nach dem 1. Oktober 2014 erstmals genutzt und vermietet; die Vorschriften über die zulässige Miete bei Mietbeginn (§§ 556d ff. BGB) gelten deshalb nicht (§ 556f Satz 1 BGB).'
+    : mpb.auskunft === 'modernisiert'
+      ? 'Es handelt sich um die erste Vermietung nach einer umfassenden Modernisierung; die Vorschriften über die zulässige Miete bei Mietbeginn (§§ 556d ff. BGB) gelten deshalb nicht (§ 556f Satz 2 BGB).'
+      : `Die Miete übersteigt die ortsübliche Vergleichsmiete um mehr als 10 %. Zulässig ist sie, weil die Vormiete ${euro(mpb.vormiete_ct)} monatlich (Nettokaltmiete) betrug (§ 556e Abs. 1 BGB).`;
 
   async function expose() {
+    // The energy certificate's key figures belong in every advert (§ 87 GEG).
+    if (!a.energie.trim() && !await bestaetigen('Das Feld „Energieausweis“ ist leer. Anzeigen müssen Art des Ausweises, Kennwert, Energieträger, Baujahr und Effizienzklasse nennen (§ 87 GEG). Trotzdem erstellen?')) return;
+    if (mpb?.ok === false && !await bestaetigen(`Die Miete liegt über der Mietpreisbremse: zulässig sind höchstens ${euro(mpb.zulaessig_ct)}. Der Mieter kann den Rest zurückverlangen (§ 556g BGB). Trotzdem erstellen?`)) return;
     await speichern();
     const o = props.objekt;
     const x = angebot();
@@ -62,7 +73,8 @@ function EinheitVermietung(props: { einheit: Row; objekt: Row; reload: () => voi
         ['<b>Gesamtmiete</b>', `#r<b>${euro(x.kaltmiete_ct + x.bk_vz_ct + x.hk_vz_ct)}</b>`], ['Kaution', `#r${euro(x.kaution_ct)}`], ['Frei ab', `#r${datum(x.frei_ab)}`],
         ...(a.energie ? [['Energieausweis', `#r${esc(a.energie)}`]] : []),
       ])}${a.beschreibung ? `<h2>Beschreibung</h2><p>${esc(a.beschreibung).replace(/\n/g, '<br>')}</p>` : ''}
-      ${a.ausstattung ? `<h2>Ausstattung</h2><p>${esc(a.ausstattung).replace(/\n/g, '<br>')}</p>` : ''}`)], `Exposé ${e.bezeichnung}`);
+      ${a.ausstattung ? `<h2>Ausstattung</h2><p>${esc(a.ausstattung).replace(/\n/g, '<br>')}</p>` : ''}
+      ${auskunftText() ? `<h2>Auskunft nach § 556g Abs. 1a BGB</h2><p>${auskunftText()}</p>` : ''}`)], `Exposé ${e.bezeichnung}`);
   }
 
   async function selbstauskunft() {
@@ -76,6 +88,8 @@ function EinheitVermietung(props: { einheit: Row; objekt: Row; reload: () => voi
        <p>Gegen mich läuft kein Insolvenzverfahren, und ich habe in den letzten fünf Jahren keine Vermögensauskunft abgegeben: ☐ zutreffend</p>
        <p>Mietrückstände aus dem jetzigen Mietverhältnis bestehen nicht: ☐ zutreffend</p>
        <p>Beigefügt: ☐ Einkommensnachweise der letzten 3 Monate ☐ Mietschuldenfreiheitsbescheinigung ☐ Bonitätsauskunft</p>
+       <h2>Datenschutzhinweise (Art. 13 DSGVO)</h2>
+       <p class="klein">Verantwortlich: ${esc(abs.name)}${abs.strasse ? `, ${esc(abs.strasse)}` : ''}${abs.ort ? `, ${esc(abs.ort)}` : ''}${abs.email ? `, ${esc(abs.email)}` : ''}. Zweck: Entscheidung über den Abschluss eines Mietvertrags; Rechtsgrundlage: vorvertragliche Maßnahmen auf Ihre Anfrage (Art. 6 Abs. 1 lit. b DSGVO). Die Daten werden nicht an Dritte weitergegeben. Kommt kein Vertrag zustande, löschen wir sie spätestens sechs Monate nach der Absage; kommt ein Vertrag zustande, werden die für das Mietverhältnis nötigen Daten bis zu seinem Ende und danach nur so lange aufbewahrt, wie Gesetze es verlangen. Sie haben das Recht auf Auskunft, Berichtigung, Löschung und Einschränkung der Verarbeitung (Art. 15–18 DSGVO) sowie auf Beschwerde bei einer Datenschutz-Aufsichtsbehörde (Art. 77 DSGVO). Die Angaben sind freiwillig; ohne sie können wir Ihre Bewerbung jedoch nicht prüfen.</p>
        <p style="margin-top:14mm">______________________ &nbsp; ______________________________<br><span class="klein">Ort, Datum &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Unterschrift</span></p>`)], `Selbstauskunft ${e.bezeichnung}`);
   }
 
@@ -112,6 +126,14 @@ function EinheitVermietung(props: { einheit: Row; objekt: Row; reload: () => voi
             Gesamtmiete {euro(warm)}{e.wohnflaeche ? ` · ${euro(Math.round(parseCent(a.kaltmiete) / e.wohnflaeche))} kalt je m²` : ''}.
             {parseCent(a.kaution) > parseCent(a.kaltmiete) * 3 ? ' Achtung: Die Kaution darf höchstens drei Kaltmieten betragen (§ 551 BGB).' : ''}
           </p>
+          {mpb?.gilt && (
+            <p className={mpb.ok === false ? 'fehler klein' : 'klein hinweis'}>
+              Mietpreisbremse: {mpb.ausnahme ? `gilt nicht (${mpb.ausnahme === 'neubau' ? 'Neubau nach 10/2014' : 'erste Vermietung nach umfassender Modernisierung'}) – die Ausnahme muss dem Mieter vor Vertragsschluss mitgeteilt werden; sie steht im Exposé.`
+                : mpb.grenze_ct == null ? 'Für die Prüfung fehlt die Vergleichsmiete (Haus oder Einheit) oder die Wohnfläche.'
+                  : <>höchstens {euro(mpb.grenze_ct)} (Vergleichsmiete {euro(mpb.vergleich_qm_ct)}/m² + 10 %){mpb.vormiete_ct ? <>, Vormiete {euro(mpb.vormiete_ct)}</> : null}.
+                    {mpb.ok === false ? ` Zu hoch: zulässig sind ${euro(mpb.zulaessig_ct)}.` : mpb.auskunft === 'vormiete' ? ' Zulässig wegen der Vormiete – das muss der Mieter vor Vertragsschluss erfahren; die Auskunft steht im Exposé.' : ' Eingehalten.'}</>}
+            </p>
+          )}
           <div className="buttons">
             <button onClick={() => speichern().then(props.reload)}>Speichern</button>
             <span className="spacer" />

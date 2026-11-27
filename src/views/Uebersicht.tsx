@@ -6,7 +6,7 @@ import { useLoad } from '../useLoad';
 import { ObjektKacheln } from './Steckbrief';
 import { L, mitLinks, useNavi } from '../navi';
 import { Jahreswechsel, jahreswechselZeit } from './Jahreswechsel';
-import { CockpitKpis, CockpitRadar, CockpitVorschau } from './Kennzahlen';
+import { CockpitFruehwarnung, CockpitKpis, CockpitRadar, CockpitVorschau } from './Kennzahlen';
 import { Kennzahl } from '../zeiger';
 import { BelegFoto } from '../Foto';
 import { SYMBOL } from '../icons';
@@ -143,6 +143,7 @@ export function Uebersicht(props: { modus: Modus; objekte: Row[]; oeffne: (seite
       </div>
 
       <CockpitVorschau c={c} />
+      {!weg && <CockpitFruehwarnung c={c} />}
       <CockpitRadar c={c}>{weg ? verlauf : null}</CockpitRadar>
       <ObjektKacheln modus={props.modus} oeffne={props.oeffne} />
       {!weg && <div className="kz-raster">{verlauf}</div>}

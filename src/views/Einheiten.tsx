@@ -18,6 +18,7 @@ export const EINHEIT_FELDER: Field[] = [
   { key: 'wohnflaeche', label: 'Fläche m²', type: 'number' },
   { key: 'zimmer', label: 'Zimmer', type: 'number' },
   { key: 'mea', label: 'Miteigentumsanteile (MEA)', type: 'number' },
+  { key: 'mpb_ausnahme', label: 'Ausnahme von der Mietpreisbremse (§ 556f BGB)', type: 'select', options: [['neubau', 'Neubau – erstmals genutzt nach dem 1.10.2014'], ['modernisiert', 'erste Vermietung nach umfassender Modernisierung']] },
   { key: 'vergleichsmiete_ct', label: 'Ortsübliche Vergleichsmiete je m²', type: 'money', section: 'Vergleichsmiete – nur wenn sie vom Haus abweicht (z. B. andere Größenklasse im Mietspiegel)' },
   { key: 'mietspiegel_von_ct', label: 'Mietspiegel von je m²', type: 'money' },
   { key: 'mietspiegel_bis_ct', label: 'Mietspiegel bis je m²', type: 'money' },

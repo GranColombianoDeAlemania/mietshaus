@@ -389,6 +389,9 @@ async function starten(o) {
       // Jago's ideas and faults: everyone their own, a Verwalter all (electron/jago.cjs).
         : /^rueckmeldung/.test(String(fn)) ? [w.benutzer ? { id: w.benutzer.id, verwalter: !!w.benutzer.verwalter } : null, ...argumente] : argumente;
     if (fn === 'mitteilungAnlegen') throw new Fehler(403, 'Nicht erlaubt.');
+    // The resolution register is a record (§ 24 Abs. 7 WEG): only a Verwalter may delete an entry.
+    if (fn === 'remove' && argumente[0] === 'beschluesse' && o.modus === 'server' && !w.benutzer?.verwalter)
+      throw new Fehler(403, 'Einträge der Beschluss-Sammlung darf nur ein Verwalter löschen. Sonst den Status auf „aufgehoben“ setzen.');
     // The server's own functions (e.g. „Meine Aufgaben“) see this request's user and world too.
     if (NUR_SERVER.has(fn)) { kontext(req, w); return [await fachlich(() => serverFunktion(fn, args, w)), {}]; }
     if (typeof fn !== 'string' || typeof roh[fn] !== 'function') throw new Fehler(400, `Unbekannte Funktion: ${fn}`);

@@ -21,7 +21,7 @@ const plusMonateTag = (iso, n) => {
 const euro = (ct) => new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format((ct ?? 0) / 100);
 const datumDe = (iso) => (iso ? iso.split('-').reverse().join('.') : '');
 
-module.exports = function automatik({ db, all, get, tx, PERSON_NAME, bh, ab, vw, kz, pf, einstellungen }) {
+module.exports = function automatik({ db, all, get, tx, PERSON_NAME, bh, ab, vw, kz, pf, dl, einstellungen }) {
   const einst = () => einstellungen();
 
   // Monthly charges up to the current month for all objects. Starts with the month automation was switched on,
@@ -135,6 +135,8 @@ module.exports = function automatik({ db, all, get, tx, PERSON_NAME, bh, ab, vw,
         const ueberfaellig = op.offen.filter((x) => x.verzug >= 1);
         const betrag = Math.max(0, ueberfaellig.reduce((s, x) => s + x.offen_ct, 0) - op.guthaben_ct);
         if (!betrag) continue;
+        // With the lawyer, set aside or with a later payment date: no hint until that day.
+        if (k.mahn_status === 'anwalt' || (k.mahn_status && k.mahn_bis && k.mahn_bis >= t)) continue;
         const alt = Math.max(...ueberfaellig.map((x) => x.verzug));
         const monate = ueberfaellig.map((x) => x.monat ? `${x.monat.slice(5)}/${x.monat.slice(2, 4)}${x.status === 'teilweise bezahlt' ? ' (teilw.)' : ''}` : x.text).join(', ');
         add({ modus: k.vertrag_typ, schluessel: `op:${k.id}:${t.slice(0, 7)}`, stufe: alt >= 14 ? 'rot' : 'orange', kategorie: k.vertrag_typ === 'weg' ? 'Hausgeld' : 'Miete',
@@ -190,10 +192,26 @@ module.exports = function automatik({ db, all, get, tx, PERSON_NAME, bh, ab, vw,
           add({ modus: 'weg', schluessel: `vers:${o.id}:${jahr}`, stufe: monat >= 10 ? 'rot' : 'orange', kategorie: 'WEG', ...ziel('versammlungen'),
             text: `Für ${jahr} ist noch keine Eigentümerversammlung angelegt (mindestens einmal jährlich, Ladungsfrist 3 Wochen).` });
         }
-        for (const v of all(`SELECT * FROM versammlungen WHERE objekt_id = ? AND datum BETWEEN ? AND ? AND (einladung_am IS NULL OR einladung_am = '')`, o.id, t, plusTage(t, 35))) {
-          add({ modus: 'weg', schluessel: `einl:${v.id}`, stufe: tageZwischen(t, v.datum) <= 24 ? 'rot' : 'orange', kategorie: 'WEG', ...ziel('versammlungen'),
-            text: `Einladung zur Versammlung am ${datumDe(v.datum)} verschicken (spätestens ${datumDe(plusTage(v.datum, -21))}).` });
+        // Three weeks between receipt of the invitation and the meeting (§ 24 Abs. 4 WEG): by post three days for delivery.
+        const postlauf = (v) => (v.einladung_weg === 'post' || !v.einladung_weg ? 3 : 0);
+        for (const v of all(`SELECT * FROM versammlungen WHERE objekt_id = ? AND datum BETWEEN ? AND ? AND (einladung_am IS NULL OR einladung_am = '')`, o.id, t, plusTage(t, 38))) {
+          const spaetestens = plusTage(v.datum, -21 - postlauf(v));
+          add({ modus: 'weg', schluessel: `einl:${v.id}`, stufe: t >= plusTage(spaetestens, -3) ? 'rot' : 'orange', kategorie: 'WEG', ...ziel('versammlungen'),
+            text: `Einladung zur Versammlung am ${datumDe(v.datum)} verschicken – spätestens ${datumDe(spaetestens)}${postlauf(v) ? ' per Post (3 Tage Postlauf)' : ''}, damit sie drei Wochen vorher zugeht.` });
         }
+        for (const v of all(`SELECT * FROM versammlungen WHERE objekt_id = ? AND datum >= ? AND einladung_am IS NOT NULL AND einladung_am <> ''`, o.id, t)) {
+          if (plusTage(v.einladung_am, postlauf(v)) > plusTage(v.datum, -21))
+            add({ modus: 'weg', schluessel: `einlspaet:${v.id}`, stufe: 'rot', kategorie: 'WEG', ...ziel('versammlungen'),
+              text: `Ladungsfrist für die Versammlung am ${datumDe(v.datum)} nicht eingehalten: Einladung am ${datumDe(v.einladung_am)}${postlauf(v) ? ' per Post' : ''}, Zugang später als drei Wochen vorher. Beschlüsse wären anfechtbar (§ 24 Abs. 4 WEG) – Termin verschieben.` });
+        }
+      }
+
+      // Buildings insurance: without the waiver of underinsurance a too low sum cuts every claim (Entschädigung = Schaden ×
+      // Versicherungssumme / Versicherungswert, § 75 VVG) – check the sum every two years.
+      for (const v of all(`SELECT * FROM versicherungen WHERE objekt_id = ? AND lower(art) LIKE '%gebäude%' AND coalesce(unterversicherungsverzicht, 0) = 0`, o.id)) {
+        if (!v.summe_geprueft_am || v.summe_geprueft_am < plusTage(t, -730))
+          add({ modus: miete ? 'miete' : 'weg', schluessel: `unterv:${v.id}`, stufe: 'gelb', kategorie: 'Versicherung', ...ziel('versicherungen'),
+            text: `${v.art}: Versicherungssumme ${v.summe_geprueft_am ? 'seit über zwei Jahren' : 'noch nie'} geprüft und kein Unterversicherungsverzicht vermerkt – bei Unterversicherung wird jeder Schaden nur anteilig ersetzt.` });
       }
 
       if (miete) {
@@ -251,9 +269,15 @@ module.exports = function automatik({ db, all, get, tx, PERSON_NAME, bh, ab, vw,
       }
 
       // Interest rate fixation ends: look for follow-up financing in time (18 months ahead, urgent within 6).
-      for (const d of all(`SELECT * FROM darlehen WHERE objekt_id = ? AND zinsbindung_bis IS NOT NULL AND zinsbindung_bis BETWEEN ? AND ?`, o.id, t, plusMonate(t, 18))) {
-        add({ schluessel: `zb:${d.id}`, stufe: d.zinsbindung_bis <= plusMonate(t, 6) ? 'rot' : 'orange', kategorie: 'Finanzierung', objekt_id: o.id, objekt: o.bezeichnung, ziel: 'darlehen',
-          text: `Zinsbindung Darlehen ${d.bank} endet am ${datumDe(d.zinsbindung_bis)} – Anschlussfinanzierung (z. B. Forward-Darlehen) prüfen.` });
+      // With the balance at that day and what 2 points more interest would cost a year; an ended one (up to a year back) until a new rate is entered.
+      for (const d of all(`SELECT * FROM darlehen WHERE objekt_id = ? AND zinsbindung_bis IS NOT NULL AND zinsbindung_bis BETWEEN ? AND ?`, o.id, plusMonate(t, -12), plusMonate(t, 18))) {
+        const rest = dl?.tilgungsplan(d.id).rest_zinsbindung_ct ?? null;
+        if (rest === 0) continue;
+        const vorbei = d.zinsbindung_bis < t;
+        const mehr = rest ? ` Restschuld dann ${euro(rest)}; 2 Prozentpunkte mehr Zins kosten rund ${euro(Math.round(rest * 0.02))} im Jahr.` : '';
+        add({ schluessel: `zb:${d.id}:${d.zinsbindung_bis}`, stufe: vorbei || d.zinsbindung_bis <= plusMonate(t, 6) ? 'rot' : 'orange', kategorie: 'Finanzierung', objekt_id: o.id, objekt: o.bezeichnung, ziel: 'darlehen',
+          text: vorbei ? `Zinsbindung Darlehen ${d.bank} ist am ${datumDe(d.zinsbindung_bis)} abgelaufen – neuen Zinssatz und neue Zinsbindung beim Darlehen eintragen.${mehr}`
+            : `Zinsbindung Darlehen ${d.bank} endet am ${datumDe(d.zinsbindung_bis)} – Anschlussfinanzierung (z. B. Forward-Darlehen) prüfen.${mehr}` });
       }
 
       if (!o.iban) add({ schluessel: `stamm:iban:${o.id}`, stufe: 'gelb', kategorie: 'Stammdaten', ...ziel('objekte'), text: 'IBAN des Objektkontos fehlt (nötig für Briefe und SEPA).' });

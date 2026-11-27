@@ -284,7 +284,11 @@ function AnlageV(props: { objekt: Row }) {
         <span className="spacer" /><button onClick={pdf}>Als PDF</button>
       </div>
       {a.gemischt && <p className="fehler">Gemischtes Objekt: Die Kosten gelten für das ganze Haus. Für deine Steuer zählt nur dein Anteil – bitte entsprechend anpassen.</p>}
-      {!a.objekt.afa_satz && <p className="hinweis">Für die AfA unter Objekte → Bearbeiten Kaufpreis, Kaufdatum, Gebäudeanteil und AfA-Satz eintragen.</p>}
+      {!a.objekt.afa_satz && <p className="hinweis">Für die AfA unter Objekte → Bearbeiten Kaufpreis, Kaufdatum, Gebäudeanteil und AfA-Satz eintragen{a.objekt.baujahr ? ` – nach dem Baujahr ${a.objekt.baujahr} gilt ${a.objekt.baujahr < 1925 ? '2,5' : a.objekt.baujahr >= 2023 ? '3' : '2'} %` : ''}.</p>}
+      {a.anschaffungsnah_ct > 0 && <p className="fehler">15-%-Grenze überschritten: Die Instandhaltung der ersten drei Jahre ({euro(a.anschaffungsnah_ct)} bis {jahr}) zählt als anschaffungsnahe Herstellungskosten und wird mit dem Gebäude abgeschrieben (§ 6 Abs. 1 Nr. 1a EStG). Übliche jährliche Erhaltung (z. B. Wartung) gehört nicht dazu – mit dem Steuerberater abstimmen.</p>}
+      {a.verbilligt?.map((v: Row) => <p key={v.vertrag_id} className={v.quote < 0.5 ? 'fehler' : 'hinweis'}>{v.einheit}: Die Warmmiete liegt bei {Math.round(v.quote * 100)} % der ortsüblichen Miete. {v.quote < 0.5
+        ? 'Unter 50 % sind die Werbungskosten nur anteilig abziehbar (§ 21 Abs. 2 EStG).' : 'Zwischen 50 und 66 % sind die Werbungskosten nur voll abziehbar, wenn eine Totalüberschussprognose positiv ist (§ 21 Abs. 2 EStG).'}</p>)}
+      {jahr && <p className="klein hinweis">Mieten für Januar, die zwischen 22. und 31. Dezember eingehen, zählen ins Jahr, für das sie sind (10-Tage-Regel, § 11 EStG) – die App rechnet das bei den Mieteinnahmen mit. Bei Ausgaben (z. B. Hausgeld, Versicherung) bitte selbst darauf achten.</p>}
       {!!a.objekt.afa_satz && !!a.objekt.kaufpreis_ct && !a.objekt.kaufdatum && <p className="fehlertext">Das Kaufdatum fehlt: Die Gebäude-AfA steht deshalb jedes Jahr mit dem vollen Satz drin – ohne anteiliges erstes Jahr
         und ohne Ende, wenn der Kaufpreis abgeschrieben ist. Bitte unter Objekte → Bearbeiten das Kaufdatum eintragen.</p>}
       {a.selbstnutzung && <Aufteilung s={a.selbstnutzung} />}

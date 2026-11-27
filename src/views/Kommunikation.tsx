@@ -6,7 +6,8 @@ import { useAktion } from '../aktion';
 import { Liste } from '../Liste';
 import { Tabs } from '../ui';
 import { FormDialog, type Field } from '../Form';
-import { absaetze, absenderAus, alsPdf, brief, esc, empfaengerVon } from '../dokument';
+import { absaetze, absenderAus, alsPdf, brief, esc, empfaengerVon, zahlungsAbsender } from '../dokument';
+import { girocode } from '../girocode';
 import { L } from '../navi';
 import { bestaetigen, hinweis } from '../frage';
 import { Aufgabenblatt } from './Aufgabenblatt';
@@ -92,8 +93,12 @@ function briefSeite(o: { text: string; betreff: string; kategorie?: string | nul
   // Templates may start with the salutation themselves; otherwise it is added.
   const mitAnrede = formular || /^\s*\{anrede\}/.test(o.text) || /^Sehr geehrte/.test(rumpf) ? rumpf : `${w.anrede}\n\n${rumpf}`;
   const schluss = formular ? '' : `<p class="unterschrift">Mit freundlichen Grüßen<br><br>${esc(o.einst.verwalter_name ?? '')}</p>`;
+  // A letter that asks for the arrears gets a GiroCode for that amount (to the house's account).
+  const rueckstand = o.akte?.vertrag?.ueberfaellig_ct ?? 0;
+  const qr = !formular && /\{rueckstand\}/.test(o.text) && rueckstand > 0
+    ? girocode(zahlungsAbsender(o.einst, o.objekt), rueckstand, `${o.v?.einheit ?? ''} Rückstand ${o.objekt.bezeichnung}`) : '';
   return brief({ absender: absenderAus(o.einst), empfaenger: o.p, betreff: ersetze(o.betreff, w), info: [['Objekt', o.objekt.bezeichnung], ...(o.v ? [['Einheit', o.v.einheit] as [string, string]] : [])],
-    inhalt: `${absaetze(mitAnrede)}${schluss}` });
+    inhalt: `${absaetze(mitAnrede)}${qr}${schluss}` });
 }
 
 // Data of one contract for the placeholders.

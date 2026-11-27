@@ -218,7 +218,7 @@ module.exports = [
   T('Begehung', 'begehung rundgang kontrolle haus mängel', 'begehungen', 'Unter Begehungen am Handy Bereich für Bereich Fotos, Notizen und Mängel festhalten; am Ende entsteht das Protokoll.'),
   T('Mangel festhalten', 'mangel schaden defekt begehung vorgang', 'begehungen', 'In der Begehung „Mangel“: wird ein Vorgang mit Foto, optional mit dem Ablauf „Schadensfall“.'),
   T('Versicherungen', 'versicherung gebäudeversicherung haftpflicht police', 'versicherungen', 'Unter Versicherungen stehen Policen mit Beitrag, Fälligkeit, „kündbar bis“ und Ablauf.'),
-  T('Schaden melden', 'schaden versicherung melden wasserschaden', 'vorgaenge', 'Einen Vorgang anlegen; der Ablauf „Schadensfall“ führt durch Aufnahme, Meldung an die Versicherung, Handwerker und Rechnung.'),
+  T('Schaden melden', 'schaden versicherung melden wasserschaden', 'vorgaenge', 'Einen Vorgang anlegen; der Ablauf „Schadensfall“ führt durch Schaden begrenzen, Meldung an den Versicherer, Freigabe vor dem Handwerker, Mieter informieren, Rechnungen, Abschlag und Regress.'),
 
   // ---------- communication, tasks ----------
   T('Brief schreiben', 'brief schreiben vorlage serienbrief anschreiben', 'briefe', 'Unter Briefe eine Vorlage wählen oder frei schreiben; Platzhalter füllt Mietshaus mit den Daten der Empfänger.'),

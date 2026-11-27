@@ -11,7 +11,8 @@ function schritteLesen(json) {
   let s = [];
   try { s = JSON.parse(json ?? '[]'); } catch {}
   return (Array.isArray(s) ? s : []).filter((x) => x && String(x.titel ?? '').trim() && Number.isFinite(Number(x.tage)))
-    .map((x) => ({ tage: Math.round(Number(x.tage)), titel: String(x.titel).trim().slice(0, 200) })).sort((a, b) => a.tage - b.tage);
+    .map((x) => ({ tage: Math.round(Number(x.tage)), titel: String(x.titel).trim().slice(0, 200), ...(x.hinweis ? { hinweis: String(x.hinweis).trim().slice(0, 1000) } : {}) }))
+    .sort((a, b) => a.tage - b.tage);
 }
 
 module.exports = function ablaeufe({ db, all, get, tx }) {
@@ -38,7 +39,8 @@ module.exports = function ablaeufe({ db, all, get, tx }) {
       const haupt = Number(ins.run(objekt_id, einheit_id, person_id, titel || `${a.titel}${zu ? `: ${zu}` : ''}`, 'ablauf',
         faellig(schritte[schritte.length - 1].tage), `${a.anlass ?? 'Stichtag'} ${datumDe(stichtag)} – Ablauf „${a.titel}“ mit ${schritte.length} Schritten.`,
         zustaendig, null).lastInsertRowid);
-      for (const s of schritte) ins.run(objekt_id, einheit_id, person_id, s.titel, 'ablauf', faellig(s.tage), null, zustaendig, haupt);
+      // A step's hint (what to watch, the legal basis) becomes the description of its sub-case.
+      for (const s of schritte) ins.run(objekt_id, einheit_id, person_id, s.titel, 'ablauf', faellig(s.tage), s.hinweis ?? null, zustaendig, haupt);
       return haupt;
     }),
 

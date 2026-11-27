@@ -1150,6 +1150,47 @@ const MIGRATIONS = [
    CREATE TRIGGER interessenten_absage_neu AFTER INSERT ON interessenten WHEN NEW.status = 'absage' BEGIN
      UPDATE interessenten SET abgesagt_am = date('now') WHERE id = NEW.id;
    END;`,
+  // 0.30: remote-readable meters (§ 5 HeizkostenV, retrofit by 31.12.2026); § 35a for lift and street cleaning where unset.
+  `ALTER TABLE zaehler ADD COLUMN fernablesbar INTEGER NOT NULL DEFAULT 0;
+   UPDATE konten SET p35a = 'handwerker' WHERE nr = 40400 AND kategorie = 'bk07' AND p35a IS NULL;
+   UPDATE konten SET p35a = 'dienstleistung' WHERE nr = 40500 AND kategorie = 'bk08' AND p35a IS NULL;
+   ALTER TABLE objekte ADD COLUMN mietpreisbremse INTEGER NOT NULL DEFAULT 0;
+   ALTER TABLE einheiten ADD COLUMN mpb_ausnahme TEXT;
+   ALTER TABLE versammlungen ADD COLUMN ende TEXT;
+   ALTER TABLE versammlungen ADD COLUMN einladung_weg TEXT NOT NULL DEFAULT 'post';
+   ALTER TABLE versammlungen ADD COLUMN virtuell INTEGER NOT NULL DEFAULT 0;
+   ALTER TABLE tops ADD COLUMN mehrheit TEXT NOT NULL DEFAULT 'einfach';
+   ALTER TABLE tops ADD COLUMN angelegt TEXT;
+   CREATE TRIGGER tops_angelegt AFTER INSERT ON tops WHEN NEW.angelegt IS NULL BEGIN
+     UPDATE tops SET angelegt = strftime('%Y-%m-%d', 'now', 'localtime') WHERE id = NEW.id;
+   END;
+   ALTER TABLE beschluesse ADD COLUMN ort TEXT;
+   ALTER TABLE beschluesse ADD COLUMN gericht TEXT;
+   CREATE TABLE top_stimmen (
+     top_id INTEGER NOT NULL REFERENCES tops(id) ON DELETE CASCADE,
+     person_id INTEGER NOT NULL REFERENCES personen(id) ON DELETE CASCADE,
+     wahl TEXT NOT NULL CHECK (wahl IN ('ja', 'nein', 'enthaltung')),
+     stimmen REAL NOT NULL DEFAULT 1, mea REAL NOT NULL DEFAULT 0,
+     PRIMARY KEY (top_id, person_id)
+   );
+   ALTER TABLE versicherungen ADD COLUMN summe_ct INTEGER;
+   ALTER TABLE versicherungen ADD COLUMN unterversicherungsverzicht INTEGER NOT NULL DEFAULT 0;
+   ALTER TABLE versicherungen ADD COLUMN selbstbehalt_ct INTEGER;
+   ALTER TABLE versicherungen ADD COLUMN summe_geprueft_am TEXT;
+   CREATE TABLE versammlung_anwesend (
+     versammlung_id INTEGER NOT NULL REFERENCES versammlungen(id) ON DELETE CASCADE,
+     person_id INTEGER NOT NULL REFERENCES personen(id) ON DELETE CASCADE,
+     status TEXT NOT NULL CHECK (status IN ('anwesend', 'vertreten')),
+     vertreter TEXT,
+     PRIMARY KEY (versammlung_id, person_id)
+   );
+   ALTER TABLE konten ADD COLUMN mahn_status TEXT CHECK (mahn_status IN ('anwalt', 'zurueckgestellt', 'zahlungsziel'));
+   ALTER TABLE konten ADD COLUMN mahn_bis TEXT;
+   ALTER TABLE konten ADD COLUMN mahn_notiz TEXT;
+   -- Damage case as agreed (f26): limit the damage, report, agree before hiring, tenants, invoices, advance, recourse.
+   -- Only where the delivered template was not changed.
+   UPDATE ablaeufe SET schritte = '[{"tage": 0, "titel": "Schaden begrenzen: Notmaßnahmen (Wasser/Strom abstellen, Notdienst), Fotos, Ursache, betroffene Einheiten", "hinweis": "Der Versicherte muss den Schaden so gering wie möglich halten (§ 82 VVG); die Kosten dafür ersetzt in der Regel der Versicherer (§ 83 VVG). Beschädigte Teile aufbewahren, bis der Versicherer sie gesehen hat."}, {"tage": 0, "titel": "Versicherer melden (Schadennummer notieren)", "hinweis": "Unverzüglich anzeigen (§ 30 VVG): was, wann, wo, vermutliche Ursache, Fotos. Die Schadennummer im Vorgang notieren."}, {"tage": 2, "titel": "Freigabe oder Gutachter mit dem Versicherer abstimmen – erst dann Handwerker beauftragen", "hinweis": "Vor der Reparatur klären, ob der Versicherer besichtigen oder einen Gutachter schicken will. Ohne Abstimmung beauftragte Arbeiten werden unter Umständen nicht oder nicht voll ersetzt."}, {"tage": 2, "titel": "Mieter informieren, Minderung prüfen", "hinweis": "Betroffene Mieter schriftlich informieren (Termine, Zugang zur Wohnung). Ist die Wohnung beeinträchtigt, ist die Miete kraft Gesetzes gemindert (§ 536 BGB); einen Mietausfall beim Versicherer mit anmelden, wenn er mitversichert ist."}, {"tage": 7, "titel": "Rechnungen laufend beim Versicherer einreichen", "hinweis": "Jede Rechnung (Notdienst, Trocknung, Reparatur) gleich weiterreichen und im Vorgang ablegen."}, {"tage": 30, "titel": "Abschlag beim Versicherer anfordern", "hinweis": "Steht die Leistungspflicht dem Grunde nach fest, kann einen Monat nach der Anzeige ein Abschlag in Höhe des Mindestbetrags verlangt werden (§ 14 Abs. 2 VVG)."}, {"tage": 40, "titel": "Regress und Kündigungsrecht prüfen", "hinweis": "Verursacher (Mieter, Handwerker, Nachbar) festhalten – Ersatzansprüche gehen auf den Versicherer über (§ 86 VVG). Nach einem Schadensfall können beide Seiten die Sachversicherung kündigen, spätestens einen Monat nach Abschluss der Verhandlungen über die Entschädigung (§ 92 VVG)."}]'
+     WHERE art = 'schaden' AND schritte = '[{"tage": 0, "titel": "Schaden aufnehmen: Fotos, Ursache, betroffene Einheiten"}, {"tage": 2, "titel": "Versicherung melden (Schadennummer notieren)"}, {"tage": 3, "titel": "Handwerker beauftragen"}, {"tage": 21, "titel": "Reparatur abnehmen"}, {"tage": 35, "titel": "Rechnung prüfen, buchen und bei der Versicherung einreichen"}]';`,
 ];
 
 // Tables without change time: the log itself, settings of this installation and page state.
@@ -1211,8 +1252,8 @@ function datenStand(db) {
 const TABLES = {
   objekte: ['bezeichnung', 'art', 'strasse', 'plz', 'ort', 'baujahr', 'wj_beginn', 'iban', 'bic', 'bank',
     'ruecklage_iban', 'sepa_glaeubiger_id', 'zahlung_empfaenger', 'hausmeister', 'notiz', 'kaufpreis_ct', 'kaufnebenkosten_ct', 'kaufdatum', 'gebaeudeanteil', 'afa_satz', 'titelbild_id', 'vorsteuer_quote', 'kappungsgrenze', 'breite', 'laenge',
-    'vergleichsmiete_ct', 'mietspiegel_von_ct', 'mietspiegel_bis_ct'],
-  einheiten: ['objekt_id', 'nr', 'bezeichnung', 'art', 'lage', 'wohnflaeche', 'zimmer', 'mea', 'notiz', 'vergleichsmiete_ct', 'mietspiegel_von_ct', 'mietspiegel_bis_ct'],
+    'vergleichsmiete_ct', 'mietspiegel_von_ct', 'mietspiegel_bis_ct', 'mietpreisbremse'],
+  einheiten: ['objekt_id', 'nr', 'bezeichnung', 'art', 'lage', 'wohnflaeche', 'zimmer', 'mea', 'notiz', 'vergleichsmiete_ct', 'mietspiegel_von_ct', 'mietspiegel_bis_ct', 'mpb_ausnahme'],
   selbstnutzung: ['einheit_id', 'beginn', 'ende', 'personen', 'notiz'],
   personen: ['anrede', 'titel', 'vorname', 'nachname', 'firma', 'strasse', 'plz', 'ort', 'land', 'telefon',
     'mobil', 'email', 'iban', 'bic', 'kontoinhaber', 'geburtsdatum', 'notiz', 'ust_id', 'steuernr', 'web'],
@@ -1226,7 +1267,7 @@ const TABLES = {
     'weg_schluessel_id', 'aus_ruecklage', 'p35a', 'iban', 'inaktiv'],
   anpassungen: ['vertrag_typ', 'vertrag_id', 'gueltig_ab', 'grund', 'kaltmiete_ct', 'bk_vz_ct', 'hk_vz_ct',
     'sonstiges_ct', 'hausgeld_ct', 'ruecklage_ct', 'notiz', 'index_monat'],
-  zaehler: ['objekt_id', 'einheit_id', 'art', 'nummer', 'ort', 'einheit', 'faktor', 'einbau', 'ausbau', 'eichung_bis', 'notiz'],
+  zaehler: ['objekt_id', 'einheit_id', 'art', 'nummer', 'ort', 'einheit', 'faktor', 'einbau', 'ausbau', 'eichung_bis', 'notiz', 'fernablesbar'],
   zaehlerstaende: ['zaehler_id', 'datum', 'stand', 'notiz', 'dokument_id'],
   bankregeln: ['objekt_id', 'muster', 'konto_id'],
   kautionen: ['vertrag_id', 'art', 'bank', 'iban', 'zinssatz', 'notiz'],
@@ -1235,14 +1276,14 @@ const TABLES = {
   mietmodelle: [],
   schluessel: ['objekt_id', 'bezeichnung', 'nummer', 'anzahl', 'notiz'],
   schluesselausgaben: ['schluessel_id', 'person_id', 'anzahl', 'ausgabe', 'rueckgabe', 'notiz'],
-  versicherungen: ['objekt_id', 'art', 'gesellschaft', 'police', 'beitrag_ct', 'faellig', 'kuendbar_bis', 'ablauf', 'notiz'],
+  versicherungen: ['objekt_id', 'art', 'gesellschaft', 'police', 'beitrag_ct', 'faellig', 'kuendbar_bis', 'ablauf', 'notiz', 'summe_ct', 'unterversicherungsverzicht', 'selbstbehalt_ct', 'summe_geprueft_am'],
   pflichten: ['objekt_id', 'einheit_id', 'art', 'titel', 'intervall_monate', 'naechste', 'vorlauf_tage', 'firma_id', 'kategorie', 'aktiv', 'notiz', 'fester_termin'],
   ablaeufe: ['titel', 'anlass', 'schritte'],
   inventar: ['objekt_id', 'einheit_id', 'bezeichnung', 'kategorie', 'hersteller', 'modell', 'seriennr', 'kaufdatum', 'preis_ct', 'garantie_bis',
     'nutzungsdauer_jahre', 'dokument_id', 'buchung_id', 'foto_id', 'abgang_am', 'abgang_art', 'notiz'],
-  versammlungen: ['objekt_id', 'datum', 'uhrzeit', 'ort', 'art', 'einladung_am', 'leitung', 'protokoll', 'notiz'],
-  tops: ['versammlung_id', 'nr', 'titel', 'erlaeuterung', 'beschlussvorschlag', 'abstimmungsart', 'ja', 'nein', 'enthaltung', 'ergebnis', 'beschluss_id'],
-  beschluesse: ['objekt_id', 'nr', 'datum', 'art', 'titel', 'text', 'ergebnis', 'status', 'vermerk'],
+  versammlungen: ['objekt_id', 'datum', 'uhrzeit', 'ort', 'art', 'einladung_am', 'leitung', 'protokoll', 'notiz', 'ende', 'einladung_weg', 'virtuell'],
+  tops: ['versammlung_id', 'nr', 'titel', 'erlaeuterung', 'beschlussvorschlag', 'abstimmungsart', 'ja', 'nein', 'enthaltung', 'ergebnis', 'beschluss_id', 'mehrheit'],
+  beschluesse: ['objekt_id', 'nr', 'datum', 'art', 'titel', 'text', 'ergebnis', 'status', 'vermerk', 'ort', 'gericht'],
   rollen: ['objekt_id', 'person_id', 'rolle', 'von', 'bis', 'notiz'],
   vorlagen: ['titel', 'kategorie', 'betreff', 'text'],
   dokumente: ['objekt_id', 'person_id', 'einheit_id', 'titel', 'kategorie', 'datum', 'datei', 'name', 'groesse', 'notiz',
@@ -1324,6 +1365,11 @@ const NICHT_PROTOKOLLIEREN = new Set(['daten', 'erfasst', 'unterschrift_mieter',
 const nichtProtokollieren = (tabelle, spalte) => NICHT_PROTOKOLLIEREN.has(spalte) || (tabelle === 'dokumente' && spalte === 'text');
 
 // Temporary triggers belong to this connection only; source, device and user come from temp.kontext.
+// A person whose contracts all ended more than ten years ago and who holds no current role (GDPR: may be anonymised).
+const ALTDATEN_SQL = `(EXISTS (SELECT 1 FROM mietverhaeltnisse m WHERE p.id IN (m.person_id, m.person2_id) UNION SELECT 1 FROM eigentum g WHERE p.id IN (g.person_id, g.person2_id))
+  AND NOT EXISTS (SELECT 1 FROM mietverhaeltnisse m WHERE p.id IN (m.person_id, m.person2_id) AND (m.ende IS NULL OR m.ende = '' OR m.ende > date('now', '-10 years')))
+  AND NOT EXISTS (SELECT 1 FROM eigentum g WHERE p.id IN (g.person_id, g.person2_id) AND (g.ende IS NULL OR g.ende = '' OR g.ende > date('now', '-10 years')))
+  AND NOT EXISTS (SELECT 1 FROM rollen r WHERE r.person_id = p.id AND (r.bis IS NULL OR r.bis = '' OR r.bis >= date('now'))))`;
 function protokollAktivieren(db) {
   const q = KONTEXT('quelle'), g = KONTEXT('geraet'), b = KONTEXT('benutzer');
   for (const t of PROTOKOLLIERT) {
@@ -1484,8 +1530,32 @@ function api(db) {
       rueckfrage(`Der Stand ${String(stand).replace('.', ',')} für Zähler ${z?.nummer ?? z?.art ?? zaehlerId} ist kleiner als der vom ${de(vorher.datum)} (${String(vorher.stand).replace('.', ',')}). `
         + 'Bei einem Zählertausch bitte einen neuen Zähler anlegen. Trotzdem speichern?');
     }
+    // Against the same stretch of last year: less than half or more than twice the consumption is worth a second look.
+    if (vorher && Number(stand) >= Number(vorher.stand)) {
+      const minus1j = (d) => `${Number(d.slice(0, 4)) - 1}${d.slice(4)}`;
+      if (get('SELECT 1 FROM zaehlerstaende WHERE zaehler_id = ? AND datum <= ?', zaehlerId, minus1j(vorher.datum))) {
+        const z = get('SELECT nummer, art, faktor FROM zaehler WHERE id = ?', zaehlerId);
+        const vj = bh.verbrauch(zaehlerId, minus1j(vorher.datum), minus1j(datum));
+        const jetzt = (Number(stand) - Number(vorher.stand)) * (z?.faktor ?? 1);
+        if (vj > 0 && (jetzt < vj * 0.5 || jetzt > vj * 2)) {
+          const zahl = (x) => (Math.round(x * 10) / 10).toLocaleString('de-DE');
+          rueckfrage(`Zähler ${z?.nummer ?? z?.art ?? zaehlerId}: seit ${de(vorher.datum)} ${zahl(jetzt)} verbraucht, im gleichen Zeitraum des Vorjahres ${zahl(vj)} – `
+            + `${jetzt < vj * 0.5 ? 'weniger als die Hälfte' : 'mehr als doppelt so viel'}. Stand richtig abgelesen? Trotzdem speichern?`);
+        }
+      }
+    }
   }
   // A changed bank account is the usual trick of fraudulent mails: ask once more, showing old and new.
+  // A deposit above three months' cold rent is void in the excess (§ 551 BGB) – ask once more.
+  function kautionPruefen(row) {
+    if (!row || !('kaution_ct' in row || 'kaltmiete_ct' in row)) return;
+    const alt = row.id ? get('SELECT kaution_ct, kaltmiete_ct, einheit_id FROM mietverhaeltnisse WHERE id = ?', row.id) : null;
+    const kaution = row.kaution_ct ?? alt?.kaution_ct, miete = row.kaltmiete_ct ?? alt?.kaltmiete_ct;
+    const art = get('SELECT art FROM einheiten WHERE id = ?', row.einheit_id ?? alt?.einheit_id)?.art ?? 'Wohnung';
+    if (art === 'Wohnung' && kaution > 0 && miete > 0 && kaution > 3 * miete)
+      rueckfrage(`Die Kaution (${(kaution / 100).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' })}) ist höher als drei Nettokaltmieten (${(3 * miete / 100).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' })}). `
+        + 'Was darüber liegt, ist unwirksam und muss zurückgezahlt werden (§ 551 BGB). Trotzdem speichern?');
+  }
   function ibanPruefen(row) {
     if (!row?.id || !('iban' in row)) return;
     const p = get(`SELECT iban, ${PERSON_NAME} AS name FROM personen p WHERE p.id = ?`, row.id);
@@ -1563,6 +1633,14 @@ function api(db) {
       weltPruefen(table, row);
       konfliktPruefen(table, row);
       if (table === 'personen') ibanPruefen(row);
+      if (table === 'mietverhaeltnisse') kautionPruefen(row);
+      // Calibration period (MessEV Anhang B): cold water 6, hot water and heat meters 5, gas 8, electricity 8 years – to the
+      // end of the year. Suggested when a meter gets its installation date and no calibration date is entered.
+      if (table === 'zaehler' && row.einbau && !row.eichung_bis && !(row.id && get("SELECT eichung_bis FROM zaehler WHERE id = ? AND coalesce(eichung_bis, '') <> ''", row.id))) {
+        const art = row.art ?? (row.id ? get('SELECT art FROM zaehler WHERE id = ?', row.id)?.art : null);
+        const jahre = { kaltwasser: 6, warmwasser: 5, waerme: 5, gas: 8, strom: 8 }[art];
+        if (jahre) row = { ...row, eichung_bis: `${Number(String(row.einbau).slice(0, 4)) + jahre}-12-31` };
+      }
       if (table === 'zaehlerstaende' && row?.zaehler_id) zaehlerPruefen(row.zaehler_id, row.datum, row.stand);
       const id = save(table, row);
       // A new project lies in the world of its house, else in the one being worked in.
@@ -1573,6 +1651,12 @@ function api(db) {
     }),
     remove: (table, id) => {
       if (EIGENE_ART[table]) wl.zugriff(EIGENE_ART[table], id);
+      if (table === 'beschluesse') {
+        // The counter keeps the number of a deleted entry, so it is never given again.
+        const b = get('SELECT objekt_id, nr FROM beschluesse WHERE id = ?', id);
+        if (b) db.prepare(`INSERT INTO einstellungen (schluessel, wert) VALUES (?, ?) ON CONFLICT (schluessel) DO UPDATE SET wert = max(CAST(wert AS INTEGER), CAST(excluded.wert AS INTEGER))`)
+          .run(`beschluss_nr_${b.objekt_id}`, String(get('SELECT max(nr) AS n FROM beschluesse WHERE objekt_id = ?', b.objekt_id).n ?? b.nr));
+      }
       if (table === 'anpassungen') {
         const v = vertragVon(table, id);
         remove(table, id);
@@ -1644,8 +1728,34 @@ function api(db) {
 
     personen: () => all(`SELECT p.*, ${PERSON_NAME} AS name,
         (SELECT count(*) FROM mietverhaeltnisse m WHERE m.person_id = p.id OR m.person2_id = p.id) AS anz_miete,
-        (SELECT count(*) FROM eigentum g WHERE g.person_id = p.id OR g.person2_id = p.id) AS anz_eigentum
+        (SELECT count(*) FROM eigentum g WHERE g.person_id = p.id OR g.person2_id = p.id) AS anz_eigentum,
+        ${ALTDATEN_SQL} AS anonymisierbar
       FROM personen p ORDER BY p.nachname, p.vorname, p.firma`),
+    // GDPR, Art. 15: everything the app holds about one person, for a copy to hand over.
+    personDatenauskunft: (personId) => {
+      const p = get('SELECT * FROM personen WHERE id = ?', personId);
+      if (!p) throw new Error('Diese Person gibt es nicht mehr.');
+      const vertraege = [...all(`SELECT 'Mietvertrag' AS art, m.id, m.beginn, m.ende, e.bezeichnung AS einheit, o.bezeichnung AS objekt FROM mietverhaeltnisse m JOIN einheiten e ON e.id = m.einheit_id JOIN objekte o ON o.id = e.objekt_id WHERE ?1 IN (m.person_id, m.person2_id)`, personId),
+        ...all(`SELECT 'Eigentum' AS art, g.id, g.beginn, g.ende, e.bezeichnung AS einheit, o.bezeichnung AS objekt FROM eigentum g JOIN einheiten e ON e.id = g.einheit_id JOIN objekte o ON o.id = e.objekt_id WHERE ?1 IN (g.person_id, g.person2_id)`, personId)];
+      const konten = all(`SELECT k.id, k.bezeichnung FROM konten k WHERE k.klasse = 'person' AND ((k.vertrag_typ = 'miete' AND k.vertrag_id IN (SELECT id FROM mietverhaeltnisse WHERE ?1 IN (person_id, person2_id)))
+        OR (k.vertrag_typ = 'weg' AND k.vertrag_id IN (SELECT id FROM eigentum WHERE ?1 IN (person_id, person2_id))))`, personId);
+      const buchungen = konten.flatMap((k) => all(`SELECT b.datum, b.text, CASE WHEN b.soll_id = ? THEN b.betrag_ct ELSE -b.betrag_ct END AS betrag_ct FROM buchungen b WHERE ? IN (b.soll_id, b.haben_id) ORDER BY b.datum`, k.id, k.id));
+      const dokumente = all(`SELECT titel, typ, datum FROM dokumente WHERE person_id = ? AND status <> 'papierkorb' ORDER BY datum`, personId);
+      const interessent = all(`SELECT i.status, i.erstellt, i.personen, i.einkommen_ct, i.beruf, i.haustiere, e.bezeichnung AS einheit FROM interessenten i JOIN einheiten e ON e.id = i.einheit_id
+        WHERE i.person_id = ?1 OR (lower(coalesce(i.email, '')) <> '' AND lower(i.email) = lower(coalesce(?2, '')))`, personId, p.email);
+      const rollen = all('SELECT rolle, von, bis FROM rollen WHERE person_id = ?', personId);
+      const vorgaenge = all('SELECT titel, status, faellig FROM vorgaenge WHERE person_id = ? ORDER BY faellig', personId);
+      return { person: p, vertraege, buchungen, dokumente, interessent, rollen, vorgaenge, erstellt: ortszeit.heute() };
+    },
+    // GDPR: a person whose tenancies and ownerships ended more than ten years ago (the longest retention of the records) can
+    // be anonymised – name and contact data are blanked, the bookings keep their numbers.
+    personAnonymisieren: (personId) => tx(() => {
+      if (!get(`SELECT ${ALTDATEN_SQL} AS a FROM personen p WHERE p.id = ?`, personId)?.a) throw new Error('Das geht erst, wenn alle Verträge der Person seit über zehn Jahren beendet sind und sie keine Rolle mehr hat.');
+      db.prepare(`UPDATE personen SET anrede = NULL, titel = NULL, vorname = NULL, nachname = ?, firma = NULL, strasse = NULL, plz = NULL, ort = NULL, land = NULL, telefon = NULL, mobil = NULL,
+        email = NULL, iban = NULL, bic = NULL, kontoinhaber = NULL, geburtsdatum = NULL, notiz = NULL, ust_id = NULL, steuernr = NULL, web = NULL WHERE id = ?`).run(`Ehemalige Person Nr. ${personId}`, personId);
+      db.prepare(`UPDATE protokoll SET alt = CASE WHEN alt IS NULL THEN NULL ELSE '{"anonymisiert":1}' END, neu = CASE WHEN neu IS NULL THEN NULL ELSE '{"anonymisiert":1}' END WHERE tabelle = 'personen' AND datensatz = ?`).run(personId);
+      return true;
+    }),
 
     vertraege: (table, objektId) => {
       if (table !== 'mietverhaeltnisse' && table !== 'eigentum') throw new Error('Ungültige Vertragsart');
@@ -1750,7 +1860,7 @@ function api(db) {
   const dl = darlehen({ db, all, get, tx, bh });
   const mw = mieterwechsel({ db, all, get, tx, PERSON_NAME });
   const kz = kennzahlen({ db, all, get, PERSON_NAME, bh, aw, ab, vw, dl });
-  const au = automatik({ db, all, get, tx, PERSON_NAME, bh, ab, vw, kz, pf, einstellungen: basis.einstellungen });
+  const au = automatik({ db, all, get, tx, PERSON_NAME, bh, ab, vw, kz, pf, dl, einstellungen: basis.einstellungen });
   const pr = pruefung({ all, get, PERSON_NAME, bh, aw, einstellungen: basis.einstellungen });
   // Undoes one entry of the change log: a new record is removed, a change reversed, a deleted record comes back. Only
   // while the record still looks as that entry left it – a later change has to be undone first. A booking is cancelled
@@ -1826,6 +1936,14 @@ function api(db) {
   const alles = {
     ...bh, ...ab, ...vw, ...ar, ...mt, ...af, ...pf, ...iv, ...fi, ...al, ...bg, ...dk, ...jg, ...au, ...pj, ...aw, ...ak, ...dl, ...mw, ...pr, ...kz, ...basis, ...vorschlaege,
     protokollRueckgaengig: rueckgaengig,
+    // A finished inspection also ticks off the duty „Hausbegehung“ of the house (if there is one).
+    begehungAbschliessen: (id, dokumentId) => tx(() => {
+      const r = bg.begehungAbschliessen(id, dokumentId);
+      const b = get('SELECT objekt_id, datum FROM begehungen WHERE id = ?', id);
+      const p = b && get(`SELECT id FROM pflichten WHERE objekt_id = ? AND art = 'begehung' AND aktiv = 1`, b.objekt_id);
+      if (p) pf.pflichtErledigen(p.id, { datum: b.datum > ortszeit.heute() ? ortszeit.heute() : b.datum, notiz: 'Begehung abgeschlossen' });
+      return r;
+    }),
     buchen: (b, ohneTx) => { wl.zugriff('objekt', b?.objekt_id); buchungPruefen(b); return bh.buchen(b, ohneTx); },
     ablesung: (datum, werte, fotos) => { for (const [id, stand] of Object.entries(werte ?? {})) zaehlerPruefen(Number(id), datum, stand); return bh.ablesung(datum, werte, fotos); },
     // Names behind the change columns of the records (geaendert_benutzer, geaendert_von), for "Zuletzt geändert von …".
@@ -1849,6 +1967,24 @@ function api(db) {
         const w = x.modus === 'weg' ? 'weg' : x.modus === 'miete' ? 'privat' : x.objekt_id != null ? wl.von('objekt', x.objekt_id) : null;
         return !w || w === 'beide' || w === welt;
       });
+    },
+    // Mietpreisbremse (§§ 556d–556g BGB, extended to the end of 2029): in an area with the state ordinance a new tenancy may
+    // ask at most 10 % above the local comparative rent – or the previous tenant's rent if that was higher (§ 556e). New
+    // buildings first used after 1 October 2014 and the first letting after a comprehensive modernisation are exempt (§ 556f).
+    // Whoever relies on the previous rent or an exception must tell the applicant before the contract (§ 556g Abs. 1a).
+    mietpreisbremse: (einheitId, kaltmieteCt, stichtag = ortszeit.heute()) => {
+      const e = get('SELECT e.*, o.mietpreisbremse FROM einheiten e JOIN objekte o ON o.id = e.objekt_id WHERE e.id = ?', einheitId);
+      if (!e || !e.mietpreisbremse || (e.art ?? 'Wohnung') !== 'Wohnung') return { gilt: false };
+      const vgl = aw.vergleichsmieteQm(einheitId, stichtag);
+      const qm = e.wohnflaeche || 0;
+      const grenze = vgl?.ct && qm ? Math.floor(vgl.ct * qm * 1.1) : null;
+      const vor = get(`SELECT id, ende FROM mietverhaeltnisse WHERE einheit_id = ? AND ende IS NOT NULL AND ende <> '' AND ende < ? ORDER BY ende DESC LIMIT 1`, einheitId, stichtag);
+      const vormiete = vor ? bh.betraege('miete', vor.id, vor.ende).kaltmiete_ct : null;
+      const ausnahme = e.mpb_ausnahme || null;
+      const zulaessig = ausnahme ? null : grenze == null ? null : Math.max(grenze, vormiete ?? 0);
+      const ok = ausnahme ? true : zulaessig == null ? null : kaltmieteCt <= zulaessig;
+      const auskunft = ausnahme ? ausnahme : grenze != null && kaltmieteCt > grenze && ok ? 'vormiete' : null;
+      return { gilt: true, vergleich_qm_ct: vgl?.ct ?? null, quelle: vgl?.quelle ?? null, qm, grenze_ct: grenze, vormiete_ct: vormiete, ausnahme, zulaessig_ct: zulaessig, ok, auskunft };
     },
     zusage: (interessentId, beginn) => {
       const r = mw.zusage(interessentId, beginn);
@@ -1908,6 +2044,9 @@ function api(db) {
       // A copy of an invoice that is filed or booked already is never booked a second time.
       const doppelt = ar.dokumentDuplikat(dokId, { abgelegt: true });
       if (doppelt) throw new Error(`Diese Rechnung ist schon ${doppelt.buchung_id ? 'gebucht' : 'abgelegt'} („${doppelt.titel}“) – gleiche Rechnungsnummer, gleicher Betrag, gleicher Absender. Sie wird nicht doppelt gebucht.`);
+      // Probably the same invoice without (or with a misread) number: same sender and amount within a week.
+      const aehnlich = ar.dokumentAehnlich(dokId);
+      if (aehnlich) rueckfrage(`Vermutlich doppelt: „${aehnlich.titel}“${aehnlich.datum ? ` vom ${aehnlich.datum.split('-').reverse().join('.')}` : ''} von ${aehnlich.absender ?? 'demselben Absender'} über ${(aehnlich.betrag_ct / 100).toLocaleString('de-DE', { minimumFractionDigits: 2 })} € ist schon ${aehnlich.buchung_id ? 'gebucht' : 'abgelegt'}. Ist das wirklich eine zweite Rechnung?`);
       const a = alles.belegAufteilung(dokId, { kosten_konto_id, betrag_ct, vorsteuer });
       datumPruefen(datum ?? d.datum);
       // Far more than this sender ever charged: a misread amount (a comma lost) or a wrong invoice.

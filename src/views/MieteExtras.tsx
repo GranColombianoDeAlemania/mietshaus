@@ -299,10 +299,15 @@ export function Versicherungen(props: { objekt: Row }) {
     <Liste titel="Versicherungen & Verträge" table="versicherungen" filter={{ objekt_id: props.objekt.id }} order="art"
       neuLabel="Neuer Vertrag"
       spalten={[['Art', (r) => r.art], ['Gesellschaft', (r) => r.gesellschaft], ['Police', (r) => r.police], ['Beitrag/Jahr', (r) => (r.beitrag_ct != null ? euro(r.beitrag_ct) : ''), 'num'],
-        ['Fällig', (r) => datum(r.faellig)], ['Kündbar bis', (r) => <span className={bald(r.kuendbar_bis) ? 'fehlertext' : ''}>{datum(r.kuendbar_bis)}</span>], ['Ablauf', (r) => datum(r.ablauf)]]}
+        ['Fällig', (r) => datum(r.faellig)], ['Kündigung zugehen bis', (r) => <span className={bald(r.kuendbar_bis) ? 'fehlertext' : ''}>{datum(r.kuendbar_bis)}</span>], ['Ablauf', (r) => datum(r.ablauf)],
+        ['Summe', (r) => (r.summe_ct ? euro(r.summe_ct) : r.unterversicherungsverzicht ? 'Verzicht' : ''), 'num']]}
+      hinweis="Melden: Gefahrerhöhungen (längerer Leerstand, Umbau, Gerüst) und den Verkauf des Hauses (§§ 23, 97 VVG). Nach einem Schaden darf der Versicherer kündigen – bis einen Monat nach Abschluss der Regulierung."
       fields={[{ key: 'art', label: 'Art (z. B. Wohngebäude, Haftpflicht, Wartung Heizung)', required: true, wide: true }, { key: 'gesellschaft', label: 'Gesellschaft / Firma' },
         { key: 'police', label: 'Policen-/Vertragsnummer' }, { key: 'beitrag_ct', label: 'Beitrag pro Jahr', type: 'money' }, { key: 'faellig', label: 'Nächste Fälligkeit', type: 'date' },
-        { key: 'kuendbar_bis', label: 'Kündbar bis', type: 'date' }, { key: 'ablauf', label: 'Vertragsablauf', type: 'date' }, { key: 'notiz', label: 'Notiz', type: 'textarea' }]} />
+        { key: 'kuendbar_bis', label: 'Kündigung muss zugehen bis (läuft jährlich weiter)', type: 'date' }, { key: 'ablauf', label: 'Vertragsablauf', type: 'date' },
+        { key: 'summe_ct', label: 'Versicherungssumme (bzw. Wert 1914 umgerechnet)', type: 'money', section: 'Gebäudeversicherung' }, { key: 'unterversicherungsverzicht', label: 'Unterversicherungsverzicht vereinbart', type: 'check' },
+        { key: 'selbstbehalt_ct', label: 'Selbstbehalt je Schaden', type: 'money' }, { key: 'summe_geprueft_am', label: 'Versicherungssumme zuletzt geprüft am', type: 'date' },
+        { key: 'notiz', label: 'Notiz', type: 'textarea' }]} />
   );
 }
 

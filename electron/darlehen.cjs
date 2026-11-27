@@ -83,9 +83,13 @@ module.exports = function darlehen({ db, all, get, tx, bh }) {
     darlehenListe: (objektId) => all(`SELECT d.*, o.bezeichnung AS objekt FROM darlehen d JOIN objekte o ON o.id = d.objekt_id
       WHERE (?1 IS NULL OR d.objekt_id = ?1) ORDER BY d.erste_rate`, objektId ?? null).map((d) => {
       const heute = ortszeit.monatJetzt();
-      const p = plan(d, heute);
+      // Before the first instalment nothing is repaid yet.
+      const p = d.erste_rate.slice(0, 7) > heute ? [] : plan(d, heute);
       const ist = d.konto_id ? -bh.saldoBis(d.konto_id, '9999-12-31') : null;
-      return { ...d, rate_berechnet_ct: rate(d), rest_plan_ct: p.at(-1)?.rest_ct ?? d.betrag_ct, rest_ist_ct: ist,
+      // An instalment that does not even cover the interest never repays the loan.
+      const ersterZins = Math.round(d.betrag_ct * d.zinssatz / 100 / 12);
+      const warnung = rate(d) <= ersterZins && d.betrag_ct > 0 ? `Die Rate (${(rate(d) / 100).toLocaleString('de-DE', { minimumFractionDigits: 2 })} €) deckt nicht einmal die Zinsen – das Darlehen wird so nie getilgt.` : null;
+      return { ...d, rate_berechnet_ct: rate(d), rest_plan_ct: p.at(-1)?.rest_ct ?? d.betrag_ct, rest_ist_ct: ist, warnung,
         zinsen_jahr_ct: plan(d).filter((z) => z.monat.slice(0, 4) === heute.slice(0, 4)).reduce((s, z) => s + z.zins_ct, 0) };
     }),
 

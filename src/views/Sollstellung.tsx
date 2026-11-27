@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { betrag, call, datum, euro, fehler, monatJetzt, type Modus, type Row } from '../api';
 import { useLoad } from '../useLoad';
 import { L } from '../navi';
+import { Dialog } from '../ui';
 import { frage } from '../frage';
 
 const monatDe = (m: string) => `${m.slice(5)}/${m.slice(0, 4)}`;
@@ -64,14 +65,22 @@ export function Sollstellung(props: { objekt: Row; modus: Modus }) {
   const [bis, setBis] = useState(monatJetzt());
   const [zeilen, reload] = useLoad<Row[]>(() => call('sollstellung', props.objekt.id, von, bis, true, [props.modus]), [props.objekt.id, von, bis, props.modus]);
   const [meldung, setMeldung] = useState('');
+  const [probe, setProbe] = useState<Row | null>(null);
 
   const neu = (zeilen ?? []).filter((z) => !z.vorhanden);
   const summe = neu.reduce((s, z) => s + z.betrag_ct, 0);
   const abweichend = (zeilen ?? []).filter((z) => z.abweichend);
 
+  // Every booking of charges starts with a trial run: totals, the month before and what looks odd.
+  async function probelauf() {
+    try { setProbe(await call('sollProbelauf', props.objekt.id, von, bis, [props.modus])); } catch (e) { fehler(e); }
+  }
+
   async function buchen() {
+    const n = probe?.anzahl ?? neu.length, s = probe?.summe_ct ?? summe;
     await call('sollstellung', props.objekt.id, von, bis, false, [props.modus]);
-    setMeldung(`${neu.length} Sollbuchungen über ${euro(summe)} erzeugt.`);
+    setProbe(null);
+    setMeldung(`${n} Sollbuchungen über ${euro(s)} erzeugt.`);
     reload();
   }
 
@@ -99,7 +108,7 @@ export function Sollstellung(props: { objekt: Row; modus: Modus }) {
         <span className="spacer" />
         {meldung && <span className="meldung">{meldung}</span>}
         {abweichend.length > 0 && <button onClick={abgleichen}>{abweichend.length} Abweichung{abweichend.length === 1 ? '' : 'en'} prüfen</button>}
-        <button className="primary" disabled={!neu.length} onClick={buchen}>{neu.length} Sollbuchungen erzeugen</button>
+        <button className="primary" disabled={!neu.length} onClick={probelauf}>Probelauf: {neu.length} Sollbuchungen</button>
       </div>
       <table>
         <thead><tr><th>Monat</th><th>Fällig</th><th>Vertrag</th><th>Einheit</th><th>Posten</th><th className="num">Betrag</th><th>Status</th></tr></thead>
@@ -119,6 +128,25 @@ export function Sollstellung(props: { objekt: Row; modus: Modus }) {
         </tbody>
         <tfoot><tr><td colSpan={5}>Summe neu</td><td className="num"><b>{betrag(summe)}</b></td><td /></tr></tfoot>
       </table>
+      {probe && (
+        <Dialog titel="Probelauf Sollstellung" onClose={() => setProbe(null)} breit
+          aktionen={<button className="primary" disabled={!probe.anzahl} onClick={buchen}>{probe.anzahl} Sollbuchungen jetzt buchen</button>}>
+          <div className="kacheln">
+            <div className="kachel"><div className="wert">{probe.anzahl}</div><div className="label">Buchungen für {probe.vertraege} {props.modus === 'weg' ? 'Eigentümer' : 'Mietverhältnisse'}</div></div>
+            <div className="kachel"><div className="wert">{euro(probe.summe_ct)}</div><div className="label">Summe {von === bis ? monatDe(von) : `${monatDe(von)} bis ${monatDe(bis)}`}</div></div>
+            <div className="kachel"><div className="wert">{euro(probe.vormonat_ct)}</div><div className="label">Vormonat gebucht{probe.monate > 1 ? ' (ein Monat)' : ''}</div></div>
+          </div>
+          {probe.auffaellig.length ? (
+            <ul className="pruefliste">{probe.auffaellig.map((a: Row, i: number) => (
+              <li key={i} className={a.stufe === 'rot' ? 'fehler' : a.stufe === 'gelb' ? 'warnung' : ''}>
+                <span><L zu={{ vertrag: a.vertrag_id, typ: a.typ }}>{a.text}</L>{probe.monate > 1 ? ` (${monatDe(a.monat)})` : ''}</span>
+              </li>
+            ))}</ul>
+          ) : <p className="meldung">Keine Auffälligkeiten – die Beträge entsprechen dem Vormonat.</p>}
+          {probe.abweichend > 0 && <p className="hinweis klein">{probe.abweichend} schon gebuchte Forderung(en) passen nicht mehr zum Vertrag – sie bleiben, wie sie sind. Über „Abweichungen prüfen“ lassen sie sich umbuchen.</p>}
+          <p className="hinweis klein">Erst „jetzt buchen“ schreibt die Forderungen auf die Konten. Bereits gebuchte Monate werden übersprungen.</p>
+        </Dialog>
+      )}
     </section>
   );
 }
